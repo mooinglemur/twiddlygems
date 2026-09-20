@@ -93,6 +93,7 @@ async function boot() {
 
   const onLevelChanged = () => {
     renderer.layout();
+    renderer.reset();
     renderer.hint = null;
     hud.rebuild();
     hud.hideOverlay();
@@ -133,13 +134,24 @@ async function boot() {
     onLevelChanged();
   });
 
+  // A hand-hold for development: with ?debug on the URL the engine and the
+  // renderer are reachable from the console, and from the screenshot tooling,
+  // which is how the animation timings get checked.
+  if (new URLSearchParams(window.location?.search ?? '').has('debug')) {
+    window.twiddlygems = { engine, renderer, hud };
+  }
+
   let last = performance.now();
   const frame = (now) => {
     const dt = Math.min(now - last, MAX_FRAME_MS);
     last = now;
 
     engine.update(dt);
-    engine.drainEvents(); // Read and dropped for now; sound and particles hook in here.
+    const events = engine.drainEvents();
+    if (events.length > 0) {
+      // Debris for everything that cleared; sound hooks in here too, later.
+      renderer.addEvents(events, now);
+    }
 
     if (engine.phase !== Phase.IDLE) {
       hintAt = now + HINT_DELAY_MS;

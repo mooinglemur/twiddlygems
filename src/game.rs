@@ -12,13 +12,30 @@ use crate::matching::{self, MatchGroup};
 use crate::rng::Rng;
 use crate::rules::{Rules, MAX_COLORS};
 
-/// How long each animated phase lasts, in milliseconds.
-pub const SWAP_MS: f32 = 130.0;
-pub const CLEAR_MS: f32 = 190.0;
-pub const FALL_MS: f32 = 240.0;
-/// Rockets travel deliberately: the flight is meant to be watched.
-pub const LAUNCH_MS: f32 = 520.0;
-pub const SHUFFLE_MS: f32 = 420.0;
+/// How long each animated phase lasts, in milliseconds. These are paced to be
+/// followed by eye rather than to get out of the way.
+pub const SWAP_MS: f32 = 190.0;
+/// How long one gem takes to swell and vanish. A clear lasts this plus however
+/// long its blast takes to spread; see [`matching::SPREAD_STEP_MS`].
+pub const POP_MS: f32 = 300.0;
+pub const SHUFFLE_MS: f32 = 700.0;
+
+/// Gems accelerate as they fall and then stop gaining speed, so a gem dropping
+/// the height of the board takes longer than one dropping a single row rather
+/// than both arriving together.
+pub const FALL_ACCEL_MS: f32 = 160.0;
+/// Terminal velocity, in cells per millisecond — about fourteen cells a second.
+pub const FALL_SPEED: f32 = 0.014;
+
+/// A rocket eases up to a top speed and then holds it.
+///
+/// Speed is capped rather than the flight being given a fixed duration: a
+/// rocket crossing the whole board takes longer than one going next door,
+/// instead of covering the extra ground faster. Without the cap a long shot
+/// moves so quickly it is hard to see what it did.
+pub const LAUNCH_RAMP_MS: f32 = 400.0;
+/// Top speed, in cells per millisecond — about six and a half cells a second.
+pub const LAUNCH_SPEED: f32 = 0.0065;
 
 const SCORE_PER_GEM: u64 = 50;
 const SCORE_PER_SPECIAL_FIRED: u64 = 120;
@@ -34,6 +51,9 @@ pub const EV_CASCADE: u8 = 6;
 pub const EV_SHUFFLE: u8 = 7;
 pub const EV_WON: u8 = 8;
 pub const EV_LOST: u8 = 9;
+/// A rocket reaching its target. Carried alongside the ordinary clear so the
+/// front end can make more of it than a gem simply going away.
+pub const EV_ROCKET_HIT: u8 = 10;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -118,6 +138,9 @@ pub enum Tap {
 struct Resolution {
     seeds: Vec<Pos>,
     creations: Vec<(Pos, Gem)>,
+    /// Scatters the starting cells in time. A rainbow wants this; an ordinary
+    /// match does not.
+    jitter_ms: f32,
 }
 
 #[derive(Clone)]
@@ -130,8 +153,15 @@ pub struct Game {
     rng: Rng,
     phase: Phase,
     status: Status,
-    /// Cells popping during the current clear.
-    clearing: Vec<Pos>,
+    /// Cells popping during the current clear, each with the moment it pops,
+    /// so a blast travels outward instead of taking everything at once.
+    clearing: Vec<(Pos, f32)>,
+    /// How long the current clear runs for, pops and spread together.
+    clear_ms: f32,
+    /// How long the current volley of rockets needs to reach its targets.
+    launch_ms: f32,
+    /// How long the current fall needs, set by whichever gem has furthest to go.
+    fall_ms: f32,
     /// Specials to drop in once the clear finishes.
     pending: Vec<(Pos, Gem)>,
     /// Rockets in flight, as (the cell launched from, the cell aimed at).
@@ -157,6 +187,9 @@ impl Game {
             phase: Phase::Idle,
             status: Status::Playing,
             clearing: Vec::new(),
+            clear_ms: POP_MS,
+            launch_ms: LAUNCH_RAMP_MS,
+            fall_ms: FALL_ACCEL_MS,
             pending: Vec::new(),
             launches: Vec::new(),
             origin: Vec::new(),
@@ -186,6 +219,9 @@ impl Game {
         self.phase = Phase::Idle;
         self.status = Status::Playing;
         self.clearing.clear();
+        self.clear_ms = POP_MS;
+        self.launch_ms = LAUNCH_RAMP_MS;
+        self.fall_ms = FALL_ACCEL_MS;
         self.pending.clear();
         self.launches.clear();
         self.cascade = 0;
@@ -294,9 +330,9 @@ impl Game {
             let (duration, elapsed) = match self.phase {
                 Phase::Idle | Phase::Finished => break,
                 Phase::Swapping { elapsed, .. } => (SWAP_MS, elapsed),
-                Phase::Clearing { elapsed } => (CLEAR_MS, elapsed),
-                Phase::Launching { elapsed } => (LAUNCH_MS, elapsed),
-                Phase::Falling { elapsed } => (FALL_MS, elapsed),
+                Phase::Clearing { elapsed } => (self.clear_ms, elapsed),
+                Phase::Launching { elapsed } => (self.launch_ms, elapsed),
+                Phase::Falling { elapsed } => (self.fall_ms, elapsed),
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
             };
             let advanced = elapsed + remaining;
@@ -372,42 +408,53 @@ impl Game {
     }
 
     fn finish_clear(&mut self) {
-        for p in std::mem::take(&mut self.clearing) {
+        for (p, _) in std::mem::take(&mut self.clearing) {
             self.board.set_gem(p, None);
         }
         for (p, gem) in std::mem::take(&mut self.pending) {
             self.board.set_gem(p, Some(gem));
         }
 
-        // Any rocket left standing flies before gravity runs, so that the hole
-        // it leaves and the hole it makes fill in together.
+        // Rockets hold their ground while the hole fills in around them. They
+        // fly once the cascade has run itself out, not before.
         let rockets = self.rockets_on_board();
-        if !rockets.is_empty() {
-            self.launches = self.pick_targets(&rockets);
-            if !self.launches.is_empty() {
-                for (from, _) in self.launches.clone() {
-                    self.events.push(Event::at(
-                        EV_SPECIAL_FIRED,
-                        from,
-                        255,
-                        Special::Rocket,
-                        self.cascade.max(1),
-                    ));
-                }
-                self.phase = Phase::Launching { elapsed: 0.0 };
-                return;
-            }
-            // Nothing left worth hitting: drop the rockets rather than stall.
-            for p in rockets {
-                self.board.set_gem(p, None);
-            }
-        }
-
-        self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
-        self.phase = Phase::Falling { elapsed: 0.0 };
+        self.origin = self.board.collapse_pinned(&self.spec.rules, &mut self.rng, &rockets);
+        self.begin_fall();
     }
 
-    /// The rockets go off together, taking one gem each, and only then does the
+    /// Sends every rocket on the board at a target. Nothing falls while they
+    /// are in the air, so the cells they leave and the cells they hit collapse
+    /// in the same drop.
+    fn begin_launch(&mut self, rockets: &[Pos]) -> bool {
+        self.launches = self.pick_targets(rockets);
+        if self.launches.is_empty() {
+            // Nowhere worth aiming: drop them rather than stall the board.
+            for p in rockets {
+                self.board.set_gem(*p, None);
+            }
+            return false;
+        }
+
+        self.launch_ms = self
+            .launches
+            .iter()
+            .map(|(from, to)| flight_time(cells_between(*from, *to)))
+            .fold(0.0_f32, f32::max);
+
+        for (from, _) in self.launches.clone() {
+            self.events.push(Event::at(
+                EV_SPECIAL_FIRED,
+                from,
+                255,
+                Special::Rocket,
+                self.cascade.max(1),
+            ));
+        }
+        self.phase = Phase::Launching { elapsed: 0.0 };
+        true
+    }
+
+    /// The rockets land together, taking one gem each, and only then does the
     /// board collapse.
     fn finish_launch(&mut self) {
         let launches = std::mem::take(&mut self.launches);
@@ -427,6 +474,7 @@ impl Game {
             }
             self.board.peel_jelly(*target);
             self.events.push(Event::at(EV_CLEAR, *target, gem.color, gem.special, cascade));
+            self.events.push(Event::at(EV_ROCKET_HIT, *target, gem.color, Special::Rocket, cascade));
             self.board.set_gem(*target, None);
             gems_hit += 1;
         }
@@ -436,6 +484,21 @@ impl Game {
                 * cascade as u64;
         self.progress.jelly_left = self.board.jelly_remaining();
         self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
+        self.begin_fall();
+    }
+
+    /// Starts a fall, lasting as long as the gem with furthest to travel needs.
+    fn begin_fall(&mut self) {
+        let furthest = self
+            .board
+            .positions()
+            .map(|p| {
+                let i = (p.r * self.board.cols + p.c) as usize;
+                let from = self.origin.get(i).copied().unwrap_or(p.r as f32);
+                (p.r as f32 - from).max(0.0)
+            })
+            .fold(0.0_f32, f32::max);
+        self.fall_ms = fall_time(furthest).max(1.0);
         self.phase = Phase::Falling { elapsed: 0.0 };
     }
 
@@ -473,13 +536,17 @@ impl Game {
 
     fn finish_fall(&mut self) {
         self.cascade += 1;
-        match self.plan_resolution(None) {
-            Some(resolution) => {
-                self.events.push(Event::plain(EV_CASCADE, self.cascade.min(65535) as u16));
-                self.begin_clear(resolution);
-            }
-            None => self.settle(),
+        if let Some(resolution) = self.plan_resolution(None) {
+            self.events.push(Event::plain(EV_CASCADE, self.cascade.min(65535) as u16));
+            self.begin_clear(resolution);
+            return;
         }
+        // The chain is spent, so any rockets waiting on the board go now.
+        let rockets = self.rockets_on_board();
+        if !rockets.is_empty() && self.begin_launch(&rockets) {
+            return;
+        }
+        self.settle();
     }
 
     fn finish_shuffle(&mut self) {
@@ -497,6 +564,7 @@ impl Game {
         let groups = matching::find_matches(&self.board, &self.spec.rules);
         let mut seeds: Vec<Pos> = Vec::new();
         let mut creations: Vec<(Pos, Gem)> = Vec::new();
+        let mut jitter_ms = 0.0_f32;
 
         for group in &groups {
             let special = group.award(&self.spec.rules.specials);
@@ -510,13 +578,15 @@ impl Game {
         }
 
         if let Some((a, b)) = swap {
-            seeds.extend(self.rainbow_seeds(a, b));
+            let (extra, jitter) = self.swap_activation(a, b);
+            seeds.extend(extra);
+            jitter_ms = jitter_ms.max(jitter);
         }
 
         if seeds.is_empty() {
             None
         } else {
-            Some(Resolution { seeds, creations })
+            Some(Resolution { seeds, creations, jitter_ms })
         }
     }
 
@@ -551,20 +621,26 @@ impl Game {
         group.pivot
     }
 
-    /// Extra cells cleared because the player swapped a rainbow against
-    /// something.
+    /// Extra cells cleared because of what the player swapped together.
     ///
-    /// The rainbow is the only gem that answers to a swap. Every other special
-    /// sits there until an ordinary match of its color sweeps it up.
+    /// A special pushed against an ordinary gem does nothing — it waits for a
+    /// match of its color. Two specials swapped together always set each other
+    /// off, and the rainbow answers to anything.
     ///
-    /// Against an ordinary gem it takes that whole color, and any clearing gems
-    /// standing in that color go off as they are swept up. Against a clearing
-    /// gem it goes further: every gem of that color becomes a copy of it, and
-    /// they all fire at once. Against another rainbow it takes the board.
-    fn rainbow_seeds(&mut self, a: Pos, b: Pos) -> Vec<Pos> {
+    /// The rainbow against an ordinary gem takes that whole color, and any
+    /// clearing gems standing in that color go off as they are swept up.
+    /// Against a clearing gem it goes further: every gem of that color becomes
+    /// a copy of it and they all fire at once. Against another rainbow it takes
+    /// the board.
+    ///
+    /// Two ordinary specials simply both fire, with one wrinkle: two gems of
+    /// the *same* orientation would clear the same line twice, so the gem the
+    /// player actually moved turns the other way and clears across its own
+    /// grain instead.
+    fn swap_activation(&mut self, a: Pos, b: Pos) -> (Vec<Pos>, f32) {
         let (ga, gb) = match (self.board.gem(a), self.board.gem(b)) {
             (Some(ga), Some(gb)) => (ga, gb),
-            _ => return Vec::new(),
+            _ => return (Vec::new(), 0.0),
         };
 
         let (rainbow, partner) = match (ga.special, gb.special) {
@@ -572,11 +648,14 @@ impl Game {
                 // Spend both, so neither fires a second time on its own color.
                 self.spend_rainbow(a);
                 self.spend_rainbow(b);
-                return self.board.occupied();
+                return (self.board.occupied(), matching::RAINBOW_SPREAD_MS);
             }
             (Special::Rainbow, _) => (a, gb),
             (_, Special::Rainbow) => (b, ga),
-            _ => return Vec::new(),
+            (resting, moved) if resting.is_special() && moved.is_special() => {
+                return (self.pair_activation(a, b, resting, gb), 0.0);
+            }
+            _ => return (Vec::new(), 0.0),
         };
 
         let color = partner.color;
@@ -604,7 +683,24 @@ impl Game {
         let mut seeds = vec![rainbow];
         seeds.extend(targets);
         seeds.retain(|p| self.board.gem(*p).is_some());
-        seeds
+        (seeds, matching::RAINBOW_SPREAD_MS)
+    }
+
+    /// Two ordinary specials, set off against each other.
+    ///
+    /// The board has already been swapped, so the gem the player picked up now
+    /// sits at `b`. When both face the same way that is the one that turns, so
+    /// the pair clears a row and a column rather than the same line twice.
+    fn pair_activation(&mut self, a: Pos, b: Pos, resting: Special, moved: Gem) -> Vec<Pos> {
+        let turned = match (resting, moved.special) {
+            (Special::LineH, Special::LineH) => Some(Special::LineV),
+            (Special::LineV, Special::LineV) => Some(Special::LineH),
+            _ => None,
+        };
+        if let Some(special) = turned {
+            self.board.set_gem(b, Some(Gem { special, ..moved }));
+        }
+        vec![a, b]
     }
 
     /// Turns a rainbow back into an ordinary gem, its power already accounted
@@ -620,7 +716,12 @@ impl Game {
     /// Fires the clear: scores it, tallies it against the objectives, and puts
     /// the board into its popping animation.
     fn begin_clear(&mut self, resolution: Resolution) {
-        let blast = matching::detonate(&self.board, &resolution.seeds, &mut self.rng);
+        let blast = matching::detonate(
+            &self.board,
+            &resolution.seeds,
+            &mut self.rng,
+            resolution.jitter_ms,
+        );
         if blast.cleared.is_empty() {
             self.settle();
             return;
@@ -633,7 +734,7 @@ impl Game {
             * cascade as u64;
         self.progress.score += points;
 
-        for p in &blast.cleared {
+        for (p, delay) in blast.cleared.iter().zip(blast.delays.iter()) {
             let gem = match self.board.gem(*p) {
                 Some(gem) => gem,
                 None => continue,
@@ -642,7 +743,11 @@ impl Game {
                 self.progress.cleared[gem.color as usize] += 1;
             }
             self.board.peel_jelly(*p);
-            self.events.push(Event::at(EV_CLEAR, *p, gem.color, gem.special, cascade));
+            let mut event = Event::at(EV_CLEAR, *p, gem.color, gem.special, cascade);
+            // The front end reads this to hold each cell's particles back until
+            // the blast actually reaches it.
+            event.value = delay.clamp(0.0, 65_535.0) as u16;
+            self.events.push(event);
         }
         self.progress.jelly_left = self.board.jelly_remaining();
 
@@ -653,7 +758,15 @@ impl Game {
             self.events.push(Event::at(EV_SPECIAL_MADE, *p, gem.color, gem.special, cascade));
         }
 
-        self.clearing = blast.cleared;
+        // The clear runs until the furthest cell has finished popping.
+        let last = blast.delays.iter().copied().fold(0.0_f32, f32::max);
+        self.clear_ms = POP_MS + last;
+        self.clearing = blast
+            .cleared
+            .iter()
+            .copied()
+            .zip(blast.delays.iter().copied())
+            .collect();
         self.pending = resolution.creations;
         self.phase = Phase::Clearing { elapsed: 0.0 };
     }
@@ -834,10 +947,15 @@ impl Game {
                 }
             }
             Phase::Clearing { elapsed } => {
-                let t = (elapsed / CLEAR_MS).clamp(0.0, 1.0);
-                // A brief swell, then the gem shrinks out.
-                let scale = if t < 0.25 { 1.0 + t * 0.6 } else { (1.15 - (t - 0.25) * 1.5).max(0.0) };
-                for p in self.clearing.clone() {
+                for (p, delay) in self.clearing.clone() {
+                    if elapsed < delay {
+                        // Its turn has not come round yet.
+                        continue;
+                    }
+                    let t = ((elapsed - delay) / POP_MS).clamp(0.0, 1.0);
+                    // A brief swell, then the gem shrinks out.
+                    let scale =
+                        if t < 0.25 { 1.0 + t * 0.6 } else { (1.15 - (t - 0.25) * 1.5).max(0.0) };
                     let i = (p.r * self.board.cols + p.c) as usize;
                     if i * 3 + 2 < self.offs_buf.len() {
                         self.offs_buf[i * 3 + 2] = scale;
@@ -846,17 +964,16 @@ impl Game {
                 }
             }
             Phase::Launching { elapsed } => {
-                let t = (elapsed / LAUNCH_MS).clamp(0.0, 1.0);
-                // Slow away from the cell, quick into the target.
-                let travel = t * t;
                 for (from, to) in self.launches.clone() {
+                    let distance = cells_between(from, to).max(0.001);
+                    let flown = (flown_cells(elapsed) / distance).clamp(0.0, 1.0);
                     self.set_offset(
                         from,
-                        (to.c - from.c) as f32 * travel,
-                        (to.r - from.r) as f32 * travel,
+                        (to.c - from.c) as f32 * flown,
+                        (to.r - from.r) as f32 * flown,
                     );
                     // The target only flinches once the rocket is nearly on it.
-                    let impact = ((t - 0.65) / 0.35).clamp(0.0, 1.0);
+                    let impact = ((flown - 0.8) / 0.2).clamp(0.0, 1.0);
                     let i = (to.r * self.board.cols + to.c) as usize;
                     if i * 3 + 2 < self.offs_buf.len() {
                         self.offs_buf[i * 3 + 2] = 1.0 - impact;
@@ -865,12 +982,16 @@ impl Game {
                 }
             }
             Phase::Falling { elapsed } => {
-                let travel = 1.0 - ease_out(elapsed / FALL_MS);
+                let fallen = fallen_cells(elapsed);
                 for p in self.board.positions() {
                     let i = (p.r * self.board.cols + p.c) as usize;
                     let from = self.origin.get(i).copied().unwrap_or(p.r as f32);
-                    let dy = (from - p.r as f32) * travel;
-                    self.offs_buf[i * 3 + 1] = dy;
+                    let drop = p.r as f32 - from;
+                    if drop <= 0.0 {
+                        continue;
+                    }
+                    // Still above its cell by whatever it has left to fall.
+                    self.offs_buf[i * 3 + 1] = -(drop - fallen).max(0.0);
                 }
             }
             Phase::Shuffling { elapsed } => {
@@ -892,6 +1013,56 @@ impl Game {
             self.offs_buf[i * 3 + 1] = dy;
         }
     }
+}
+
+/// Straight-line distance between two cells, in cells.
+fn cells_between(a: Pos, b: Pos) -> f32 {
+    let dr = (b.r - a.r) as f32;
+    let dc = (b.c - a.c) as f32;
+    (dr * dr + dc * dc).sqrt()
+}
+
+/// Distance covered after `elapsed` milliseconds by something that accelerates
+/// evenly for `ramp_ms` and then holds `speed`.
+fn travelled(elapsed: f32, ramp_ms: f32, speed: f32) -> f32 {
+    if elapsed <= 0.0 {
+        0.0
+    } else if elapsed < ramp_ms {
+        0.5 * speed * elapsed * elapsed / ramp_ms
+    } else {
+        0.5 * speed * ramp_ms + speed * (elapsed - ramp_ms)
+    }
+}
+
+/// How long that takes to cover `distance`. A short hop is over before the
+/// ramp finishes and never reaches full speed.
+fn travel_time(distance: f32, ramp_ms: f32, speed: f32) -> f32 {
+    let ramp_distance = 0.5 * speed * ramp_ms;
+    if distance <= ramp_distance {
+        (2.0 * distance * ramp_ms / speed).sqrt()
+    } else {
+        ramp_ms + (distance - ramp_distance) / speed
+    }
+}
+
+/// How far a rocket has flown after `elapsed` milliseconds.
+fn flown_cells(elapsed: f32) -> f32 {
+    travelled(elapsed, LAUNCH_RAMP_MS, LAUNCH_SPEED)
+}
+
+/// How long a rocket needs to cover `distance` cells.
+fn flight_time(distance: f32) -> f32 {
+    travel_time(distance, LAUNCH_RAMP_MS, LAUNCH_SPEED)
+}
+
+/// How far a gem has fallen after `elapsed` milliseconds.
+fn fallen_cells(elapsed: f32) -> f32 {
+    travelled(elapsed, FALL_ACCEL_MS, FALL_SPEED)
+}
+
+/// How long a gem needs to drop `distance` rows.
+fn fall_time(distance: f32) -> f32 {
+    travel_time(distance, FALL_ACCEL_MS, FALL_SPEED)
 }
 
 fn ease_out(t: f32) -> f32 {
@@ -1081,10 +1252,9 @@ mod tests {
     }
 
     #[test]
-    fn nothing_falls_until_the_rocket_lands() {
-        // The whole point of the launch phase: the cells the square left and
-        // the cell the rocket takes out collapse in the same fall, so the board
-        // must still be full of holes while the rocket is in the air.
+    fn the_hole_fills_in_around_the_rocket_before_it_flies() {
+        // The rocket holds its cell while gravity repairs the rest of the
+        // square, and only then launches.
         let mut game = Game::new(spec(4, 4, 6, 10), 72);
         paint(&mut game, &square_board());
         assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
@@ -1093,35 +1263,87 @@ mod tests {
         for _ in 0..400 {
             if let Phase::Launching { .. } = game.phase() {
                 saw_launch = true;
-                let rockets: Vec<Pos> = game
-                    .board
-                    .positions()
-                    .filter(|p| {
-                        game.board.gem(*p).map_or(false, |g| g.special == Special::Rocket)
-                    })
-                    .collect();
-                assert_eq!(rockets.len(), 1, "one square, one rocket");
-                let holes = game
-                    .board
-                    .positions()
-                    .filter(|p| game.board.is_open(*p) && game.board.gem(*p).is_none())
-                    .count();
-                assert!(
-                    holes >= 3,
-                    "the other three cells of the square should still be empty, found {holes}"
-                );
                 break;
             }
             game.update(16.0);
         }
         assert!(saw_launch, "the board never entered its launch phase");
 
+        assert_eq!(
+            game.board.gem(Pos::new(1, 1)).map(|g| g.special),
+            Some(Special::Rocket),
+            "the rocket should still be sitting where it was made"
+        );
+        for cell in [Pos::new(0, 0), Pos::new(0, 1), Pos::new(1, 0)] {
+            assert!(
+                game.board.gem(cell).is_some(),
+                "the rest of the square should have filled in at {cell:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn neither_end_of_the_flight_moves_until_impact() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 77);
+        paint(&mut game, &square_board());
+        assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
+
+        for _ in 0..400 {
+            if let Phase::Launching { .. } = game.phase() {
+                break;
+            }
+            game.update(16.0);
+        }
+        let (from, to) = *game.launches.first().expect("a rocket should be in the air");
+        let target_before = game.board.gem(to);
+        assert!(target_before.is_some());
+
+        // Part way through the flight, nothing at either end has shifted.
+        game.update(16.0 * 6.0);
+        assert!(matches!(game.phase(), Phase::Launching { .. }), "still in the air");
+        assert_eq!(game.board.gem(to), target_before, "the target waited to be hit");
+        assert_eq!(
+            game.board.gem(from).map(|g| g.special),
+            Some(Special::Rocket),
+            "and the rocket has not been dropped from its cell"
+        );
+
         settle(&mut game);
         assert!(
             game.board.positions().all(|p| !game.board.is_open(p) || game.board.gem(p).is_some()),
-            "everything should have filled in once the rocket landed"
+            "everything fills in once it lands"
         );
-        assert!(game.progress.score > 0);
+    }
+
+    #[test]
+    fn a_rocket_never_exceeds_its_top_speed() {
+        // The complaint that started this: without a cap, a long shot simply
+        // moves faster and is over before you can see it.
+        let step = 16.0;
+        let mut previous = 0.0;
+        let mut t = 0.0;
+        while t < 4_000.0 {
+            let speed = (flown_cells(t + step) - flown_cells(t)) / step;
+            assert!(
+                speed <= LAUNCH_SPEED + 1e-6,
+                "at {t}ms the rocket was doing {speed} cells/ms"
+            );
+            let flown = flown_cells(t);
+            assert!(flown >= previous, "a rocket never goes backwards");
+            previous = flown;
+            t += step;
+        }
+        assert!(flown_cells(20.0) < flown_cells(LAUNCH_RAMP_MS) * 0.05, "it starts slowly");
+    }
+
+    #[test]
+    fn a_longer_shot_takes_longer_instead_of_flying_faster() {
+        let near = flight_time(1.0);
+        let far = flight_time(8.0);
+        assert!(far > near, "crossing the board should take longer than going next door");
+        // Once up to speed the extra ground is covered at exactly the cap.
+        let extra_time = flight_time(8.0) - flight_time(7.0);
+        assert!((extra_time - 1.0 / LAUNCH_SPEED).abs() < 1e-3);
     }
 
     #[test]
@@ -1222,6 +1444,171 @@ mod tests {
         // Six crosses sitting on a Latin square cover every row and column.
         let cleared = events.iter().filter(|e| e.kind == EV_CLEAR).count();
         assert!(cleared >= 30, "that should take almost the whole board, saw {cleared}");
+    }
+
+    #[test]
+    fn an_ordinary_match_pops_as_one() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 101);
+        paint(&mut game, &["1200", "1300", "2100", "0000"]);
+        assert!(game.try_swap(Pos::new(2, 0), Pos::new(2, 1)));
+        let cleared = first_clear(&mut game);
+        assert!(
+            cleared.iter().all(|e| e.value == 0),
+            "three in a row should go together, not in sequence"
+        );
+    }
+
+    #[test]
+    fn a_chain_of_specials_propagates_across_the_board() {
+        // Each blast starts when the gem carrying it pops, so a chain of them
+        // accumulates delay and the clear really does travel. This pins the
+        // arithmetic: 7 cells across, then 4 down, then 7 back across.
+        let mut game = Game::new(spec(8, 8, 6, 10), 104);
+        game.board.set_gem(Pos::new(3, 0), Some(Gem { color: 0, special: Special::LineH }));
+        game.board.set_gem(Pos::new(3, 7), Some(Gem { color: 1, special: Special::LineV }));
+        game.board.set_gem(Pos::new(7, 7), Some(Gem { color: 2, special: Special::LineH }));
+
+        let blast = matching::detonate(&game.board, &[Pos::new(3, 0)], &mut game.rng, 0.0);
+        let step = matching::SPREAD_STEP_MS;
+
+        let delay_at = |p: Pos| {
+            blast
+                .cleared
+                .iter()
+                .position(|cell| *cell == p)
+                .map(|i| blast.delays[i])
+                .expect("cell should have been cleared")
+        };
+
+        assert_eq!(delay_at(Pos::new(3, 0)), 0.0, "the first gem goes immediately");
+        assert_eq!(delay_at(Pos::new(3, 7)), 7.0 * step, "seven cells along the row");
+        assert_eq!(delay_at(Pos::new(7, 7)), 11.0 * step, "then four more down the column");
+        assert_eq!(
+            delay_at(Pos::new(7, 0)),
+            18.0 * step,
+            "and seven back along the bottom row"
+        );
+        let widest = blast.delays.iter().copied().fold(0.0_f32, f32::max);
+        assert_eq!(widest, 18.0 * step);
+    }
+
+    #[test]
+    fn a_rainbow_scatters_its_clears_in_time() {
+        let mut game = Game::new(spec(6, 6, 6, 10), 102);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+
+        assert!(game.try_swap(Pos::new(0, 0), Pos::new(0, 1)));
+        let cleared = first_clear(&mut game);
+        let delays: Vec<u16> = cleared.iter().map(|e| e.value).collect();
+        let distinct: std::collections::BTreeSet<u16> = delays.iter().copied().collect();
+        assert!(
+            distinct.len() > 2,
+            "a rainbow's cells should go off at different moments, saw {delays:?}"
+        );
+        assert!(
+            delays.iter().all(|d| (*d as f32) < matching::RAINBOW_SPREAD_MS),
+            "and all within its window"
+        );
+    }
+
+    #[test]
+    fn a_rocket_impact_announces_itself() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 103);
+        paint(&mut game, &square_board());
+        assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
+        let events = settle(&mut game);
+
+        let hits: Vec<&Event> = events.iter().filter(|e| e.kind == EV_ROCKET_HIT).collect();
+        assert_eq!(hits.len(), 1, "one rocket, one strike");
+        assert_eq!(hits[0].special, Special::Rocket.code());
+        assert!(
+            events.iter().any(|e| e.kind == EV_CLEAR && (e.r, e.c) == (hits[0].r, hits[0].c)),
+            "the struck cell should also clear normally"
+        );
+    }
+
+    #[test]
+    fn two_line_gems_facing_the_same_way_clear_a_row_and_a_column() {
+        // Both face across, so clearing "as normal" would take the same row
+        // twice. The gem the player moved turns instead.
+        let mut game = Game::new(spec(6, 6, 6, 91), 91);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(2, 2), Some(Gem { color: 4, special: Special::LineH }));
+        game.board.set_gem(Pos::new(2, 3), Some(Gem { color: 5, special: Special::LineH }));
+
+        // The player picks up (2,3) and drags it onto (2,2).
+        assert!(game.try_swap(Pos::new(2, 3), Pos::new(2, 2)));
+        let cleared = first_clear(&mut game);
+        let cells: Vec<(u8, u8)> = cleared.iter().map(|e| (e.r, e.c)).collect();
+
+        for c in 0..6u8 {
+            assert!(cells.contains(&(2, c)), "row 2 should have gone, missing column {c}");
+        }
+        for r in 0..6u8 {
+            assert!(cells.contains(&(r, 2)), "column 2 should have gone, missing row {r}");
+        }
+        assert_eq!(cleared.len(), 11, "a row and a column, sharing one cell");
+    }
+
+    #[test]
+    fn two_crosses_both_fire_as_they_are() {
+        let mut game = Game::new(spec(6, 6, 6, 92), 92);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(2, 2), Some(Gem { color: 4, special: Special::Cross }));
+        game.board.set_gem(Pos::new(2, 3), Some(Gem { color: 5, special: Special::Cross }));
+
+        assert!(game.try_swap(Pos::new(2, 3), Pos::new(2, 2)));
+        let cleared = first_clear(&mut game);
+        // Row 2 twice over, plus both columns.
+        assert_eq!(cleared.len(), 16, "one row and two columns");
+    }
+
+    #[test]
+    fn a_line_gem_and_a_cross_each_do_their_own_thing() {
+        let mut game = Game::new(spec(6, 6, 6, 93), 93);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(2, 2), Some(Gem { color: 4, special: Special::Cross }));
+        game.board.set_gem(Pos::new(2, 3), Some(Gem { color: 5, special: Special::LineV }));
+
+        assert!(game.try_swap(Pos::new(2, 3), Pos::new(2, 2)));
+        let cleared = first_clear(&mut game);
+        // The cross takes row 2 and column 2; the line gem takes column 3.
+        assert_eq!(cleared.len(), 16);
+    }
+
+    #[test]
+    fn a_special_against_an_ordinary_gem_still_does_nothing() {
+        let mut game = Game::new(spec(6, 6, 6, 94), 94);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(2, 2), Some(Gem { color: 4, special: Special::Cross }));
+
+        assert!(game.try_swap(Pos::new(2, 2), Pos::new(2, 3)));
+        let _ = settle(&mut game);
+        assert_eq!(game.progress.score, 0, "it should simply have slid back");
+        assert_eq!(game.moves_left, game.spec.moves, "and cost nothing");
+    }
+
+    #[test]
+    fn a_gem_with_further_to_fall_takes_longer() {
+        let near = fall_time(1.0);
+        let far = fall_time(6.0);
+        assert!(far > near, "a long drop should take longer than a short one");
+        // Past the acceleration, each extra row costs exactly one row at
+        // terminal velocity.
+        let extra = fall_time(6.0) - fall_time(5.0);
+        assert!((extra - 1.0 / FALL_SPEED).abs() < 1e-3, "terminal velocity is not capped");
+    }
+
+    #[test]
+    fn falling_gems_never_exceed_terminal_velocity() {
+        let step = 16.0;
+        let mut t = 0.0;
+        while t < 2_000.0 {
+            let speed = (fallen_cells(t + step) - fallen_cells(t)) / step;
+            assert!(speed <= FALL_SPEED + 1e-6, "at {t}ms gems were falling at {speed} cells/ms");
+            t += step;
+        }
     }
 
     #[test]

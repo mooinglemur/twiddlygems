@@ -12,8 +12,8 @@
 //!
 //!     cargo run --release --bin balance
 
-use twiddlygems::board::Pos;
-use twiddlygems::game::{Game, Phase, Status};
+use twiddlygems::board::{Pos, Special};
+use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
 
@@ -24,6 +24,8 @@ enum Bot {
 }
 
 fn main() {
+    specials_made(Bot::First, 60);
+    println!();
     // The greedy bot plays every candidate move out before choosing, so it gets
     // fewer runs; it is far more consistent, so it needs fewer.
     run(Bot::First, 200);
@@ -109,6 +111,65 @@ fn inflate(spec: &LevelSpec) -> LevelSpec {
     probe
 }
 
+/// How often each special actually turns up in play.
+fn specials_made(bot: Bot, seeds: u64) {
+    println!("specials created per 100 moves ({seeds} seeds per level)");
+    println!("{:<16} {:>8} {:>8} {:>8} {:>8} {:>8}", "level", "lineH", "lineV", "cross", "rainbow", "rocket");
+
+    let mut overall = [0u32; 6];
+    let mut total_moves = 0u32;
+    let mut all_spreads: Vec<u32> = Vec::new();
+    for (index, spec) in levels().into_iter().enumerate() {
+        let mut made = [0u32; 6];
+        let mut moves = 0u32;
+        let mut spreads: Vec<u32> = Vec::new();
+        for seed in 0..seeds {
+            let game =
+                play_counting(&spec, seed * 7919 + index as u64, bot, &mut made, &mut spreads);
+            moves += spec.moves - game.moves_left;
+        }
+        all_spreads.extend_from_slice(&spreads);
+        let per100 = |n: u32| if moves == 0 { 0.0 } else { n as f64 * 100.0 / moves as f64 };
+        println!(
+            "{:<16} {:>8.1} {:>8.1} {:>8.1} {:>8.1} {:>8.1}",
+            spec.name,
+            per100(made[Special::LineH.code() as usize]),
+            per100(made[Special::LineV.code() as usize]),
+            per100(made[Special::Cross.code() as usize]),
+            per100(made[Special::Rainbow.code() as usize]),
+            per100(made[Special::Rocket.code() as usize]),
+        );
+        for (slot, value) in made.iter().enumerate() {
+            overall[slot] += value;
+        }
+        total_moves += moves;
+    }
+    println!();
+    println!("how long a clear takes to finish rippling, in milliseconds:");
+    let spread_at = |p: usize| percentile(&mut all_spreads.clone(), p).unwrap_or(0);
+    let instant = all_spreads.iter().filter(|s| **s == 0).count();
+    println!(
+        "  p50 {}   p90 {}   p99 {}   worst {}   ({:.0}% of clears are instant)",
+        spread_at(50),
+        spread_at(90),
+        spread_at(99),
+        spread_at(100),
+        instant as f64 * 100.0 / all_spreads.len().max(1) as f64,
+    );
+    println!();
+
+    let per100 = |n: u32| n as f64 * 100.0 / total_moves.max(1) as f64;
+    println!(
+        "{:<16} {:>8.1} {:>8.1} {:>8.1} {:>8.1} {:>8.1}",
+        "ALL",
+        per100(overall[1]),
+        per100(overall[2]),
+        per100(overall[3]),
+        per100(overall[4]),
+        per100(overall[5]),
+    );
+}
+
 fn run(bot: Bot, seeds: u64) {
     let name = match bot {
         Bot::First => "first legal move",
@@ -165,6 +226,56 @@ fn run(bot: Bot, seeds: u64) {
             detail.join(", "),
         );
     }
+}
+
+/// Plays a level, tallying which specials the run actually produced. Counting
+/// them is the only way to tell a rule that is rare from one that is dead.
+fn play_counting(
+    spec: &LevelSpec,
+    seed: u64,
+    bot: Bot,
+    made: &mut [u32; 6],
+    spreads: &mut Vec<u32>,
+) -> Game {
+    let mut game = Game::new(spec.clone(), seed);
+    for _ in 0..4_000 {
+        if game.status() != Status::Playing {
+            break;
+        }
+        if game.phase() == Phase::Idle {
+            let choice = match bot {
+                Bot::First => game.hint(),
+                Bot::Greedy => best_move(&game),
+            };
+            match choice {
+                Some((a, b)) => {
+                    game.try_swap(a, b);
+                }
+                None => break,
+            }
+        }
+        for _ in 0..64 {
+            if game.phase() == Phase::Idle || game.phase() == Phase::Finished {
+                break;
+            }
+            game.update(250.0);
+            // Every clear arrives as one batch of events, so the widest delay
+            // in a batch is how long that clear takes to finish rippling.
+            let mut widest = None;
+            for event in game.events() {
+                if event.kind == EV_SPECIAL_MADE && (event.special as usize) < made.len() {
+                    made[event.special as usize] += 1;
+                }
+                if event.kind == EV_CLEAR {
+                    widest = Some(widest.unwrap_or(0).max(event.value as u32));
+                }
+            }
+            if let Some(widest) = widest {
+                spreads.push(widest);
+            }
+        }
+    }
+    game
 }
 
 fn play(spec: &LevelSpec, seed: u64, bot: Bot) -> Game {

@@ -24,6 +24,10 @@ make serve    # builds the wasm module and serves web/ on :8080
 make smoke    # drives the built module from node, no browser needed
 ```
 
+Loading the page with `?debug` puts the engine and renderer on
+`window.twiddlygems`, which is how the animation timings get inspected from the
+console or from a screenshot script.
+
 `make smoke` runs two headless checks: one drives the module's ABI directly, and
 one boots the actual front end against a stubbed-out browser and plays a move
 through it. Neither knows what the board looks like, but between them they catch
@@ -114,11 +118,13 @@ square is a match in its own right.
 
 What a match leaves behind:
 
-- **A 2x2 square** leaves a **rocket**. It holds its cell until the clear has
-  finished resolving, then flies off and takes out one other gem — picked at
-  random for now, by preference later. Nothing falls until it lands, so the cell
-  it left and the cell it hit collapse in the same drop. A square outranks any
-  run tangled up with it: the whole shape clears, and the run earns nothing.
+- **A 2x2 square** leaves a **rocket**. It stays pinned in its cell while
+  gravity repairs the hole around it, waits out the rest of the cascade, and
+  only then flies off to take out one other gem — picked at random for now, by
+  preference later. Neither the cell it left nor the cell it is aimed at moves
+  until impact, so the two collapse in the same drop. The rocket is the
+  consolation prize: if the same clump also earns a line gem, a cross or a
+  rainbow, that is what the player gets instead.
 - **Four in a row** leaves a gem that clears *downward*; **four in a column**
   leaves one that clears *across*. They run against the grain on purpose — you
   finish a row by sliding a gem in from above or below, so the gem you are left
@@ -126,11 +132,17 @@ What a match leaves behind:
 - **An L or a T** leaves a gem that takes a row and a column together.
 - **Five in a line** leaves a **rainbow**.
 
-Specials are inert. A line gem or a cross sits where it is until an ordinary
-match of its own color sweeps it up, and only then goes off; shoving one around
-achieves nothing, and there are no special-against-special combinations.
+Specials are inert against ordinary gems. A line gem or a cross sits where it is
+until a match of its own color sweeps it up; shoving one against a plain gem
+achieves nothing.
 
-The rainbow is the exception, because it has no match of its own to wait for:
+Two specials swapped together always set each other off, each doing its own job:
+a cross takes a row and a column, a line gem takes its line. The one wrinkle is
+two gems facing the *same* way, which would otherwise clear the same line twice
+— there, the gem the player actually moved turns and clears across its own
+grain, so the pair still takes a row and a column.
+
+The rainbow answers to anything, because it has no match of its own to wait for:
 
 - against an ordinary gem it clears that whole color, setting off any clearing
   gems standing in it;
@@ -146,6 +158,46 @@ on color alone.
 
 Tap a gem and then a neighbor, or swipe one toward a neighbor; both work the
 same way. Progress is kept in the browser's local storage.
+
+## Timing and effects
+
+Animation is paced to be followed by eye rather than to get out of the way, and
+the engine owns all of it — the phase lengths are the constants at the top of
+[`src/game.rs`](src/game.rs).
+
+Two of those lengths are worked out per event rather than fixed. A clear runs
+until its furthest cell has popped: a blast travels outward from whatever set it
+off, a cell at a time, so a row clearer sweeps along its row instead of taking
+it all at once. Each cleared cell carries the delay it was given, which the page
+reads to hold that cell's debris back until the blast reaches it.
+
+The delay accumulates through a chain. A blast begins when the gem carrying it
+pops, so a line gem four cells into another gem's sweep does not fire until the
+sweep reaches it, and its own sweep starts from there — a clear really does
+travel across the board rather than happening everywhere at once. An ordinary
+match has no direction to travel in and pops as one.
+
+A rainbow is the exception in the other direction: the color it takes is
+scattered all over the board with no path between the cells, so those go off at
+random within a window instead of sweeping.
+
+Falling works the same way. Gems accelerate and then stop gaining speed, so a
+gem dropping the height of the board takes longer than one dropping a single
+row, and the fall lasts as long as the gem with furthest to go needs. Filling a
+hole in constant time regardless of depth is the tell-tale sign of a board that
+does not have gravity so much as a scheduled animation.
+
+A rocket's flight is worked out from distance rather than given a fixed
+duration. It eases up to a top speed and then holds it, so crossing the board
+takes longer than going next door instead of covering the extra ground faster —
+without the cap a long shot moves too quickly to follow.
+
+Every cleared cell throws off shards in its own color and a puff of smoke. A
+rocket strike raises an event of its own on top of the ordinary clear, and gets
+a much heavier burst with a blast ring, because it is the loudest thing that
+happens on the board. The engine emits the events;
+[`web/js/render.js`](web/js/render.js) owns the particles, capped so that
+clearing a whole color cannot bury a phone.
 
 ## Where this is going
 

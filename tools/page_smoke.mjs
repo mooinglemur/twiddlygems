@@ -101,6 +101,7 @@ globalThis.document = {
 const store = new Map();
 globalThis.window = {
   devicePixelRatio: 2,
+  location: { search: '', href: 'http://localhost/index.html' },
   localStorage: {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => store.set(key, value),

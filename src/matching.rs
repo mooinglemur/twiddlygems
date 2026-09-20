@@ -23,20 +23,17 @@ pub struct MatchGroup {
 impl MatchGroup {
     /// The special this shape earns, if any.
     ///
-    /// A square outranks everything: a group holding one leaves a rocket, and
-    /// any run tangled up with it clears as an ordinary match without earning a
-    /// gem of its own.
+    /// A run outranks a square. A 2x2 on its own leaves a rocket, but if the
+    /// same clump also earns a line gem, a cross or a rainbow, that is what the
+    /// player gets — the rocket is the consolation prize, not the trophy.
     ///
     /// The line gems run against the grain on purpose. To finish a row of four
     /// you slide a gem in from above or below, so the gem you are left with
     /// clears in the direction you were moving — down the column, not along the
     /// row you just completed.
     pub fn award(&self, specials: &SpecialSet) -> Special {
-        if self.squares > 0 {
-            return if specials.rocket { Special::Rocket } else { Special::None };
-        }
         let longest = self.h_run.max(self.v_run);
-        if specials.rainbow && longest >= 5 {
+        let from_runs = if specials.rainbow && longest >= 5 {
             Special::Rainbow
         } else if specials.cross && self.h_run >= 3 && self.v_run >= 3 {
             Special::Cross
@@ -46,6 +43,15 @@ impl MatchGroup {
             } else {
                 Special::LineH
             }
+        } else {
+            Special::None
+        };
+
+        if from_runs != Special::None {
+            return from_runs;
+        }
+        if self.squares > 0 && specials.rocket {
+            Special::Rocket
         } else {
             Special::None
         }
@@ -293,10 +299,11 @@ fn forms_square(view: &SwapView, p: Pos) -> bool {
 
 /// Whether swapping these two cells is a legal move.
 ///
-/// Specials are inert: a line gem or a cross goes off when an ordinary match of
-/// its color sweeps it up, not because it was pushed around. The rainbow is the
-/// exception — it has no match of its own to wait for, so swapping it against a
-/// gem is how it fires.
+/// Specials are inert against ordinary gems: a line gem or a cross goes off
+/// when a match of its color sweeps it up, not because it was pushed around.
+/// Two of them swapped together is a different matter — they set each other
+/// off. And the rainbow has no match of its own to wait for, so swapping it
+/// against anything is how it fires.
 pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
     if !a.is_adjacent(b) || !board.is_open(a) || !board.is_open(b) {
         return false;
@@ -306,6 +313,9 @@ pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
         _ => return false,
     };
     if ga.special == Special::Rainbow || gb.special == Special::Rainbow {
+        return true;
+    }
+    if ga.special.is_special() && gb.special.is_special() {
         return true;
     }
     let view = SwapView { board, a, b };
@@ -382,47 +392,113 @@ pub fn most_common_color(board: &Board) -> u8 {
     best as u8
 }
 
+/// How long each cell of a blast waits before it pops, per cell of distance
+/// from whatever set it off. A row clearer sweeps outward rather than taking
+/// the whole row at once, and because the delay accumulates through a chain,
+/// one special setting off another sends the clear travelling across the board.
+///
+/// At this pace a row sweeps in about a third of a second, and a chain of three
+/// specials takes most of a second to play out.
+pub const SPREAD_STEP_MS: f32 = 50.0;
+
+/// A rainbow takes a whole color at once, scattered all over the board, so
+/// there is no direction for it to spread in. Its cells go off at random within
+/// this window instead, which reads as the color crackling out rather than
+/// vanishing in one frame.
+pub const RAINBOW_SPREAD_MS: f32 = 420.0;
+
 /// The full set of cells a clear takes with it.
 pub struct Detonation {
     /// Every cell that ends up cleared, in the order it was reached.
     pub cleared: Vec<Pos>,
+    /// When each cleared cell pops, in milliseconds from the start of the
+    /// clear. Parallel to `cleared`.
+    pub delays: Vec<f32>,
     /// The specials that went off, in firing order.
     pub fired: Vec<(Pos, Special)>,
 }
 
-/// Grows an initial clear into its chain reaction: specials caught in the blast
-/// fire in turn, and so do the ones they catch.
-pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng) -> Detonation {
-    let mut marked = vec![false; (board.rows * board.cols) as usize];
-    let mut cleared: Vec<Pos> = Vec::new();
-    let mut fired: Vec<(Pos, Special)> = Vec::new();
-    let mut queue: Vec<Pos> = Vec::new();
+/// Accumulates a blast: which cells it takes, and when each one goes.
+struct Wave {
+    marked: Vec<bool>,
+    cols: i32,
+    cleared: Vec<Pos>,
+    delays: Vec<f32>,
+    queue: Vec<(Pos, f32)>,
+}
 
-    let push = |p: Pos, marked: &mut Vec<bool>, cleared: &mut Vec<Pos>, queue: &mut Vec<Pos>| {
+impl Wave {
+    fn new(board: &Board) -> Self {
+        Wave {
+            marked: vec![false; (board.rows * board.cols) as usize],
+            cols: board.cols,
+            cleared: Vec::new(),
+            delays: Vec::new(),
+            queue: Vec::new(),
+        }
+    }
+
+    /// Claims a cell for the blast. The first claim wins, so a cell caught by
+    /// two blasts pops on the earlier one.
+    fn push(&mut self, board: &Board, p: Pos, delay: f32) {
         if !board.contains(p) || board.gem(p).is_none() {
             return;
         }
-        let slot = (p.r * board.cols + p.c) as usize;
-        if marked[slot] {
+        let slot = (p.r * self.cols + p.c) as usize;
+        if self.marked[slot] {
             return;
         }
-        marked[slot] = true;
-        cleared.push(p);
-        queue.push(p);
+        self.marked[slot] = true;
+        self.cleared.push(p);
+        self.delays.push(delay);
+        self.queue.push((p, delay));
+    }
+}
+
+/// How far into a blast a given cell sits, measured along the shape the
+/// special actually clears, so the pops travel outward the way the blast does.
+fn spread_delay(origin: Pos, cell: Pos, special: Special) -> f32 {
+    let steps = match special {
+        Special::LineH => (cell.c - origin.c).abs(),
+        Special::LineV => (cell.r - origin.r).abs(),
+        Special::Cross => {
+            if cell.r == origin.r {
+                (cell.c - origin.c).abs()
+            } else {
+                (cell.r - origin.r).abs()
+            }
+        }
+        // A rainbow is handled by its caller, which scatters it at random.
+        _ => 0,
     };
+    steps as f32 * SPREAD_STEP_MS
+}
+
+/// Grows an initial clear into its chain reaction: specials caught in the blast
+/// fire in turn, and so do the ones they catch.
+///
+/// `seed_jitter_ms` scatters the starting cells in time rather than popping
+/// them together, which is what a rainbow wants; an ordinary match passes 0 so
+/// its three gems go as one.
+pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng, seed_jitter_ms: f32) -> Detonation {
+    let mut wave = Wave::new(board);
+    let mut fired: Vec<(Pos, Special)> = Vec::new();
 
     for seed in seeds {
-        push(*seed, &mut marked, &mut cleared, &mut queue);
+        let delay = if seed_jitter_ms > 0.0 {
+            rng.below(seed_jitter_ms as u32) as f32
+        } else {
+            0.0
+        };
+        wave.push(board, *seed, delay);
     }
 
-    // Nudge the rainbow's fallback color so repeated cascades are not identical.
     let fallback = most_common_color(board);
-    let _ = rng.next_u32();
 
     let mut head = 0;
     let mut hits: Vec<Pos> = Vec::new();
-    while head < queue.len() {
-        let p = queue[head];
+    while head < wave.queue.len() {
+        let (p, delay) = wave.queue[head];
         head += 1;
         let special = match board.gem(p) {
             Some(gem) => gem.special,
@@ -435,11 +511,19 @@ pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng) -> Detonation {
         hits.clear();
         blast(board, p, special, fallback, &mut hits);
         for hit in std::mem::take(&mut hits) {
-            push(hit, &mut marked, &mut cleared, &mut queue);
+            // A blast starts when the gem that carried it pops, and spreads
+            // outward from there — except a rainbow, whose cells are scattered
+            // and so go off in no particular order.
+            let step = if special == Special::Rainbow {
+                rng.below(RAINBOW_SPREAD_MS as u32) as f32
+            } else {
+                spread_delay(p, hit, special)
+            };
+            wave.push(board, hit, delay + step);
         }
     }
 
-    Detonation { cleared, fired }
+    Detonation { cleared: wave.cleared, delays: wave.delays, fired }
 }
 
 #[cfg(test)]
@@ -536,8 +620,9 @@ mod tests {
     }
 
     #[test]
-    fn a_square_outranks_a_run_it_touches() {
+    fn a_square_still_wins_against_a_run_that_earns_nothing() {
         // A 2x2 with a third gem extending the top row into a run of three.
+        // Three in a row is worth no gem of its own, so the rocket stands.
         let board = board_of(&["1114", "1145", "6789", "2345"]);
         let groups = find_matches(&board, &rules_for(&board));
         assert_eq!(groups.len(), 1, "the run and the square are one group");
@@ -559,6 +644,43 @@ mod tests {
         assert_eq!(groups[0].cells.len(), 6);
         assert!(groups[0].squares >= 2);
         assert_eq!(groups[0].award(&SpecialSet::ALL), Special::Rocket);
+    }
+
+    #[test]
+    fn a_run_of_four_outranks_the_square_it_contains() {
+        // Row 0 is four across and the left half of it is also a 2x2. The run
+        // is worth more, so that is what the player gets.
+        let board = board_of(&["1111", "1123", "4567", "8901"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].squares > 0, "the shape really does contain a square");
+        assert_eq!(groups[0].h_run, 4);
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::LineV);
+    }
+
+    #[test]
+    fn a_square_tangled_in_an_l_still_yields_the_cross() {
+        let board = board_of(&["1114", "1145", "1567", "8901"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].squares > 0);
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::Cross);
+    }
+
+    #[test]
+    fn two_specials_swapped_together_are_always_a_move() {
+        let mut board = board_of(&["12", "34"]);
+        let rules = rules_for(&board);
+        board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::Cross }));
+        assert!(
+            !is_useful_swap(&board, &rules, Pos::new(0, 0), Pos::new(0, 1)),
+            "a special against an ordinary gem still does nothing"
+        );
+        board.set_gem(Pos::new(0, 1), Some(Gem { color: 2, special: Special::LineH }));
+        assert!(
+            is_useful_swap(&board, &rules, Pos::new(0, 0), Pos::new(0, 1)),
+            "but two specials set each other off"
+        );
     }
 
     #[test]
@@ -642,10 +764,29 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng);
+        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 4);
         assert!(result.cleared.iter().all(|p| p.r == 1));
         assert_eq!(result.fired.len(), 1);
+    }
+
+    #[test]
+    fn a_line_clear_sweeps_outward_rather_than_popping_at_once() {
+        let mut board = board_of(&["1234", "5678", "1234", "5678"]);
+        board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
+        let mut rng = Rng::new(1);
+        let result = detonate(&board, &[Pos::new(1, 0)], &mut rng, 0.0);
+
+        for (cell, delay) in result.cleared.iter().zip(result.delays.iter()) {
+            let expected = (cell.c - 1 + 1) as f32 * SPREAD_STEP_MS;
+            let _ = expected;
+            assert_eq!(
+                *delay,
+                (cell.c as f32) * SPREAD_STEP_MS,
+                "cell {cell:?} should pop in step with its distance from the gem"
+            );
+        }
+        assert_eq!(result.delays[0], 0.0, "the gem that fired goes first");
     }
 
     #[test]
@@ -653,7 +794,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::Cross }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng);
+        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng, 0.0);
         // Four across plus four down, sharing the middle.
         assert_eq!(result.cleared.len(), 7);
     }
@@ -664,7 +805,7 @@ mod tests {
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         board.set_gem(Pos::new(1, 3), Some(Gem { color: 8, special: Special::LineV }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng);
+        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng, 0.0);
         assert_eq!(result.fired.len(), 2);
         assert!(result.cleared.contains(&Pos::new(0, 3)));
         assert!(result.cleared.contains(&Pos::new(3, 3)));
@@ -676,7 +817,7 @@ mod tests {
         board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
         board.set_gem(Pos::new(1, 2), Some(Gem { color: 7, special: Special::Rocket }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 0)], &mut rng);
+        let result = detonate(&board, &[Pos::new(1, 0)], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 4, "the row goes, and no further");
         assert_eq!(result.fired.len(), 1, "only the line gem fired");
     }
@@ -686,7 +827,7 @@ mod tests {
         let mut board = board_of(&["1111", "1111", "1123", "4567"]);
         board.set_gem(Pos::new(3, 0), Some(Gem { color: 4, special: Special::Rainbow }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(3, 0)], &mut rng);
+        let result = detonate(&board, &[Pos::new(3, 0)], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 11);
     }
 }

@@ -4,7 +4,7 @@
 // this file decides is what that looks like. Gems differ by shape as well as
 // hue so the board stays readable without relying on color alone.
 
-import { EMPTY_CELL, Flag, Special } from './engine.js';
+import { EMPTY_CELL, EventKind, Flag, Special } from './engine.js';
 
 export const PALETTE = [
   { name: 'Ruby', fill: '#e5484d', edge: '#7e1f25', shape: 'diamond' },
@@ -19,6 +19,15 @@ export const PALETTE = [
 
 const TAU = Math.PI * 2;
 
+/// Enough for a rainbow taking a whole color; past this the oldest simply stop
+/// being replaced, which is cheaper than dropping frames on a phone.
+const MAX_PARTICLES = 600;
+const SHARDS_PER_GEM = 9;
+const PUFFS_PER_GEM = 4;
+/// A rocket strike is the loudest thing on the board, so it throws far more.
+const SHARDS_PER_IMPACT = 28;
+const PUFFS_PER_IMPACT = 12;
+
 export class Renderer {
   constructor(canvas, engine) {
     this.canvas = canvas;
@@ -27,7 +36,159 @@ export class Renderer {
     this.cell = 0;
     this.pad = 0;
     this.hint = null;
+    /// Bursts waiting for their moment: a blast spreads outward, so each cell's
+    /// debris is held back until the clear actually reaches it.
+    this.pendingBursts = [];
+    this.particles = [];
+    this.lastFrame = null;
     this.layout();
+  }
+
+  /// Queues debris for everything the engine just cleared. Each event carries
+  /// the delay the engine assigned it, which is what makes a row clear ripple.
+  addEvents(events, now) {
+    for (const event of events) {
+      if (event.kind === EventKind.CLEAR) {
+        this.pendingBursts.push({ at: now + event.value, r: event.r, c: event.c, color: event.color });
+      } else if (event.kind === EventKind.ROCKET_HIT) {
+        this.pendingBursts.push({ at: now, r: event.r, c: event.c, color: event.color, impact: true });
+      }
+    }
+  }
+
+  /// Drops everything in flight, for a restart or a level change.
+  reset() {
+    this.pendingBursts.length = 0;
+    this.particles.length = 0;
+    this.lastFrame = null;
+  }
+
+  updateParticles(now) {
+    const dt = this.lastFrame === null ? 16 : Math.min(now - this.lastFrame, 50);
+    this.lastFrame = now;
+
+    if (this.pendingBursts.length > 0) {
+      const due = [];
+      const waiting = [];
+      for (const burst of this.pendingBursts) {
+        (burst.at <= now ? due : waiting).push(burst);
+      }
+      this.pendingBursts = waiting;
+      for (const burst of due) {
+        this.burst(burst);
+      }
+    }
+
+    let live = 0;
+    for (const particle of this.particles) {
+      particle.age += dt;
+      if (particle.age >= particle.life) {
+        continue;
+      }
+      particle.x += particle.vx * dt;
+      particle.y += particle.vy * dt;
+      particle.vy += particle.gravity * dt;
+      particle.vx *= particle.drag;
+      this.particles[live] = particle;
+      live += 1;
+    }
+    this.particles.length = live;
+  }
+
+  /// One cell's worth of debris: shards of the gem, and a puff of smoke. A
+  /// rocket strike throws the same thing much harder, with a blast ring.
+  burst({ r, c, color, impact = false }) {
+    if (this.particles.length > MAX_PARTICLES) {
+      return;
+    }
+    const { cell, pad } = this;
+    const x = pad + (c + 0.5) * cell;
+    const y = pad + (r + 0.5) * cell;
+    const gem = PALETTE[color % PALETTE.length];
+    const shards = impact ? SHARDS_PER_IMPACT : SHARDS_PER_GEM;
+    const puffs = impact ? PUFFS_PER_IMPACT : PUFFS_PER_GEM;
+    const force = impact ? 2.6 : 1;
+
+    if (impact) {
+      this.particles.push({
+        kind: 'ring',
+        x,
+        y,
+        vx: 0,
+        vy: 0,
+        gravity: 0,
+        drag: 1,
+        size: cell * 0.3,
+        color: '#ffd9a0',
+        age: 0,
+        life: 340,
+      });
+    }
+
+    for (let i = 0; i < shards; i += 1) {
+      const angle = (i / shards) * TAU + Math.random() * 0.6;
+      const speed = cell * (0.0016 + Math.random() * 0.0042) * force;
+      this.particles.push({
+        kind: 'shard',
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        gravity: cell * 0.0000055,
+        drag: 0.995,
+        size: cell * (0.06 + Math.random() * 0.09) * (impact ? 1.5 : 1),
+        color: Math.random() < (impact ? 0.45 : 0.25) ? '#ffe9b0' : gem.fill,
+        age: 0,
+        life: (360 + Math.random() * 320) * (impact ? 1.3 : 1),
+      });
+    }
+
+    for (let i = 0; i < puffs; i += 1) {
+      const angle = Math.random() * TAU;
+      const speed = cell * 0.0004 * Math.random() * force;
+      this.particles.push({
+        kind: 'smoke',
+        x: x + (Math.random() - 0.5) * cell * 0.3 * force,
+        y: y + (Math.random() - 0.5) * cell * 0.3 * force,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - cell * 0.00018,
+        gravity: -cell * 0.0000004,
+        drag: 0.99,
+        size: cell * (0.1 + Math.random() * 0.1) * (impact ? 1.6 : 1),
+        color: '#cfc6e8',
+        age: 0,
+        life: (520 + Math.random() * 360) * (impact ? 1.25 : 1),
+      });
+    }
+  }
+
+  drawParticles(ctx) {
+    for (const particle of this.particles) {
+      const t = particle.age / particle.life;
+      if (particle.kind === 'ring') {
+        // The shock of the strike, thrown outward and thinning as it goes.
+        ctx.globalAlpha = 0.7 * (1 - t);
+        ctx.strokeStyle = particle.color;
+        ctx.lineWidth = Math.max(1.5, particle.size * 0.22 * (1 - t));
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * (0.3 + t * 3.4), 0, TAU);
+        ctx.stroke();
+      } else if (particle.kind === 'smoke') {
+        // Smoke swells as it thins out.
+        ctx.globalAlpha = 0.34 * (1 - t) * (1 - t);
+        ctx.fillStyle = particle.color;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * (1 + t * 2.4), 0, TAU);
+        ctx.fill();
+      } else {
+        ctx.globalAlpha = Math.min(1, 2.2 * (1 - t));
+        ctx.fillStyle = particle.color;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.size * (1 - t * 0.7), 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** Sizes the canvas to the largest whole-cell board its container allows. */
@@ -117,6 +278,10 @@ export class Renderer {
     roundRect(ctx, 2, 2, this.width - 4, this.height - 4, Math.round(cell * 0.28));
     ctx.clip();
 
+    // Rockets are held back and drawn last: they fly over the board, so they
+    // must not slide underneath the gems they pass.
+    const airborne = [];
+
     for (let i = 0; i < cells.length / 4; i += 1) {
       const color = cells[i * 4];
       if (color === EMPTY_CELL) {
@@ -142,8 +307,7 @@ export class Renderer {
         ctx.stroke();
       }
 
-      drawGem(
-        ctx,
+      const args = [
         x,
         y,
         cell * 0.42 * scale,
@@ -152,7 +316,21 @@ export class Renderer {
         timeMs,
         offsets[i * 3],
         offsets[i * 3 + 1],
-      );
+      ];
+      if (special === Special.ROCKET) {
+        airborne.push(args);
+      } else {
+        drawGem(ctx, ...args);
+      }
+    }
+
+    this.updateParticles(timeMs);
+    if (this.particles.length > 0) {
+      this.drawParticles(ctx);
+    }
+
+    for (const args of airborne) {
+      drawGem(ctx, ...args);
     }
 
     ctx.restore();
