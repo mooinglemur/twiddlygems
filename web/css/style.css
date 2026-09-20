@@ -1,0 +1,179 @@
+/* Phone first: one column that fills the viewport exactly, with the board
+   taking whatever height the bars leave it. Nothing scrolls. */
+
+:root {
+  --bg: #151226;
+  --bg-deep: #0d0b18;
+  --panel: #221d3d;
+  --socket: #1a1630;
+  --ink: #f2eefc;
+  --ink-dim: #a79fc8;
+  --accent: #ffd166;
+  --danger: #ff6b6b;
+  --ok: #4ade80;
+  --radius: 14px;
+  --gap: clamp(6px, 1.6vw, 12px);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-deep);
+  color: var(--ink);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 720px;
+  margin: 0 auto;
+  padding:
+    calc(var(--gap) + env(safe-area-inset-top, 0px))
+    calc(var(--gap) + env(safe-area-inset-right, 0px))
+    calc(var(--gap) + env(safe-area-inset-bottom, 0px))
+    calc(var(--gap) + env(safe-area-inset-left, 0px));
+  gap: var(--gap);
+  background: radial-gradient(120% 80% at 50% 0%, #241f42 0%, var(--bg-deep) 70%);
+}
+
+/* ---- bars ---- */
+
+#topbar, #bottombar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  flex: 0 0 auto;
+}
+
+#level-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+#level-number { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+#level-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#score-box { display: flex; flex-direction: column; align-items: flex-end; }
+#score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.15rem; }
+.label { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+
+#moves-box { display: flex; align-items: baseline; gap: 6px; }
+#moves { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.3rem; }
+#moves.low { color: var(--danger); }
+.spacer { flex: 1; }
+
+/* ---- objectives ---- */
+
+#objectives {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: var(--gap);
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#objectives::-webkit-scrollbar { display: none; }
+
+.objective {
+  flex: 1 1 0;
+  min-width: 96px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.objective.met { outline: 2px solid var(--ok); }
+.objective-label { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--ink-dim); }
+.objective-swatch { width: 12px; height: 12px; border-radius: 4px; flex: 0 0 auto; }
+.objective-count { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 0.9rem; }
+.objective-bar { height: 4px; border-radius: 2px; background: var(--socket); overflow: hidden; }
+.objective-fill { height: 100%; width: 0%; background: var(--accent); transition: width 180ms ease-out; }
+.objective.met .objective-fill { background: var(--ok); }
+
+/* ---- board ---- */
+
+#stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+
+#board {
+  touch-action: none;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* ---- buttons ---- */
+
+button {
+  font: inherit;
+  color: var(--ink);
+  background: var(--socket);
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+button:active { transform: translateY(1px); }
+button[disabled] { opacity: 0.4; cursor: default; }
+.icon-button { font-size: 1.1rem; line-height: 1; padding: 10px 12px; }
+.text-button { font-weight: 600; }
+.primary { background: var(--accent); color: #2a1f00; font-weight: 700; }
+
+/* ---- overlay ---- */
+
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 6, 16, 0.78);
+  padding: 20px;
+  z-index: 10;
+}
+#overlay.hidden, .hidden { display: none; }
+
+#overlay-card {
+  background: var(--panel);
+  border-radius: 20px;
+  padding: 22px;
+  width: min(420px, 100%);
+  max-height: 80dvh;
+  overflow-y: auto;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+#overlay-title { margin: 0 0 8px; font-size: 1.4rem; }
+#overlay-body { margin: 0 0 18px; color: var(--ink-dim); }
+#overlay-buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+#level-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.level-chip { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; }
+.level-chip .n { font-size: 0.7rem; color: var(--ink-dim); }
+.level-chip .t { font-weight: 600; font-size: 0.82rem; }
+.level-chip.current { outline: 2px solid var(--accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .objective-fill { transition: none; }
+}

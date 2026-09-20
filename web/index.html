@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#151226">
+<meta name="description" content="Twiddly Gems, a match-3 puzzle">
+<title>Twiddly Gems</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <button id="levels-button" class="icon-button" type="button" aria-label="Choose a level">&#9776;</button>
+    <div id="level-title">
+      <span id="level-number">Level 1</span>
+      <span id="level-name">&nbsp;</span>
+    </div>
+    <div id="score-box">
+      <span class="label">Score</span>
+      <span id="score">0</span>
+    </div>
+  </header>
+
+  <ul id="objectives" aria-label="Level objectives"></ul>
+
+  <main id="stage">
+    <canvas id="board" aria-label="Game board" role="img"></canvas>
+  </main>
+
+  <footer id="bottombar">
+    <div id="moves-box">
+      <span id="moves">0</span>
+      <span class="label">moves left</span>
+    </div>
+    <div class="spacer"></div>
+    <button id="hint-button" class="text-button" type="button">Hint</button>
+    <button id="retry-button" class="text-button" type="button">Restart</button>
+  </footer>
+</div>
+
+<div id="overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="overlay-title">
+  <div id="overlay-card">
+    <h2 id="overlay-title">Level complete</h2>
+    <p id="overlay-body"></p>
+    <div id="level-grid" class="hidden"></div>
+    <div id="overlay-buttons"></div>
+  </div>
+</div>
+
+<noscript>Twiddly Gems needs JavaScript and WebAssembly.</noscript>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
