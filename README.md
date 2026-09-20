@@ -124,7 +124,9 @@ What a match leaves behind:
   preference later. Neither the cell it leaves nor the cell it is aimed at moves
   until impact, so the two collapse in the same drop. A rocket takes no part in
   matching while it waits: left matchable, a cascade could sweep it away before
-  it ever fired, quietly costing you the reward you earned. The rocket is also
+  it ever fired, quietly costing you the reward you earned. It wears no gem's
+  colors either — it belongs to no color, and tinting it like a gem would
+  promise a match it will not make. The rocket is also
   the consolation prize — if the same clump earns a line gem, a cross or a
   rainbow, that is what you get instead.
 - **Four in a row** leaves a gem that clears *downward*; **four in a column**

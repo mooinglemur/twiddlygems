@@ -26,6 +26,12 @@ const MAX_PARTICLES = 600;
 /// backing store grows with the square of this, and a phone's canvas is
 /// fill-rate bound long before it is logic bound.
 const MAX_DPR = 2;
+
+/// A rocket wears no gem's colors, because it belongs to no color.
+const ROCKET_BODY = '#eceaf6';
+const ROCKET_EDGE = '#39325c';
+const ROCKET_FIN = '#e5484d';
+const ROCKET_PORT = '#8fd0ff';
 const SHARDS_PER_GEM = 9;
 const PUFFS_PER_GEM = 4;
 /// A rocket strike is the loudest thing on the board, so it throws far more.
@@ -237,7 +243,8 @@ export class Renderer {
   /// blitting 64 bitmaps does not. Rainbows and rockets are cached in their
   /// resting orientation and turned as they are blitted.
   sprite(color, special) {
-    const key = color * 8 + special;
+    // Every rocket is identical, so they all share one entry.
+    const key = (special === Special.ROCKET ? 0 : color) * 8 + special;
     const cached = this.sprites.get(key);
     if (cached) {
       return cached;
@@ -452,6 +459,12 @@ export class Renderer {
 function paintGem(ctx, x, y, radius, colorIndex, special) {
   const gem = PALETTE[colorIndex % PALETTE.length];
 
+  if (special === Special.ROCKET) {
+    // A rocket is not a gem wearing a hat: it replaces the gem entirely.
+    drawRocketBody(ctx, x, y, radius);
+    return;
+  }
+
   ctx.save();
   shapePath(ctx, gem.shape, x, y, radius);
   ctx.fillStyle = gem.fill;
@@ -492,10 +505,6 @@ function drawExhaust(ctx, x, y, r, angle) {
 
 function drawSpecial(ctx, x, y, radius, special, gem) {
   if (special === Special.NONE) {
-    return;
-  }
-  if (special === Special.ROCKET) {
-    drawRocketBody(ctx, x, y, radius, gem);
     return;
   }
   ctx.save();
@@ -547,12 +556,15 @@ function drawSpecial(ctx, x, y, radius, special, gem) {
 }
 
 /// A rocket at rest, nose up. It is turned toward its target as it is blitted.
-function drawRocketBody(ctx, x, y, r, gem) {
+///
+/// Deliberately in no gem's colors. A rocket takes no part in matching, so
+/// tinting it like a gem would promise a color it does not have.
+function drawRocketBody(ctx, x, y, r) {
   ctx.save();
   ctx.translate(x, y);
 
   // Fins, then the body over them.
-  ctx.fillStyle = gem.edge;
+  ctx.fillStyle = ROCKET_FIN;
   ctx.beginPath();
   ctx.moveTo(-r * 0.42, r * 0.15);
   ctx.lineTo(-r * 0.92, r * 0.72);
@@ -568,17 +580,29 @@ function drawRocketBody(ctx, x, y, r, gem) {
   ctx.lineTo(-r * 0.46, r * 0.72);
   ctx.quadraticCurveTo(-r * 0.52, -r * 0.3, 0, -r);
   ctx.closePath();
-  ctx.fillStyle = gem.fill;
+  ctx.fillStyle = ROCKET_BODY;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+  ctx.strokeStyle = ROCKET_EDGE;
   ctx.lineWidth = Math.max(1.5, r * 0.12);
   ctx.stroke();
 
-  // A porthole, so it reads as a rocket rather than an arrow.
+  // A nose cone and a porthole, so it reads as a rocket rather than an arrow.
   ctx.beginPath();
-  ctx.arc(0, -r * 0.18, r * 0.2, 0, TAU);
-  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.moveTo(0, -r);
+  ctx.quadraticCurveTo(r * 0.3, -r * 0.62, r * 0.24, -r * 0.34);
+  ctx.lineTo(-r * 0.24, -r * 0.34);
+  ctx.quadraticCurveTo(-r * 0.3, -r * 0.62, 0, -r);
+  ctx.closePath();
+  ctx.fillStyle = ROCKET_FIN;
   ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(0, r * 0.08, r * 0.19, 0, TAU);
+  ctx.fillStyle = ROCKET_PORT;
+  ctx.fill();
+  ctx.strokeStyle = ROCKET_EDGE;
+  ctx.lineWidth = Math.max(1, r * 0.07);
+  ctx.stroke();
 
   ctx.restore();
 }
