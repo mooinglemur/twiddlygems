@@ -29,10 +29,13 @@ pub enum Special {
     LineH,
     /// Clears its whole column.
     LineV,
-    /// Clears the 3x3 block around it.
-    Bomb,
+    /// Clears its row and its column together.
+    Cross,
     /// Clears every gem sharing a color with whatever it was swapped against.
     Rainbow,
+    /// Holds its cell until the clear has finished resolving, then flies off
+    /// and takes out one other gem. Nothing falls until it lands.
+    Rocket,
 }
 
 impl Special {
@@ -41,8 +44,9 @@ impl Special {
             Special::None => 0,
             Special::LineH => 1,
             Special::LineV => 2,
-            Special::Bomb => 3,
+            Special::Cross => 3,
             Special::Rainbow => 4,
+            Special::Rocket => 5,
         }
     }
 

@@ -16,6 +16,8 @@ use crate::rules::{Rules, MAX_COLORS};
 pub const SWAP_MS: f32 = 130.0;
 pub const CLEAR_MS: f32 = 190.0;
 pub const FALL_MS: f32 = 240.0;
+/// Rockets travel deliberately: the flight is meant to be watched.
+pub const LAUNCH_MS: f32 = 520.0;
 pub const SHUFFLE_MS: f32 = 420.0;
 
 const SCORE_PER_GEM: u64 = 50;
@@ -71,6 +73,9 @@ pub enum Phase {
     Idle,
     Swapping { elapsed: f32, reverting: bool },
     Clearing { elapsed: f32 },
+    /// Rockets are in the air. Nothing falls until they land, so that the cells
+    /// they came from and the cells they hit collapse together.
+    Launching { elapsed: f32 },
     Falling { elapsed: f32 },
     Shuffling { elapsed: f32 },
     /// The level is over; nothing advances until it is reloaded.
@@ -83,9 +88,10 @@ impl Phase {
             Phase::Idle => 0,
             Phase::Swapping { .. } => 1,
             Phase::Clearing { .. } => 2,
-            Phase::Falling { .. } => 3,
-            Phase::Shuffling { .. } => 4,
-            Phase::Finished => 5,
+            Phase::Launching { .. } => 3,
+            Phase::Falling { .. } => 4,
+            Phase::Shuffling { .. } => 5,
+            Phase::Finished => 6,
         }
     }
 }
@@ -128,6 +134,8 @@ pub struct Game {
     clearing: Vec<Pos>,
     /// Specials to drop in once the clear finishes.
     pending: Vec<(Pos, Gem)>,
+    /// Rockets in flight, as (the cell launched from, the cell aimed at).
+    launches: Vec<(Pos, Pos)>,
     /// Per-cell row a gem started falling from; see [`Board::collapse`].
     origin: Vec<f32>,
     cascade: u32,
@@ -150,6 +158,7 @@ impl Game {
             status: Status::Playing,
             clearing: Vec::new(),
             pending: Vec::new(),
+            launches: Vec::new(),
             origin: Vec::new(),
             cascade: 0,
             swap: None,
@@ -178,6 +187,7 @@ impl Game {
         self.status = Status::Playing;
         self.clearing.clear();
         self.pending.clear();
+        self.launches.clear();
         self.cascade = 0;
         self.swap = None;
         self.selected = None;
@@ -285,6 +295,7 @@ impl Game {
                 Phase::Idle | Phase::Finished => break,
                 Phase::Swapping { elapsed, .. } => (SWAP_MS, elapsed),
                 Phase::Clearing { elapsed } => (CLEAR_MS, elapsed),
+                Phase::Launching { elapsed } => (LAUNCH_MS, elapsed),
                 Phase::Falling { elapsed } => (FALL_MS, elapsed),
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
             };
@@ -307,6 +318,7 @@ impl Game {
         self.phase = match self.phase {
             Phase::Swapping { reverting, .. } => Phase::Swapping { elapsed, reverting },
             Phase::Clearing { .. } => Phase::Clearing { elapsed },
+            Phase::Launching { .. } => Phase::Launching { elapsed },
             Phase::Falling { .. } => Phase::Falling { elapsed },
             Phase::Shuffling { .. } => Phase::Shuffling { elapsed },
             other => other,
@@ -317,6 +329,7 @@ impl Game {
         match self.phase {
             Phase::Swapping { reverting, .. } => self.finish_swap(reverting),
             Phase::Clearing { .. } => self.finish_clear(),
+            Phase::Launching { .. } => self.finish_launch(),
             Phase::Falling { .. } => self.finish_fall(),
             Phase::Shuffling { .. } => self.finish_shuffle(),
             Phase::Idle | Phase::Finished => {}
@@ -365,8 +378,97 @@ impl Game {
         for (p, gem) in std::mem::take(&mut self.pending) {
             self.board.set_gem(p, Some(gem));
         }
+
+        // Any rocket left standing flies before gravity runs, so that the hole
+        // it leaves and the hole it makes fill in together.
+        let rockets = self.rockets_on_board();
+        if !rockets.is_empty() {
+            self.launches = self.pick_targets(&rockets);
+            if !self.launches.is_empty() {
+                for (from, _) in self.launches.clone() {
+                    self.events.push(Event::at(
+                        EV_SPECIAL_FIRED,
+                        from,
+                        255,
+                        Special::Rocket,
+                        self.cascade.max(1),
+                    ));
+                }
+                self.phase = Phase::Launching { elapsed: 0.0 };
+                return;
+            }
+            // Nothing left worth hitting: drop the rockets rather than stall.
+            for p in rockets {
+                self.board.set_gem(p, None);
+            }
+        }
+
         self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
         self.phase = Phase::Falling { elapsed: 0.0 };
+    }
+
+    /// The rockets go off together, taking one gem each, and only then does the
+    /// board collapse.
+    fn finish_launch(&mut self) {
+        let launches = std::mem::take(&mut self.launches);
+        let cascade = self.cascade.max(1);
+        let mut gems_hit = 0u64;
+
+        for (from, _) in &launches {
+            self.board.set_gem(*from, None);
+        }
+        for (_, target) in &launches {
+            let gem = match self.board.gem(*target) {
+                Some(gem) => gem,
+                None => continue,
+            };
+            if (gem.color as usize) < MAX_COLORS {
+                self.progress.cleared[gem.color as usize] += 1;
+            }
+            self.board.peel_jelly(*target);
+            self.events.push(Event::at(EV_CLEAR, *target, gem.color, gem.special, cascade));
+            self.board.set_gem(*target, None);
+            gems_hit += 1;
+        }
+
+        self.progress.score +=
+            (gems_hit * SCORE_PER_GEM + launches.len() as u64 * SCORE_PER_SPECIAL_FIRED)
+                * cascade as u64;
+        self.progress.jelly_left = self.board.jelly_remaining();
+        self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
+        self.phase = Phase::Falling { elapsed: 0.0 };
+    }
+
+    fn rockets_on_board(&self) -> Vec<Pos> {
+        self.board
+            .positions()
+            .filter(|p| {
+                self.board.gem(*p).map_or(false, |gem| gem.special == Special::Rocket)
+            })
+            .collect()
+    }
+
+    /// Picks what each rocket flies at. For now that is any other live gem,
+    /// chosen at random; preference rules come later. Rockets are never aimed
+    /// at each other, and no two pick the same gem.
+    fn pick_targets(&mut self, rockets: &[Pos]) -> Vec<(Pos, Pos)> {
+        let mut candidates: Vec<Pos> = self
+            .board
+            .positions()
+            .filter(|p| {
+                self.board.gem(*p).map_or(false, |gem| gem.special != Special::Rocket)
+            })
+            .collect();
+
+        let mut launches = Vec::new();
+        for from in rockets {
+            if candidates.is_empty() {
+                break;
+            }
+            let pick = self.rng.below(candidates.len() as u32) as usize;
+            launches.push((*from, candidates.swap_remove(pick)));
+        }
+        launches
     }
 
     fn finish_fall(&mut self) {
@@ -408,7 +510,7 @@ impl Game {
         }
 
         if let Some((a, b)) = swap {
-            seeds.extend(self.combo_seeds(a, b));
+            seeds.extend(self.rainbow_seeds(a, b));
         }
 
         if seeds.is_empty() {
@@ -428,98 +530,91 @@ impl Game {
                 }
             }
         }
+        if group.squares > 0 {
+            // No swap to pin it to, so the rocket takes the place of whichever
+            // gem arrived last: the one that fell furthest, and of those the
+            // lowest and furthest right.
+            return group
+                .cells
+                .iter()
+                .copied()
+                .max_by_key(|cell| {
+                    let i = (cell.r * self.board.cols + cell.c) as usize;
+                    let fell = self
+                        .origin
+                        .get(i)
+                        .map_or(0.0, |from| cell.r as f32 - from);
+                    ((fell * 64.0) as i32, cell.r, cell.c)
+                })
+                .unwrap_or(group.pivot);
+        }
         group.pivot
     }
 
-    /// Extra cells cleared because the player swapped two specials together,
-    /// or swapped a special with anything at all.
-    fn combo_seeds(&mut self, a: Pos, b: Pos) -> Vec<Pos> {
+    /// Extra cells cleared because the player swapped a rainbow against
+    /// something.
+    ///
+    /// The rainbow is the only gem that answers to a swap. Every other special
+    /// sits there until an ordinary match of its color sweeps it up.
+    ///
+    /// Against an ordinary gem it takes that whole color, and any clearing gems
+    /// standing in that color go off as they are swept up. Against a clearing
+    /// gem it goes further: every gem of that color becomes a copy of it, and
+    /// they all fire at once. Against another rainbow it takes the board.
+    fn rainbow_seeds(&mut self, a: Pos, b: Pos) -> Vec<Pos> {
         let (ga, gb) = match (self.board.gem(a), self.board.gem(b)) {
             (Some(ga), Some(gb)) => (ga, gb),
             _ => return Vec::new(),
         };
-        let mut seeds: Vec<Pos> = Vec::new();
 
-        match (ga.special, gb.special) {
-            (Special::None, Special::None) => {}
+        let (rainbow, partner) = match (ga.special, gb.special) {
+            (Special::Rainbow, Special::Rainbow) => {
+                // Spend both, so neither fires a second time on its own color.
+                self.spend_rainbow(a);
+                self.spend_rainbow(b);
+                return self.board.occupied();
+            }
+            (Special::Rainbow, _) => (a, gb),
+            (_, Special::Rainbow) => (b, ga),
+            _ => return Vec::new(),
+        };
 
-            // Two rainbows wipe the board.
-            (Special::Rainbow, Special::Rainbow) => seeds.extend(self.board.occupied()),
+        let color = partner.color;
+        let targets: Vec<Pos> = self
+            .board
+            .positions()
+            .filter(|p| self.board.color(*p) == Some(color))
+            .collect();
 
-            // A rainbow adopts its partner: every gem of that color goes, and
-            // if the partner was itself special, they all go off as one.
-            (Special::Rainbow, _) | (_, Special::Rainbow) => {
-                let (rainbow, partner_pos) =
-                    if ga.special == Special::Rainbow { (a, b) } else { (b, a) };
-                let partner = self.board.gem(partner_pos).expect("checked above");
-                let targets: Vec<Pos> = self
-                    .board
-                    .positions()
-                    .filter(|p| self.board.color(*p) == Some(partner.color))
-                    .collect();
-                if partner.special.is_special() {
-                    for p in &targets {
-                        if let Some(gem) = self.board.gem(*p) {
-                            self.board.set_gem(*p, Some(Gem { special: partner.special, ..gem }));
-                        }
-                    }
+        // A rainbow swapped against a clearing gem hands that gem's power to
+        // the whole color before setting the lot off.
+        if matches!(partner.special, Special::LineH | Special::LineV | Special::Cross) {
+            for p in &targets {
+                if let Some(gem) = self.board.gem(*p) {
+                    self.board.set_gem(*p, Some(Gem { special: partner.special, ..gem }));
                 }
-                seeds.push(rainbow);
-                seeds.extend(targets);
             }
-
-            // Two line gems cross, whichever way each was facing.
-            (Special::LineH | Special::LineV, Special::LineH | Special::LineV) => {
-                self.board.set_gem(a, Some(Gem { special: Special::LineH, ..ga }));
-                self.board.set_gem(b, Some(Gem { special: Special::LineV, ..gb }));
-                seeds.push(a);
-                seeds.push(b);
-            }
-
-            // Bomb meets bomb: a wider crater than either alone.
-            (Special::Bomb, Special::Bomb) => {
-                seeds.extend(self.block_around(b, 2));
-                seeds.push(a);
-            }
-
-            // Bomb meets line: a three-wide cross through the bomb.
-            (Special::Bomb, Special::LineH | Special::LineV)
-            | (Special::LineH | Special::LineV, Special::Bomb) => {
-                let center = if ga.special == Special::Bomb { a } else { b };
-                for offset in -1..=1 {
-                    for c in 0..self.board.cols {
-                        seeds.push(Pos::new(center.r + offset, c));
-                    }
-                    for r in 0..self.board.rows {
-                        seeds.push(Pos::new(r, center.c + offset));
-                    }
-                }
-                seeds.push(a);
-                seeds.push(b);
-            }
-
-            // One special, one ordinary gem: the special simply goes off.
-            (special, Special::None) if special.is_special() => seeds.push(a),
-            (Special::None, special) if special.is_special() => seeds.push(b),
-
-            _ => {}
         }
 
+        // The rainbow is spent on the color the player chose. Left as it is, it
+        // would be swept up as an unfired special and go off a second time
+        // against whatever color happened to be commonest.
+        self.spend_rainbow(rainbow);
+
+        let mut seeds = vec![rainbow];
+        seeds.extend(targets);
         seeds.retain(|p| self.board.gem(*p).is_some());
         seeds
     }
 
-    fn block_around(&self, center: Pos, radius: i32) -> Vec<Pos> {
-        let mut cells = Vec::new();
-        for r in (center.r - radius)..=(center.r + radius) {
-            for c in (center.c - radius)..=(center.c + radius) {
-                let p = Pos::new(r, c);
-                if self.board.contains(p) {
-                    cells.push(p);
-                }
+    /// Turns a rainbow back into an ordinary gem, its power already accounted
+    /// for by the caller.
+    fn spend_rainbow(&mut self, p: Pos) {
+        if let Some(gem) = self.board.gem(p) {
+            if gem.special == Special::Rainbow {
+                self.board.set_gem(p, Some(Gem { special: Special::None, ..gem }));
             }
         }
-        cells
     }
 
     /// Fires the clear: scores it, tallies it against the objectives, and puts
@@ -624,7 +719,7 @@ impl Game {
                 // the colors run out we accept it and let the shuffle catch it.
                 for _ in 0..12 {
                     color = self.rng.below(colors) as u8;
-                    if !self.would_start_a_run(p, color) {
+                    if !self.would_start_a_shape(p, color) {
                         break;
                     }
                 }
@@ -638,9 +733,9 @@ impl Game {
         }
     }
 
-    /// Whether placing `color` here completes a run with the cells already
-    /// dealt above and to the left.
-    fn would_start_a_run(&self, p: Pos, color: u8) -> bool {
+    /// Whether placing `color` here completes a run or a 2x2 with the cells
+    /// already dealt above and to the left.
+    fn would_start_a_shape(&self, p: Pos, color: u8) -> bool {
         let min = self.spec.rules.min_match;
         let run_back = |dr: i32, dc: i32| {
             let mut n = 1;
@@ -651,7 +746,15 @@ impl Game {
             }
             n
         };
-        run_back(0, -1) >= min || run_back(-1, 0) >= min
+        if run_back(0, -1) >= min || run_back(-1, 0) >= min {
+            return true;
+        }
+        // The deal fills top to bottom, left to right, so the only square this
+        // gem can close is the one above and to its left.
+        self.spec.rules.square_match
+            && self.board.color(Pos::new(p.r - 1, p.c)) == Some(color)
+            && self.board.color(Pos::new(p.r, p.c - 1)) == Some(color)
+            && self.board.color(Pos::new(p.r - 1, p.c - 1)) == Some(color)
     }
 
     /// Rearranges the gems already on the board into a position that has a move.
@@ -742,6 +845,25 @@ impl Game {
                     }
                 }
             }
+            Phase::Launching { elapsed } => {
+                let t = (elapsed / LAUNCH_MS).clamp(0.0, 1.0);
+                // Slow away from the cell, quick into the target.
+                let travel = t * t;
+                for (from, to) in self.launches.clone() {
+                    self.set_offset(
+                        from,
+                        (to.c - from.c) as f32 * travel,
+                        (to.r - from.r) as f32 * travel,
+                    );
+                    // The target only flinches once the rocket is nearly on it.
+                    let impact = ((t - 0.65) / 0.35).clamp(0.0, 1.0);
+                    let i = (to.r * self.board.cols + to.c) as usize;
+                    if i * 3 + 2 < self.offs_buf.len() {
+                        self.offs_buf[i * 3 + 2] = 1.0 - impact;
+                        self.cells_buf[i * 4 + 3] |= Self::FLAG_CLEARING;
+                    }
+                }
+            }
             Phase::Falling { elapsed } => {
                 let travel = 1.0 - ease_out(elapsed / FALL_MS);
                 for p in self.board.positions() {
@@ -807,6 +929,21 @@ mod tests {
             seen.extend_from_slice(game.events());
         }
         panic!("board never settled");
+    }
+
+    /// Steps until the first batch of clears and hands back just that batch, so
+    /// a test can weigh one clear rather than everything the cascade went on to
+    /// do afterwards.
+    fn first_clear(game: &mut Game) -> Vec<Event> {
+        for _ in 0..400 {
+            game.update(16.0);
+            let batch: Vec<Event> =
+                game.events().iter().filter(|e| e.kind == EV_CLEAR).copied().collect();
+            if !batch.is_empty() {
+                return batch;
+            }
+        }
+        panic!("nothing ever cleared");
     }
 
     fn paint(game: &mut Game, rows: &[&str]) {
@@ -902,7 +1039,7 @@ mod tests {
     }
 
     #[test]
-    fn a_run_of_four_leaves_a_line_gem_under_the_swap() {
+    fn a_row_of_four_leaves_a_downward_clearer_under_the_swap() {
         let mut game = Game::new(spec(5, 5, 6, 10), 6);
         // Row 0 reads 1,1,2,1,3 — no match yet. Lifting the 1 at (1,2) into the
         // gap completes four across, and the special should land on the cell
@@ -911,10 +1048,232 @@ mod tests {
         assert!(matching::find_matches(&game.board, game.rules()).is_empty());
         assert!(game.try_swap(Pos::new(0, 2), Pos::new(1, 2)));
         let events = settle(&mut game);
+        // Later cascades may well earn their own gems, so only the first one
+        // says anything about the run the player made.
         let made: Vec<&Event> = events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).collect();
-        assert_eq!(made.len(), 1, "a four-run makes exactly one special");
-        assert_eq!(made[0].special, Special::LineH.code());
+        assert!(!made.is_empty(), "a four-run should leave a gem behind");
+        assert_eq!(
+            made[0].special,
+            Special::LineV.code(),
+            "a row of four is finished with a vertical slide, so it clears downward"
+        );
         assert_eq!((made[0].r, made[0].c), (0, 2), "it lands under the swap");
+    }
+
+    /// A board where swapping (1,1) with (1,2) closes a 2x2 of color 1 in the
+    /// corner and forms nothing else.
+    fn square_board() -> [&'static str; 4] {
+        ["1123", "1214", "4505", "5430"]
+    }
+
+    #[test]
+    fn a_two_by_two_leaves_a_rocket_where_the_player_swapped() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 71);
+        paint(&mut game, &square_board());
+        assert!(matching::find_matches(&game.board, game.rules()).is_empty());
+        assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
+
+        let events = settle(&mut game);
+        let made: Vec<&Event> = events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).collect();
+        assert!(!made.is_empty(), "a 2x2 should leave a rocket");
+        assert_eq!(made[0].special, Special::Rocket.code());
+        assert_eq!((made[0].r, made[0].c), (1, 1), "it takes the swapped gem's place");
+    }
+
+    #[test]
+    fn nothing_falls_until_the_rocket_lands() {
+        // The whole point of the launch phase: the cells the square left and
+        // the cell the rocket takes out collapse in the same fall, so the board
+        // must still be full of holes while the rocket is in the air.
+        let mut game = Game::new(spec(4, 4, 6, 10), 72);
+        paint(&mut game, &square_board());
+        assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
+
+        let mut saw_launch = false;
+        for _ in 0..400 {
+            if let Phase::Launching { .. } = game.phase() {
+                saw_launch = true;
+                let rockets: Vec<Pos> = game
+                    .board
+                    .positions()
+                    .filter(|p| {
+                        game.board.gem(*p).map_or(false, |g| g.special == Special::Rocket)
+                    })
+                    .collect();
+                assert_eq!(rockets.len(), 1, "one square, one rocket");
+                let holes = game
+                    .board
+                    .positions()
+                    .filter(|p| game.board.is_open(*p) && game.board.gem(*p).is_none())
+                    .count();
+                assert!(
+                    holes >= 3,
+                    "the other three cells of the square should still be empty, found {holes}"
+                );
+                break;
+            }
+            game.update(16.0);
+        }
+        assert!(saw_launch, "the board never entered its launch phase");
+
+        settle(&mut game);
+        assert!(
+            game.board.positions().all(|p| !game.board.is_open(p) || game.board.gem(p).is_some()),
+            "everything should have filled in once the rocket landed"
+        );
+        assert!(game.progress.score > 0);
+    }
+
+    #[test]
+    fn a_rocket_takes_exactly_one_gem_somewhere_else() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 73);
+        paint(&mut game, &square_board());
+        game.try_swap(Pos::new(1, 1), Pos::new(1, 2));
+
+        // Step to the moment of impact and note what it was aimed at.
+        let mut target = None;
+        for _ in 0..400 {
+            if let Phase::Launching { .. } = game.phase() {
+                target = game.launches.first().map(|(_, to)| *to);
+                break;
+            }
+            game.update(16.0);
+        }
+        let target = target.expect("a rocket should have been launched");
+        assert_ne!(target, Pos::new(1, 1), "a rocket does not target its own cell");
+    }
+
+    #[test]
+    fn rockets_never_aim_at_each_other() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 74);
+        let rockets = [Pos::new(0, 0), Pos::new(3, 3)];
+        for p in rockets {
+            let gem = game.board.gem(p).expect("the board is full");
+            game.board.set_gem(p, Some(Gem { special: Special::Rocket, ..gem }));
+        }
+        let launches = game.pick_targets(&rockets);
+        assert_eq!(launches.len(), 2, "both rockets should find something");
+        for (from, to) in &launches {
+            assert!(!rockets.contains(to), "a rocket was aimed at another rocket");
+            assert_ne!(from, to);
+        }
+        assert_ne!(launches[0].1, launches[1].1, "two rockets should not share a target");
+    }
+
+    /// A 6x6 Latin square: no runs, no 2x2s, and exactly six cells of each
+    /// color, which makes rainbow effects easy to count.
+    fn latin_board() -> [&'static str; 6] {
+        ["012345", "123450", "234501", "345012", "450123", "501234"]
+    }
+
+    #[test]
+    fn a_rainbow_swapped_against_a_gem_takes_that_color_and_nothing_else() {
+        let mut game = Game::new(spec(6, 6, 6, 10), 81);
+        paint(&mut game, &latin_board());
+        assert!(matching::find_matches(&game.board, game.rules()).is_empty());
+        // (0,0) is color 0; make it a rainbow and swap it onto the 1 beside it.
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+
+        assert!(game.try_swap(Pos::new(0, 0), Pos::new(0, 1)));
+        let cleared = first_clear(&mut game);
+
+        // Six 1s plus the spent rainbow itself. Anything more in this first
+        // clear would mean it fired a second time against another color.
+        let ones = cleared.iter().filter(|e| e.color == 1).count();
+        assert_eq!(ones, 6, "every gem of the chosen color should go");
+        assert_eq!(cleared.len(), 7, "the chosen color and the rainbow, nothing else");
+    }
+
+    #[test]
+    fn a_rainbow_sets_off_clearing_gems_it_sweeps_up() {
+        let mut game = Game::new(spec(6, 6, 6, 10), 82);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+        // One of the 1s is a row clearer, and it should go off as it is taken.
+        game.board.set_gem(Pos::new(2, 5), Some(Gem { color: 1, special: Special::LineH }));
+
+        assert!(game.try_swap(Pos::new(0, 0), Pos::new(0, 1)));
+        let cleared = first_clear(&mut game);
+        assert!(
+            cleared.len() > 7,
+            "the row clearer should have taken its row along with the color, saw {}",
+            cleared.len()
+        );
+    }
+
+    #[test]
+    fn a_rainbow_swapped_against_a_clearing_gem_spreads_it_to_the_whole_color() {
+        let mut game = Game::new(spec(6, 6, 6, 10), 83);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+        game.board.set_gem(Pos::new(0, 1), Some(Gem { color: 1, special: Special::Cross }));
+
+        assert!(game.try_swap(Pos::new(0, 0), Pos::new(0, 1)));
+        let events = settle(&mut game);
+
+        let crosses = events
+            .iter()
+            .filter(|e| e.kind == EV_SPECIAL_FIRED && e.special == Special::Cross.code())
+            .count();
+        assert!(
+            crosses >= 6,
+            "every gem of that color should have become a cross and fired, saw {crosses}"
+        );
+        // Six crosses sitting on a Latin square cover every row and column.
+        let cleared = events.iter().filter(|e| e.kind == EV_CLEAR).count();
+        assert!(cleared >= 30, "that should take almost the whole board, saw {cleared}");
+    }
+
+    #[test]
+    fn two_rainbows_take_the_whole_board() {
+        let mut game = Game::new(spec(6, 6, 6, 10), 84);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(3, 3), Some(Gem { color: 0, special: Special::Rainbow }));
+        game.board.set_gem(Pos::new(3, 4), Some(Gem { color: 1, special: Special::Rainbow }));
+
+        assert!(game.try_swap(Pos::new(3, 3), Pos::new(3, 4)));
+        let events = settle(&mut game);
+        let cleared = events.iter().filter(|e| e.kind == EV_CLEAR).count();
+        assert_eq!(cleared, 36, "every cell on the board");
+    }
+
+    #[test]
+    fn a_special_sits_still_until_a_match_of_its_color_reaches_it() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 75);
+        paint(&mut game, &["0234", "2340", "3112", "4021"]);
+        game.board.set_gem(Pos::new(2, 1), Some(Gem { color: 1, special: Special::Cross }));
+
+        // Pushing the cross around achieves nothing on its own.
+        assert!(game.try_swap(Pos::new(2, 1), Pos::new(1, 1)));
+        let _ = settle(&mut game);
+        assert_eq!(game.progress.score, 0, "shoving a cross is not a move");
+        assert_eq!(game.moves_left, 10, "and it costs nothing");
+        assert_eq!(
+            game.board.gem(Pos::new(2, 1)).map(|g| g.special),
+            Some(Special::Cross),
+            "the cross should have slid back"
+        );
+    }
+
+    #[test]
+    fn a_cross_goes_off_when_a_match_sweeps_it_up() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 76);
+        paint(&mut game, &["0234", "2340", "3112", "4021"]);
+        game.board.set_gem(Pos::new(2, 1), Some(Gem { color: 1, special: Special::Cross }));
+        assert!(matching::find_matches(&game.board, game.rules()).is_empty());
+
+        // Swapping brings a third 1 into row 2, which catches the cross.
+        assert!(game.try_swap(Pos::new(2, 3), Pos::new(3, 3)));
+        let events = settle(&mut game);
+
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == EV_SPECIAL_FIRED && e.special == Special::Cross.code()),
+            "the cross should have fired"
+        );
+        let cleared = events.iter().filter(|e| e.kind == EV_CLEAR).count();
+        assert!(cleared >= 7, "a cross takes a row and a column, saw {cleared} cells");
     }
 
     #[test]

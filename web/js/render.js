@@ -142,7 +142,17 @@ export class Renderer {
         ctx.stroke();
       }
 
-      drawGem(ctx, x, y, cell * 0.42 * scale, color, special, timeMs);
+      drawGem(
+        ctx,
+        x,
+        y,
+        cell * 0.42 * scale,
+        color,
+        special,
+        timeMs,
+        offsets[i * 3],
+        offsets[i * 3 + 1],
+      );
     }
 
     ctx.restore();
@@ -171,9 +181,19 @@ export class Renderer {
   }
 }
 
-/** Draws one gem: body, highlight, then whatever special marking it carries. */
-function drawGem(ctx, x, y, radius, colorIndex, special, timeMs) {
+/**
+ * Draws one gem: body, highlight, then whatever special marking it carries.
+ *
+ * `dx`/`dy` are the cell's current offset, which for a rocket in flight is the
+ * direction it is travelling, so it can be pointed at what it is about to hit.
+ */
+function drawGem(ctx, x, y, radius, colorIndex, special, timeMs, dx = 0, dy = 0) {
   const gem = PALETTE[colorIndex % PALETTE.length];
+
+  if (special === Special.ROCKET) {
+    drawRocket(ctx, x, y, radius, gem, dx, dy);
+    return;
+  }
 
   ctx.save();
   shapePath(ctx, gem.shape, x, y, radius);
@@ -217,16 +237,16 @@ function drawSpecial(ctx, x, y, radius, special, timeMs) {
       }
       ctx.stroke();
     }
-  } else if (special === Special.BOMB) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-    ctx.lineWidth = Math.max(2, radius * 0.14);
+  } else if (special === Special.CROSS) {
+    // Bars both ways, since it takes a row and a column together.
+    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+    ctx.lineWidth = Math.max(2, radius * 0.16);
     ctx.beginPath();
-    ctx.arc(x, y, radius * 0.52, 0, TAU);
+    ctx.moveTo(x - radius * 0.8, y);
+    ctx.lineTo(x + radius * 0.8, y);
+    ctx.moveTo(x, y - radius * 0.8);
+    ctx.lineTo(x, y + radius * 0.8);
     ctx.stroke();
-    ctx.fillStyle = 'rgba(20,16,32,0.85)';
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 0.22, 0, TAU);
-    ctx.fill();
   } else if (special === Special.RAINBOW) {
     // Slowly turning wedges, so it reads as the wildcard at a glance.
     const spin = (timeMs / 1400) % TAU;
@@ -243,6 +263,64 @@ function drawSpecial(ctx, x, y, radius, special, timeMs) {
     ctx.arc(x, y, radius * 0.2, 0, TAU);
     ctx.fill();
   }
+
+  ctx.restore();
+}
+
+/**
+ * A rocket, nosed toward wherever it is heading. A freshly made one has no
+ * travel yet, so it sits pointing up until it launches.
+ */
+function drawRocket(ctx, x, y, r, gem, dx, dy) {
+  const travelling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
+  const angle = travelling ? Math.atan2(dy, dx) + Math.PI / 2 : 0;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  if (travelling) {
+    // A short exhaust trailing the nose.
+    const flame = ctx.createLinearGradient(0, r * 0.6, 0, r * 1.9);
+    flame.addColorStop(0, 'rgba(255,209,102,0.85)');
+    flame.addColorStop(1, 'rgba(255,120,60,0)');
+    ctx.fillStyle = flame;
+    ctx.beginPath();
+    ctx.moveTo(-r * 0.36, r * 0.6);
+    ctx.lineTo(r * 0.36, r * 0.6);
+    ctx.lineTo(0, r * 1.9);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Fins, then the body over them.
+  ctx.fillStyle = gem.edge;
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.42, r * 0.15);
+  ctx.lineTo(-r * 0.92, r * 0.72);
+  ctx.lineTo(-r * 0.42, r * 0.72);
+  ctx.moveTo(r * 0.42, r * 0.15);
+  ctx.lineTo(r * 0.92, r * 0.72);
+  ctx.lineTo(r * 0.42, r * 0.72);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(0, -r);
+  ctx.quadraticCurveTo(r * 0.52, -r * 0.3, r * 0.46, r * 0.72);
+  ctx.lineTo(-r * 0.46, r * 0.72);
+  ctx.quadraticCurveTo(-r * 0.52, -r * 0.3, 0, -r);
+  ctx.closePath();
+  ctx.fillStyle = gem.fill;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+  ctx.lineWidth = Math.max(1.5, r * 0.12);
+  ctx.stroke();
+
+  // A porthole, so it reads as a rocket rather than an arrow.
+  ctx.beginPath();
+  ctx.arc(0, -r * 0.18, r * 0.2, 0, TAU);
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.fill();
 
   ctx.restore();
 }

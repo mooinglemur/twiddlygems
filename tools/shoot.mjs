@@ -19,6 +19,9 @@ const OUT = process.argv[2] ?? 'shots';
 const BROWSER = process.env.BROWSER ?? 'google-chrome-stable';
 const PORT = Number(process.env.SHOT_PORT ?? 8099);
 const DEBUG_PORT = Number(process.env.SHOT_DEBUG_PORT ?? 9333);
+// Which level to photograph. Level 1 has specials switched off, so point this
+// at a later one to see line, cross and rocket gems on a real board.
+const LEVEL = Number(process.env.SHOT_LEVEL ?? 0);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 await mkdir(OUT, { recursive: true });
@@ -139,7 +142,7 @@ for (const [name, metrics] of [
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
   await sleep(600);
   await evaluate(
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 3, level: 0 }))`,
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 10, level: ${LEVEL} }))`,
   );
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
   await sleep(2200);

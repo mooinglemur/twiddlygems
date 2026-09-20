@@ -4,8 +4,9 @@ use crate::board::{Board, Pos, Special};
 use crate::rng::Rng;
 use crate::rules::{Rules, SpecialSet, MAX_COLORS};
 
-/// One connected clump of matched gems. Overlapping runs (an L or a T) arrive
-/// as a single group so the shape can earn a single special.
+/// One connected clump of matched gems. Overlapping shapes — an L, a T, a 2x2
+/// with a run hanging off it — arrive as a single group, so a shape earns one
+/// special rather than one per run.
 #[derive(Clone, Debug)]
 pub struct MatchGroup {
     pub cells: Vec<Pos>,
@@ -13,23 +14,37 @@ pub struct MatchGroup {
     /// Longest horizontal run inside the group, 0 if none reached `min_match`.
     pub h_run: i32,
     pub v_run: i32,
+    /// How many 2x2 blocks the group contains.
+    pub squares: u32,
     /// Where a special created by this group should land.
     pub pivot: Pos,
 }
 
 impl MatchGroup {
     /// The special this shape earns, if any.
+    ///
+    /// A square outranks everything: a group holding one leaves a rocket, and
+    /// any run tangled up with it clears as an ordinary match without earning a
+    /// gem of its own.
+    ///
+    /// The line gems run against the grain on purpose. To finish a row of four
+    /// you slide a gem in from above or below, so the gem you are left with
+    /// clears in the direction you were moving — down the column, not along the
+    /// row you just completed.
     pub fn award(&self, specials: &SpecialSet) -> Special {
+        if self.squares > 0 {
+            return if specials.rocket { Special::Rocket } else { Special::None };
+        }
         let longest = self.h_run.max(self.v_run);
         if specials.rainbow && longest >= 5 {
             Special::Rainbow
-        } else if specials.bomb && self.h_run >= 3 && self.v_run >= 3 {
-            Special::Bomb
+        } else if specials.cross && self.h_run >= 3 && self.v_run >= 3 {
+            Special::Cross
         } else if specials.line && longest == 4 {
             if self.h_run >= self.v_run {
-                Special::LineH
-            } else {
                 Special::LineV
+            } else {
+                Special::LineH
             }
         } else {
             Special::None
@@ -37,31 +52,40 @@ impl MatchGroup {
     }
 }
 
-/// A run of same-colored gems found during the scan.
-struct Run {
+/// A run or a square found during the scan.
+struct Shape {
     cells: Vec<Pos>,
-    horizontal: bool,
     color: u8,
+    kind: ShapeKind,
 }
 
-/// Scans the whole board for runs of at least `rules.min_match` and merges
-/// overlapping ones into groups.
+#[derive(Clone, Copy, PartialEq)]
+enum ShapeKind {
+    Row,
+    Column,
+    Square,
+}
+
+/// Scans the whole board for runs of at least `rules.min_match` and, when the
+/// rules allow it, 2x2 blocks; overlapping shapes are merged into one group.
 pub fn find_matches(board: &Board, rules: &Rules) -> Vec<MatchGroup> {
-    let min = rules.min_match;
-    let mut runs: Vec<Run> = Vec::new();
+    let mut shapes: Vec<Shape> = Vec::new();
 
     for r in 0..board.rows {
-        collect_runs(board, min, &mut runs, true, r);
+        collect_runs(board, rules.min_match, &mut shapes, true, r);
     }
     for c in 0..board.cols {
-        collect_runs(board, min, &mut runs, false, c);
+        collect_runs(board, rules.min_match, &mut shapes, false, c);
+    }
+    if rules.square_match {
+        collect_squares(board, &mut shapes);
     }
 
-    // Runs that share a cell belong to the same shape.
-    let mut parent: Vec<usize> = (0..runs.len()).collect();
+    // Shapes that share a cell are one clump.
+    let mut parent: Vec<usize> = (0..shapes.len()).collect();
     let mut owner: Vec<Option<usize>> = vec![None; (board.rows * board.cols) as usize];
-    for (i, run) in runs.iter().enumerate() {
-        for cell in &run.cells {
+    for (i, shape) in shapes.iter().enumerate() {
+        for cell in &shape.cells {
             let slot = (cell.r * board.cols + cell.c) as usize;
             match owner[slot] {
                 Some(j) => union(&mut parent, i, j),
@@ -71,31 +95,32 @@ pub fn find_matches(board: &Board, rules: &Rules) -> Vec<MatchGroup> {
     }
 
     let mut groups: Vec<MatchGroup> = Vec::new();
-    let mut group_of: Vec<Option<usize>> = vec![None; runs.len()];
-    for (i, run) in runs.iter().enumerate() {
+    let mut group_of: Vec<Option<usize>> = vec![None; shapes.len()];
+    for (i, shape) in shapes.iter().enumerate() {
         let root = find(&mut parent, i);
         let index = match group_of[root] {
             Some(g) => g,
             None => {
                 groups.push(MatchGroup {
                     cells: Vec::new(),
-                    color: run.color,
+                    color: shape.color,
                     h_run: 0,
                     v_run: 0,
-                    pivot: run.cells[0],
+                    squares: 0,
+                    pivot: shape.cells[0],
                 });
                 group_of[root] = Some(groups.len() - 1);
                 groups.len() - 1
             }
         };
         let group = &mut groups[index];
-        let len = run.cells.len() as i32;
-        if run.horizontal {
-            group.h_run = group.h_run.max(len);
-        } else {
-            group.v_run = group.v_run.max(len);
+        let len = shape.cells.len() as i32;
+        match shape.kind {
+            ShapeKind::Row => group.h_run = group.h_run.max(len),
+            ShapeKind::Column => group.v_run = group.v_run.max(len),
+            ShapeKind::Square => group.squares += 1,
         }
-        for cell in &run.cells {
+        for cell in &shape.cells {
             if !group.cells.contains(cell) {
                 group.cells.push(*cell);
             }
@@ -109,7 +134,7 @@ pub fn find_matches(board: &Board, rules: &Rules) -> Vec<MatchGroup> {
 }
 
 /// Walks one row (or column) accumulating same-colored stretches.
-fn collect_runs(board: &Board, min: i32, runs: &mut Vec<Run>, horizontal: bool, line: i32) {
+fn collect_runs(board: &Board, min: i32, shapes: &mut Vec<Shape>, horizontal: bool, line: i32) {
     let length = if horizontal { board.cols } else { board.rows };
     let mut start = 0;
     while start < length {
@@ -126,21 +151,50 @@ fn collect_runs(board: &Board, min: i32, runs: &mut Vec<Run>, horizontal: bool, 
             end += 1;
         }
         if end - start >= min {
-            runs.push(Run {
+            shapes.push(Shape {
                 cells: (start..end).map(pos).collect(),
-                horizontal,
                 color,
+                kind: if horizontal { ShapeKind::Row } else { ShapeKind::Column },
             });
         }
         start = end;
     }
 }
 
-/// The cell a created special should occupy: the corner of an L or T, else the
+/// Every 2x2 block of one color, by its top-left corner.
+fn collect_squares(board: &Board, shapes: &mut Vec<Shape>) {
+    for r in 0..board.rows - 1 {
+        for c in 0..board.cols - 1 {
+            let corner = Pos::new(r, c);
+            let color = match board.color(corner) {
+                Some(color) => color,
+                None => continue,
+            };
+            let cells = [
+                corner,
+                Pos::new(r, c + 1),
+                Pos::new(r + 1, c),
+                Pos::new(r + 1, c + 1),
+            ];
+            if cells.iter().all(|cell| board.color(*cell) == Some(color)) {
+                shapes.push(Shape { cells: cells.to_vec(), color, kind: ShapeKind::Square });
+            }
+        }
+    }
+}
+
+/// Where a created special lands when the player's own swap is not part of the
+/// group: the junction of an L or T, the far corner of a square, else the
 /// middle of the run.
 fn natural_pivot(group: &MatchGroup) -> Pos {
+    if group.squares > 0 {
+        return *group
+            .cells
+            .iter()
+            .max_by_key(|cell| (cell.r, cell.c))
+            .expect("a group always has cells");
+    }
     if group.h_run >= 3 && group.v_run >= 3 {
-        // The junction is the cell with neighbors on both axes inside the group.
         for cell in &group.cells {
             let horizontal_neighbor = group
                 .cells
@@ -210,8 +264,39 @@ fn forms_match(view: &SwapView, p: Pos, min: i32) -> bool {
     1 + reach(0, -1) + reach(0, 1) >= min || 1 + reach(-1, 0) + reach(1, 0) >= min
 }
 
-/// Whether swapping these two cells is a legal move: it either lands a match or
-/// sets off a special.
+/// Whether the gem that would sit at `p` completes a 2x2 block. Checks all four
+/// blocks that touch the cell, since the gem could be any corner of one.
+fn forms_square(view: &SwapView, p: Pos) -> bool {
+    let color = match view.color(p) {
+        Some(color) => color,
+        None => return false,
+    };
+    for dr in [-1, 0] {
+        for dc in [-1, 0] {
+            let corner = Pos::new(p.r + dr, p.c + dc);
+            let cells = [
+                corner,
+                Pos::new(corner.r, corner.c + 1),
+                Pos::new(corner.r + 1, corner.c),
+                Pos::new(corner.r + 1, corner.c + 1),
+            ];
+            if cells
+                .iter()
+                .all(|cell| view.board.contains(*cell) && view.color(*cell) == Some(color))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Whether swapping these two cells is a legal move.
+///
+/// Specials are inert: a line gem or a cross goes off when an ordinary match of
+/// its color sweeps it up, not because it was pushed around. The rainbow is the
+/// exception — it has no match of its own to wait for, so swapping it against a
+/// gem is how it fires.
 pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
     if !a.is_adjacent(b) || !board.is_open(a) || !board.is_open(b) {
         return false;
@@ -220,12 +305,14 @@ pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
         (Some(ga), Some(gb)) => (ga, gb),
         _ => return false,
     };
-    // Any swap that moves a special is worth making.
-    if ga.special.is_special() || gb.special.is_special() {
+    if ga.special == Special::Rainbow || gb.special == Special::Rainbow {
         return true;
     }
     let view = SwapView { board, a, b };
-    forms_match(&view, a, rules.min_match) || forms_match(&view, b, rules.min_match)
+    if forms_match(&view, a, rules.min_match) || forms_match(&view, b, rules.min_match) {
+        return true;
+    }
+    rules.square_match && (forms_square(&view, a) || forms_square(&view, b))
 }
 
 /// The first legal move on the board, scanning top-left to bottom-right.
@@ -241,10 +328,12 @@ pub fn find_move(board: &Board, rules: &Rules) -> Option<(Pos, Pos)> {
     None
 }
 
-/// What a special does when it goes off.
+/// What a special does when it goes off. A rocket does nothing here: it waits
+/// for the clear to finish and then flies, which the game drives as its own
+/// phase.
 fn blast(board: &Board, p: Pos, special: Special, rainbow_color: u8, out: &mut Vec<Pos>) {
     match special {
-        Special::None => {}
+        Special::None | Special::Rocket => {}
         Special::LineH => {
             for c in 0..board.cols {
                 out.push(Pos::new(p.r, c));
@@ -255,11 +344,12 @@ fn blast(board: &Board, p: Pos, special: Special, rainbow_color: u8, out: &mut V
                 out.push(Pos::new(r, p.c));
             }
         }
-        Special::Bomb => {
-            for r in (p.r - 1)..=(p.r + 1) {
-                for c in (p.c - 1)..=(p.c + 1) {
-                    out.push(Pos::new(r, c));
-                }
+        Special::Cross => {
+            for c in 0..board.cols {
+                out.push(Pos::new(p.r, c));
+            }
+            for r in 0..board.rows {
+                out.push(Pos::new(r, p.c));
             }
         }
         Special::Rainbow => {
@@ -338,7 +428,7 @@ pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng) -> Detonation {
             Some(gem) => gem.special,
             None => continue,
         };
-        if !special.is_special() {
+        if !special.is_special() || special == Special::Rocket {
             continue;
         }
         fired.push((p, special));
@@ -398,11 +488,21 @@ mod tests {
     }
 
     #[test]
-    fn a_run_of_four_earns_a_line_gem() {
+    fn a_row_of_four_earns_a_gem_that_clears_downward() {
+        // Four across is finished by sliding a gem in vertically, so the gem it
+        // leaves clears vertically too.
         let board = board_of(&["1111", "2345", "6789", "2345"]);
         let groups = find_matches(&board, &rules_for(&board));
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].h_run, 4);
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::LineV);
+    }
+
+    #[test]
+    fn a_column_of_four_earns_a_gem_that_clears_across() {
+        let board = board_of(&["1234", "1345", "1456", "1567"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups[0].v_run, 4);
         assert_eq!(groups[0].award(&SpecialSet::ALL), Special::LineH);
     }
 
@@ -414,20 +514,72 @@ mod tests {
     }
 
     #[test]
-    fn an_l_shape_is_one_group_and_earns_a_bomb() {
-        // A vertical three down the left meeting a horizontal three along the top.
-        let board = board_of(&["111", "123", "145"]);
+    fn an_l_shape_is_one_group_and_earns_a_cross() {
+        // A vertical three down the left meeting a horizontal three along the
+        // top, with the corner cells kept apart so no 2x2 forms.
+        let board = board_of(&["1112", "1231", "1452", "2345"]);
         let groups = find_matches(&board, &rules_for(&board));
         assert_eq!(groups.len(), 1, "the two runs are one shape");
-        assert_eq!(groups[0].cells.len(), 5);
-        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::Bomb);
+        assert_eq!(groups[0].squares, 0);
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::Cross);
         assert_eq!(groups[0].pivot, Pos::new(0, 0), "the special lands on the corner");
+    }
+
+    #[test]
+    fn a_two_by_two_is_a_match_on_its_own() {
+        let board = board_of(&["1123", "1145", "6789", "2345"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].cells.len(), 4);
+        assert_eq!(groups[0].squares, 1);
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::Rocket);
+    }
+
+    #[test]
+    fn a_square_outranks_a_run_it_touches() {
+        // A 2x2 with a third gem extending the top row into a run of three.
+        let board = board_of(&["1114", "1145", "6789", "2345"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups.len(), 1, "the run and the square are one group");
+        assert_eq!(groups[0].cells.len(), 5, "the whole shape clears");
+        assert_eq!(groups[0].squares, 1);
+        assert_eq!(
+            groups[0].award(&SpecialSet::ALL),
+            Special::Rocket,
+            "the square wins and the run earns nothing of its own"
+        );
+    }
+
+    #[test]
+    fn overlapping_squares_are_one_group_and_one_rocket() {
+        // A 2x3 block holds two overlapping 2x2s.
+        let board = board_of(&["1114", "1115", "6789", "2345"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].cells.len(), 6);
+        assert!(groups[0].squares >= 2);
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::Rocket);
+    }
+
+    #[test]
+    fn squares_can_be_switched_off() {
+        let board = board_of(&["1123", "1145", "6789", "2345"]);
+        let rules = Rules { square_match: false, ..rules_for(&board) };
+        assert!(find_matches(&board, &rules).is_empty());
     }
 
     #[test]
     fn disabled_specials_award_nothing() {
         let board = board_of(&["1111", "2345", "6789", "2345"]);
         let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups[0].award(&SpecialSet::NONE), Special::None);
+    }
+
+    #[test]
+    fn a_square_still_clears_when_rockets_are_switched_off() {
+        let board = board_of(&["1123", "1145", "6789", "2345"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert_eq!(groups.len(), 1, "the square is a match whatever it earns");
         assert_eq!(groups[0].award(&SpecialSet::NONE), Special::None);
     }
 
@@ -441,35 +593,48 @@ mod tests {
     fn useful_swap_sees_the_match_it_would_make() {
         let board = board_of(&["121", "112", "345"]);
         let rules = rules_for(&board);
-        // Swapping (1,0) with (0,0) lines up three 1s down column 0? No — the
-        // useful move here is (0,1) with (1,1), which puts a 1 at (0,1).
         assert!(is_useful_swap(&board, &rules, Pos::new(0, 1), Pos::new(1, 1)));
         assert!(!is_useful_swap(&board, &rules, Pos::new(2, 0), Pos::new(2, 1)));
     }
 
     #[test]
-    fn a_swap_involving_a_special_is_always_useful() {
+    fn useful_swap_sees_a_square_it_would_make() {
+        // Swapping (1,1) with (1,2) brings a 1 under the pair above it,
+        // closing a 2x2 in the corner without forming any run of three.
+        let board = board_of(&["1123", "1213", "4567", "5678"]);
+        let rules = rules_for(&board);
+        assert!(is_useful_swap(&board, &rules, Pos::new(1, 1), Pos::new(1, 2)));
+        let no_squares = Rules { square_match: false, ..rules };
+        assert!(
+            !is_useful_swap(&board, &no_squares, Pos::new(1, 1), Pos::new(1, 2)),
+            "with squares off that swap does nothing"
+        );
+    }
+
+    #[test]
+    fn specials_no_longer_make_any_swap_worth_it() {
         let mut board = board_of(&["12", "34"]);
         let rules = rules_for(&board);
-        assert!(!is_useful_swap(&board, &rules, Pos::new(0, 0), Pos::new(0, 1)));
-        board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::Bomb }));
+        board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::Cross }));
+        assert!(
+            !is_useful_swap(&board, &rules, Pos::new(0, 0), Pos::new(0, 1)),
+            "a cross waits to be matched, it is not a battering ram"
+        );
+    }
+
+    #[test]
+    fn a_rainbow_is_the_one_gem_worth_swapping_anywhere() {
+        let mut board = board_of(&["12", "34"]);
+        let rules = rules_for(&board);
+        board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::Rainbow }));
         assert!(is_useful_swap(&board, &rules, Pos::new(0, 0), Pos::new(0, 1)));
     }
 
     #[test]
     fn find_move_reports_none_on_a_locked_board() {
-        // A Latin square is stuck: every row and column already holds four
-        // distinct colors, and one swap can never bring three together.
+        // A Latin square has no run available, and no 2x2 either.
         let board = board_of(&["1234", "2341", "3412", "4123"]);
         assert!(find_move(&board, &rules_for(&board)).is_none());
-    }
-
-    #[test]
-    fn find_move_spots_a_swap_a_checkerboard_still_allows() {
-        // Tempting to call this locked, but lifting a 1 into row 0 completes
-        // three across, so the board is live.
-        let board = board_of(&["1212", "2121", "1212", "2121"]);
-        assert_eq!(find_move(&board, &rules_for(&board)), Some((Pos::new(0, 1), Pos::new(1, 1))));
     }
 
     #[test]
@@ -484,25 +649,36 @@ mod tests {
     }
 
     #[test]
+    fn a_cross_takes_a_row_and_a_column() {
+        let mut board = board_of(&["1234", "5678", "1234", "5678"]);
+        board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::Cross }));
+        let mut rng = Rng::new(1);
+        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng);
+        // Four across plus four down, sharing the middle.
+        assert_eq!(result.cleared.len(), 7);
+    }
+
+    #[test]
     fn specials_set_each_other_off() {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         board.set_gem(Pos::new(1, 3), Some(Gem { color: 8, special: Special::LineV }));
         let mut rng = Rng::new(1);
         let result = detonate(&board, &[Pos::new(1, 1)], &mut rng);
-        // The row goes, and the column gem it catches takes its column too.
         assert_eq!(result.fired.len(), 2);
         assert!(result.cleared.contains(&Pos::new(0, 3)));
         assert!(result.cleared.contains(&Pos::new(3, 3)));
     }
 
     #[test]
-    fn a_bomb_clears_its_neighborhood_and_stops_at_the_edge() {
+    fn a_rocket_caught_in_a_blast_does_not_go_off_early() {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
-        board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::Bomb }));
+        board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
+        board.set_gem(Pos::new(1, 2), Some(Gem { color: 7, special: Special::Rocket }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(0, 0)], &mut rng);
-        assert_eq!(result.cleared.len(), 4, "a corner bomb only has four cells to take");
+        let result = detonate(&board, &[Pos::new(1, 0)], &mut rng);
+        assert_eq!(result.cleared.len(), 4, "the row goes, and no further");
+        assert_eq!(result.fired.len(), 1, "only the line gem fired");
     }
 
     #[test]
@@ -511,7 +687,6 @@ mod tests {
         board.set_gem(Pos::new(3, 0), Some(Gem { color: 4, special: Special::Rainbow }));
         let mut rng = Rng::new(1);
         let result = detonate(&board, &[Pos::new(3, 0)], &mut rng);
-        // Every 1 on the board goes, plus the rainbow itself.
         assert_eq!(result.cleared.len(), 11);
     }
 }

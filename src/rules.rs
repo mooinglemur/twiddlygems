@@ -23,17 +23,21 @@ pub enum SwapMode {
 /// Which special gems a match can create.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SpecialSet {
-    /// A run of exactly 4 creates a gem that clears its row or column.
+    /// A run of exactly 4 creates a gem that clears across the run.
     pub line: bool,
-    /// An L or T shaped match creates a gem that blows a 3x3 hole.
-    pub bomb: bool,
+    /// An L or T shaped match creates a gem that clears a row and a column.
+    pub cross: bool,
     /// A run of 5 or more creates a gem that clears a whole color.
     pub rainbow: bool,
+    /// A 2x2 block creates a rocket that flies off at another gem.
+    pub rocket: bool,
 }
 
 impl SpecialSet {
-    pub const ALL: SpecialSet = SpecialSet { line: true, bomb: true, rainbow: true };
-    pub const NONE: SpecialSet = SpecialSet { line: false, bomb: false, rainbow: false };
+    pub const ALL: SpecialSet =
+        SpecialSet { line: true, cross: true, rainbow: true, rocket: true };
+    pub const NONE: SpecialSet =
+        SpecialSet { line: false, cross: false, rainbow: false, rocket: false };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,6 +48,8 @@ pub struct Rules {
     pub colors: u8,
     /// Shortest run that counts as a match.
     pub min_match: i32,
+    /// Whether a 2x2 block of one color counts as a match on its own.
+    pub square_match: bool,
     pub specials: SpecialSet,
     pub refill: RefillMode,
     pub swap: SwapMode,
@@ -63,6 +69,7 @@ impl Default for Rules {
             cols: 8,
             colors: 6,
             min_match: 3,
+            square_match: true,
             specials: SpecialSet::ALL,
             refill: RefillMode::TopSpawn,
             swap: SwapMode::Orthogonal,

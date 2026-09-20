@@ -29,7 +29,9 @@ one boots the actual front end against a stubbed-out browser and plays a move
 through it. Neither knows what the board looks like, but between them they catch
 the faults that leave a blank page. `make shots` goes further and plays the game
 in a real headless Chrome over the DevTools Protocol, at phone and desktop sizes,
-writing screenshots to `shots/` and failing if the page threw anything.
+writing screenshots to `shots/` and failing if the page threw anything. Set
+`SHOT_LEVEL` to photograph a later level — level 1 has specials switched off, so
+it never shows one.
 
 (If you reach for `chrome --screenshot` instead, note that `--virtual-time-budget`
 freezes the compositor: `requestAnimationFrame` fires two or three times, the
@@ -107,22 +109,43 @@ difficulty rather than fix it: the ladder still wants playtesting.
 
 ## The game
 
-Swap two neighboring gems to line up three or more. Runs of four leave a gem that
-clears its row or column, an L or a T leaves a bomb that takes out a 3x3 block,
-and five in a line leaves a rainbow that clears every gem of whatever color it is
-swapped against. Specials caught in a blast set each other off, and swapping two
-specials together combines them — two line gems cross, two bombs make a wider
-crater, a bomb and a line make a three-wide cross, and two rainbows take the
-board.
+Swap two neighboring gems to line up three or more, or to close a 2x2 block — a
+square is a match in its own right.
+
+What a match leaves behind:
+
+- **A 2x2 square** leaves a **rocket**. It holds its cell until the clear has
+  finished resolving, then flies off and takes out one other gem — picked at
+  random for now, by preference later. Nothing falls until it lands, so the cell
+  it left and the cell it hit collapse in the same drop. A square outranks any
+  run tangled up with it: the whole shape clears, and the run earns nothing.
+- **Four in a row** leaves a gem that clears *downward*; **four in a column**
+  leaves one that clears *across*. They run against the grain on purpose — you
+  finish a row by sliding a gem in from above or below, so the gem you are left
+  with clears the way you were moving.
+- **An L or a T** leaves a gem that takes a row and a column together.
+- **Five in a line** leaves a **rainbow**.
+
+Specials are inert. A line gem or a cross sits where it is until an ordinary
+match of its own color sweeps it up, and only then goes off; shoving one around
+achieves nothing, and there are no special-against-special combinations.
+
+The rainbow is the exception, because it has no match of its own to wait for:
+
+- against an ordinary gem it clears that whole color, setting off any clearing
+  gems standing in it;
+- against a clearing gem, every gem of that color becomes a copy of that gem and
+  they all fire at once;
+- against another rainbow, the board goes.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
-score, clear a number of gems of one color, or peel every layer of jelly. A board
-with no legal move left reshuffles itself rather than ending the level. Gems
-differ in shape as well as color, so the board is readable without relying on
-color alone.
+score, clear a number of gems of one color, or peel every layer of jelly. A
+board with no legal move left reshuffles itself rather than ending the level.
+Gems differ in shape as well as color, so the board is readable without relying
+on color alone.
 
-Tap a gem and then a neighbor, or swipe one toward a neighbor; both work the same
-way. Progress is kept in the browser's local storage.
+Tap a gem and then a neighbor, or swipe one toward a neighbor; both work the
+same way. Progress is kept in the browser's local storage.
 
 ## Where this is going
 

@@ -125,6 +125,7 @@ compare(
         ("Idle", "IDLE"),
         ("Swapping", "SWAPPING"),
         ("Clearing", "CLEARING"),
+        ("Launching", "LAUNCHING"),
         ("Falling", "FALLING"),
         ("Shuffling", "SHUFFLING"),
         ("Finished", "FINISHED"),
@@ -139,8 +140,9 @@ compare(
         ("None", "NONE"),
         ("LineH", "LINE_H"),
         ("LineV", "LINE_V"),
-        ("Bomb", "BOMB"),
+        ("Cross", "CROSS"),
         ("Rainbow", "RAINBOW"),
+        ("Rocket", "ROCKET"),
     ],
 )
 

@@ -12,14 +12,22 @@ export const Phase = {
   IDLE: 0,
   SWAPPING: 1,
   CLEARING: 2,
-  FALLING: 3,
-  SHUFFLING: 4,
-  FINISHED: 5,
+  LAUNCHING: 3,
+  FALLING: 4,
+  SHUFFLING: 5,
+  FINISHED: 6,
 };
 
 export const Status = { PLAYING: 0, WON: 1, LOST: 2 };
 
-export const Special = { NONE: 0, LINE_H: 1, LINE_V: 2, BOMB: 3, RAINBOW: 4 };
+export const Special = {
+  NONE: 0,
+  LINE_H: 1,
+  LINE_V: 2,
+  CROSS: 3,
+  RAINBOW: 4,
+  ROCKET: 5,
+};
 
 export const Flag = { WALL: 1, CLEARING: 2, SELECTED: 4 };
 
