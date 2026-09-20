@@ -118,13 +118,15 @@ square is a match in its own right.
 
 What a match leaves behind:
 
-- **A 2x2 square** leaves a **rocket**. It stays pinned in its cell while
-  gravity repairs the hole around it, waits out the rest of the cascade, and
-  only then flies off to take out one other gem — picked at random for now, by
-  preference later. Neither the cell it left nor the cell it is aimed at moves
-  until impact, so the two collapse in the same drop. The rocket is the
-  consolation prize: if the same clump also earns a line gem, a cross or a
-  rainbow, that is what the player gets instead.
+- **A 2x2 square** leaves a **rocket**. It falls with gravity like any other
+  gem and rides out the rest of the cascade; once there is nothing left to
+  clear, it flies off and takes out one other gem — picked at random for now, by
+  preference later. Neither the cell it leaves nor the cell it is aimed at moves
+  until impact, so the two collapse in the same drop. A rocket takes no part in
+  matching while it waits: left matchable, a cascade could sweep it away before
+  it ever fired, quietly costing you the reward you earned. The rocket is also
+  the consolation prize — if the same clump earns a line gem, a cross or a
+  rainbow, that is what you get instead.
 - **Four in a row** leaves a gem that clears *downward*; **four in a column**
   leaves one that clears *across*. They run against the grain on purpose — you
   finish a row by sliding a gem in from above or below, so the gem you are left
@@ -198,6 +200,31 @@ a much heavier burst with a blast ring, because it is the loudest thing that
 happens on the board. The engine emits the events;
 [`web/js/render.js`](web/js/render.js) owns the particles, capped so that
 clearing a whole color cannot bury a phone.
+
+## Drawing it quickly
+
+A phone is fill-rate bound long before it is logic bound, and Firefox on mobile
+is markedly less forgiving of canvas work than Chromium is. Three things keep
+the frame cheap:
+
+- **Gems are cached bitmaps, not paths.** Each color and special is painted once
+  into an offscreen canvas and blitted from then on. Filling, stroking and
+  *clipping* 64 paths a frame is what makes a phone struggle; `clip()` in
+  particular is among the most expensive things a canvas can be asked to do, and
+  it used to run once per gem per frame.
+- **The board under the gems is painted once.** The panel and its empty sockets
+  never change between resizes, so they live in their own canvas. Only jelly is
+  redrawn, and only where there is jelly.
+- **A board at rest is not redrawn at all.** If nothing is animating — no phase
+  in progress, no particles, no hint or selection pulsing — the frame is
+  skipped, which is most of what the page was previously being asked to do.
+
+The backing store is also capped at 2x device pixels. Past that the extra pixels
+buy nothing visible and cost the square of the ratio.
+
+Measured in headless Chromium with the CPU throttled 8x, as a stand-in for a
+slow device: 12.4fps before these changes, 42.4fps after, with per-frame draw
+time falling from 3.4ms to 0.9ms.
 
 ## Where this is going
 

@@ -145,7 +145,7 @@ fn collect_runs(board: &Board, min: i32, shapes: &mut Vec<Shape>, horizontal: bo
     let mut start = 0;
     while start < length {
         let pos = |i: i32| if horizontal { Pos::new(line, i) } else { Pos::new(i, line) };
-        let color = match board.color(pos(start)) {
+        let color = match board.match_color(pos(start)) {
             Some(color) => color,
             None => {
                 start += 1;
@@ -153,7 +153,7 @@ fn collect_runs(board: &Board, min: i32, shapes: &mut Vec<Shape>, horizontal: bo
             }
         };
         let mut end = start + 1;
-        while end < length && board.color(pos(end)) == Some(color) {
+        while end < length && board.match_color(pos(end)) == Some(color) {
             end += 1;
         }
         if end - start >= min {
@@ -172,7 +172,7 @@ fn collect_squares(board: &Board, shapes: &mut Vec<Shape>) {
     for r in 0..board.rows - 1 {
         for c in 0..board.cols - 1 {
             let corner = Pos::new(r, c);
-            let color = match board.color(corner) {
+            let color = match board.match_color(corner) {
                 Some(color) => color,
                 None => continue,
             };
@@ -182,7 +182,7 @@ fn collect_squares(board: &Board, shapes: &mut Vec<Shape>) {
                 Pos::new(r + 1, c),
                 Pos::new(r + 1, c + 1),
             ];
-            if cells.iter().all(|cell| board.color(*cell) == Some(color)) {
+            if cells.iter().all(|cell| board.match_color(*cell) == Some(color)) {
                 shapes.push(Shape { cells: cells.to_vec(), color, kind: ShapeKind::Square });
             }
         }

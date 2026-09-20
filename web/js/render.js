@@ -4,7 +4,7 @@
 // this file decides is what that looks like. Gems differ by shape as well as
 // hue so the board stays readable without relying on color alone.
 
-import { EMPTY_CELL, EventKind, Flag, Special } from './engine.js';
+import { EMPTY_CELL, EventKind, Flag, Phase, Special } from './engine.js';
 
 export const PALETTE = [
   { name: 'Ruby', fill: '#e5484d', edge: '#7e1f25', shape: 'diamond' },
@@ -22,6 +22,10 @@ const TAU = Math.PI * 2;
 /// Enough for a rainbow taking a whole color; past this the oldest simply stop
 /// being replaced, which is cheaper than dropping frames on a phone.
 const MAX_PARTICLES = 600;
+/// Past 2x the extra pixels buy nothing you can see, and cost plenty: the
+/// backing store grows with the square of this, and a phone's canvas is
+/// fill-rate bound long before it is logic bound.
+const MAX_DPR = 2;
 const SHARDS_PER_GEM = 9;
 const PUFFS_PER_GEM = 4;
 /// A rocket strike is the loudest thing on the board, so it throws far more.
@@ -61,6 +65,8 @@ export class Renderer {
     this.pendingBursts.length = 0;
     this.particles.length = 0;
     this.lastFrame = null;
+    this.backdrop = null;
+    this.dirty = true;
   }
 
   updateParticles(now) {
@@ -210,7 +216,7 @@ export class Renderer {
 
     const width = cell * cols + this.pad * 2;
     const height = cell * rows + this.pad * 2;
-    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
 
     this.canvas.style.width = `${width}px`;
     this.canvas.style.height = `${height}px`;
@@ -219,6 +225,73 @@ export class Renderer {
     this.dpr = dpr;
     this.width = width;
     this.height = height;
+    // Everything cached is sized in device pixels, so it all goes stale here.
+    this.sprites = new Map();
+    this.backdrop = null;
+    this.dirty = true;
+  }
+
+  /// The gem art for one color and special, drawn once and kept.
+  ///
+  /// Filling and stroking 64 paths a frame is what makes a phone struggle;
+  /// blitting 64 bitmaps does not. Rainbows and rockets are cached in their
+  /// resting orientation and turned as they are blitted.
+  sprite(color, special) {
+    const key = color * 8 + special;
+    const cached = this.sprites.get(key);
+    if (cached) {
+      return cached;
+    }
+    const radius = this.cell * 0.42 * this.dpr;
+    const size = Math.max(8, Math.ceil(radius * 2.6));
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    paintGem(canvas.getContext('2d'), size / 2, size / 2, radius, color, special);
+    const sprite = { canvas, size, radius };
+    this.sprites.set(key, sprite);
+    return sprite;
+  }
+
+  /// The board panel and its empty sockets, which never change between resizes.
+  backdropCanvas() {
+    if (this.backdrop) {
+      return this.backdrop;
+    }
+    const { cell, pad, dpr } = this;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(this.width * dpr);
+    canvas.height = Math.round(this.height * dpr);
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.fillStyle = '#1a1630';
+    roundRect(ctx, 2, 2, this.width - 4, this.height - 4, Math.round(cell * 0.28));
+    ctx.fill();
+
+    const { cells } = this.engine.snapshot();
+    const cols = this.engine.cols;
+    for (let i = 0; i < cells.length / 4; i += 1) {
+      if (cells[i * 4 + 3] & Flag.WALL) {
+        continue;
+      }
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      const inset = Math.round(cell * 0.04);
+      ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.015)';
+      roundRect(
+        ctx,
+        pad + c * cell + inset,
+        pad + r * cell + inset,
+        cell - inset * 2,
+        cell - inset * 2,
+        cell * 0.18,
+      );
+      ctx.fill();
+    }
+
+    this.backdrop = canvas;
+    return canvas;
   }
 
   /** The cell under a client-space point, or null when outside the board. */
@@ -234,52 +307,50 @@ export class Renderer {
 
   draw(timeMs) {
     const { ctx, cell, pad } = this;
-    const { rows, cols } = this.engine;
+    const cols = this.engine.cols;
     const { cells, offsets } = this.engine.snapshot();
+
+    this.updateParticles(timeMs);
+
+    // A board at rest is worth nothing to redraw, and redrawing it is most of
+    // what a phone was being asked to do.
+    let selected = false;
+    for (let i = 0; i < cells.length / 4 && !selected; i += 1) {
+      selected = (cells[i * 4 + 3] & Flag.SELECTED) !== 0;
+    }
+    const busy =
+      this.engine.phase !== Phase.IDLE ||
+      this.particles.length > 0 ||
+      this.pendingBursts.length > 0 ||
+      this.hint !== null ||
+      selected;
+    if (!busy && !this.dirty) {
+      return;
+    }
+    this.dirty = busy;
 
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, this.width, this.height);
+    ctx.drawImage(this.backdropCanvas(), 0, 0, this.width, this.height);
 
-    // The board panel.
-    ctx.fillStyle = '#1a1630';
-    roundRect(ctx, 2, 2, this.width - 4, this.height - 4, Math.round(cell * 0.28));
-    ctx.fill();
-
-    // Sockets and jelly sit still; only gems move.
+    // Jelly is the only part of the board under the gems that changes.
     for (let i = 0; i < cells.length / 4; i += 1) {
-      const r = Math.floor(i / cols);
-      const c = i % cols;
-      const flags = cells[i * 4 + 3];
-      if (flags & Flag.WALL) {
+      const jelly = cells[i * 4 + 2];
+      if (jelly === 0) {
         continue;
       }
-      const x = pad + c * cell;
-      const y = pad + r * cell;
+      const r = Math.floor(i / cols);
+      const c = i % cols;
       const inset = Math.round(cell * 0.04);
-
-      ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.015)';
-      roundRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, cell * 0.18);
+      ctx.fillStyle = jelly > 1 ? 'rgba(160,230,255,0.28)' : 'rgba(160,230,255,0.14)';
+      roundRect(ctx, pad + c * cell + inset, pad + r * cell + inset, cell - inset * 2, cell - inset * 2, cell * 0.18);
       ctx.fill();
-
-      const jelly = cells[i * 4 + 2];
-      if (jelly > 0) {
-        ctx.fillStyle = jelly > 1 ? 'rgba(160,230,255,0.28)' : 'rgba(160,230,255,0.14)';
-        roundRect(ctx, x + inset, y + inset, cell - inset * 2, cell - inset * 2, cell * 0.18);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(200,245,255,0.45)';
-        ctx.lineWidth = Math.max(1, cell * 0.03);
-        ctx.stroke();
-      }
+      ctx.strokeStyle = 'rgba(200,245,255,0.45)';
+      ctx.lineWidth = Math.max(1, cell * 0.03);
+      ctx.stroke();
     }
 
-    // Gems are clipped to the panel so the ones falling in from above do not
-    // spill over the bezel.
-    ctx.save();
-    roundRect(ctx, 2, 2, this.width - 4, this.height - 4, Math.round(cell * 0.28));
-    ctx.clip();
-
-    // Rockets are held back and drawn last: they fly over the board, so they
-    // must not slide underneath the gems they pass.
+    // Rockets fly over the board, so they are held back and blitted last.
     const airborne = [];
 
     for (let i = 0; i < cells.length / 4; i += 1) {
@@ -307,39 +378,51 @@ export class Renderer {
         ctx.stroke();
       }
 
-      const args = [
-        x,
-        y,
-        cell * 0.42 * scale,
-        color,
-        special,
-        timeMs,
-        offsets[i * 3],
-        offsets[i * 3 + 1],
-      ];
       if (special === Special.ROCKET) {
-        airborne.push(args);
+        airborne.push([x, y, scale, color, offsets[i * 3], offsets[i * 3 + 1]]);
+      } else if (special === Special.RAINBOW) {
+        // The one cached gem that turns: it is drawn spinning.
+        this.blitTurned(x, y, scale, color, special, (timeMs / 1400) % TAU);
       } else {
-        drawGem(ctx, ...args);
+        this.blit(x, y, scale, color, special);
       }
     }
 
-    this.updateParticles(timeMs);
     if (this.particles.length > 0) {
       this.drawParticles(ctx);
     }
 
-    for (const args of airborne) {
-      drawGem(ctx, ...args);
+    for (const [x, y, scale, color, dx, dy] of airborne) {
+      const travelling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
+      const angle = travelling ? Math.atan2(dy, dx) + Math.PI / 2 : 0;
+      if (travelling) {
+        drawExhaust(ctx, x, y, cell * 0.42 * scale, angle);
+      }
+      this.blitTurned(x, y, scale, color, Special.ROCKET, angle);
     }
-
-    ctx.restore();
 
     if (this.hint) {
       this.drawHint(timeMs);
     }
+  }
 
-    void rows;
+  /// Stamps a cached gem, centered.
+  blit(x, y, scale, color, special) {
+    const sprite = this.sprite(color, special);
+    const size = (sprite.size * scale) / this.dpr;
+    this.ctx.drawImage(sprite.canvas, x - size / 2, y - size / 2, size, size);
+  }
+
+  /// The same, for the two gems that are drawn at an angle.
+  blitTurned(x, y, scale, color, special, angle) {
+    const { ctx } = this;
+    const sprite = this.sprite(color, special);
+    const size = (sprite.size * scale) / this.dpr;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.drawImage(sprite.canvas, -size / 2, -size / 2, size, size);
+    ctx.restore();
   }
 
   drawHint(timeMs) {
@@ -360,18 +443,14 @@ export class Renderer {
 }
 
 /**
- * Draws one gem: body, highlight, then whatever special marking it carries.
+ * Paints one gem into a sprite: body, highlight, then its special marking.
  *
- * `dx`/`dy` are the cell's current offset, which for a rocket in flight is the
- * direction it is travelling, so it can be pointed at what it is about to hit.
+ * Run once per color and special rather than once per gem per frame, which is
+ * what lets the highlight be clipped at all — `clip()` is one of the most
+ * expensive things a canvas can be asked to do, and a phone shows it.
  */
-function drawGem(ctx, x, y, radius, colorIndex, special, timeMs, dx = 0, dy = 0) {
+function paintGem(ctx, x, y, radius, colorIndex, special) {
   const gem = PALETTE[colorIndex % PALETTE.length];
-
-  if (special === Special.ROCKET) {
-    drawRocket(ctx, x, y, radius, gem, dx, dy);
-    return;
-  }
 
   ctx.save();
   shapePath(ctx, gem.shape, x, y, radius);
@@ -381,8 +460,7 @@ function drawGem(ctx, x, y, radius, colorIndex, special, timeMs, dx = 0, dy = 0)
   ctx.lineWidth = Math.max(1, radius * 0.12);
   ctx.stroke();
 
-  // A soft highlight up and to the left reads as a facet without costing a
-  // gradient object per gem per frame.
+  // A soft highlight up and to the left reads as a facet.
   ctx.clip();
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   ctx.beginPath();
@@ -390,11 +468,34 @@ function drawGem(ctx, x, y, radius, colorIndex, special, timeMs, dx = 0, dy = 0)
   ctx.fill();
   ctx.restore();
 
-  drawSpecial(ctx, x, y, radius, special, timeMs);
+  drawSpecial(ctx, x, y, radius, special, gem);
 }
 
-function drawSpecial(ctx, x, y, radius, special, timeMs) {
+/// The flame behind a rocket in flight, which cannot be cached because it only
+/// burns while the rocket is moving.
+function drawExhaust(ctx, x, y, r, angle) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  const flame = ctx.createLinearGradient(0, r * 0.6, 0, r * 1.9);
+  flame.addColorStop(0, 'rgba(255,209,102,0.85)');
+  flame.addColorStop(1, 'rgba(255,120,60,0)');
+  ctx.fillStyle = flame;
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.36, r * 0.6);
+  ctx.lineTo(r * 0.36, r * 0.6);
+  ctx.lineTo(0, r * 1.9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSpecial(ctx, x, y, radius, special, gem) {
   if (special === Special.NONE) {
+    return;
+  }
+  if (special === Special.ROCKET) {
+    drawRocketBody(ctx, x, y, radius, gem);
     return;
   }
   ctx.save();
@@ -426,12 +527,12 @@ function drawSpecial(ctx, x, y, radius, special, timeMs) {
     ctx.lineTo(x, y + radius * 0.8);
     ctx.stroke();
   } else if (special === Special.RAINBOW) {
-    // Slowly turning wedges, so it reads as the wildcard at a glance.
-    const spin = (timeMs / 1400) % TAU;
+    // Wedges of every color, so it reads as the wildcard at a glance. The
+    // sprite is painted at rest and spun as it is blitted.
     for (let i = 0; i < PALETTE.length; i += 1) {
       ctx.beginPath();
       ctx.moveTo(x, y);
-      ctx.arc(x, y, radius * 0.66, spin + (i * TAU) / PALETTE.length, spin + ((i + 1) * TAU) / PALETTE.length);
+      ctx.arc(x, y, radius * 0.66, (i * TAU) / PALETTE.length, ((i + 1) * TAU) / PALETTE.length);
       ctx.closePath();
       ctx.fillStyle = PALETTE[i].fill;
       ctx.fill();
@@ -445,31 +546,10 @@ function drawSpecial(ctx, x, y, radius, special, timeMs) {
   ctx.restore();
 }
 
-/**
- * A rocket, nosed toward wherever it is heading. A freshly made one has no
- * travel yet, so it sits pointing up until it launches.
- */
-function drawRocket(ctx, x, y, r, gem, dx, dy) {
-  const travelling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
-  const angle = travelling ? Math.atan2(dy, dx) + Math.PI / 2 : 0;
-
+/// A rocket at rest, nose up. It is turned toward its target as it is blitted.
+function drawRocketBody(ctx, x, y, r, gem) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(angle);
-
-  if (travelling) {
-    // A short exhaust trailing the nose.
-    const flame = ctx.createLinearGradient(0, r * 0.6, 0, r * 1.9);
-    flame.addColorStop(0, 'rgba(255,209,102,0.85)');
-    flame.addColorStop(1, 'rgba(255,120,60,0)');
-    ctx.fillStyle = flame;
-    ctx.beginPath();
-    ctx.moveTo(-r * 0.36, r * 0.6);
-    ctx.lineTo(r * 0.36, r * 0.6);
-    ctx.lineTo(0, r * 1.9);
-    ctx.closePath();
-    ctx.fill();
-  }
 
   // Fins, then the body over them.
   ctx.fillStyle = gem.edge;

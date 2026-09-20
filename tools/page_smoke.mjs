@@ -30,13 +30,15 @@ function stubContext() {
   const methods = [
     'setTransform', 'clearRect', 'save', 'restore', 'beginPath', 'closePath', 'moveTo',
     'lineTo', 'arc', 'arcTo', 'ellipse', 'quadraticCurveTo', 'fill', 'stroke', 'clip',
-    'fillRect', 'strokeRect', 'translate', 'scale', 'rotate',
+    'fillRect', 'strokeRect', 'translate', 'scale', 'rotate', 'drawImage',
   ];
   for (const name of methods) {
     ctx[name] = () => {
       calls[name] = (calls[name] ?? 0) + 1;
     };
   }
+  ctx.createLinearGradient = () => ({ addColorStop() {} });
+  ctx.createRadialGradient = () => ({ addColorStop() {} });
   return ctx;
 }
 
@@ -72,7 +74,7 @@ function stubElement(id) {
     },
     setPointerCapture() {},
     releasePointerCapture() {},
-    getContext() { return context2d; },
+    getContext() { return element === canvas ? context2d : stubContext(); },
   };
   return element;
 }
@@ -162,6 +164,7 @@ function dispatch(id, type, event) {
 pump(FRAMES);
 
 assert.ok(calls.fill > 0, 'nothing was ever filled on the canvas');
+assert.ok(calls.drawImage > 0, 'no cached gem was ever blitted');
 assert.ok(calls.clearRect > 0, 'the canvas was never cleared between frames');
 assert.ok(canvas.width > 0 && canvas.height > 0, 'the canvas was never sized');
 assert.equal(
@@ -228,7 +231,8 @@ assert.equal(grid.children[0].disabled, false, 'level one is locked');
 assert.equal(grid.children[9].disabled, true, 'a level nobody has reached is unlocked');
 
 console.log(
-  `page ok: ${framesRun} frames, ${calls.fill} fills, ${calls.stroke} strokes, ` +
-    `${objectives.children.length} objective chips, ${grid.children.length} levels listed, ` +
+  `page ok: ${framesRun} frames, ${calls.drawImage} blits, ${calls.fill} fills, ` +
+    `${calls.stroke} strokes, ${objectives.children.length} objective chips, ` +
+    `${grid.children.length} levels listed, ` +
     `a swipe scored and spent a move (${scoreBefore} -> played -> reset)`,
 );

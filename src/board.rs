@@ -161,6 +161,19 @@ impl Board {
         self.gem(p).map(|g| g.color)
     }
 
+    /// The color a match may be built from.
+    ///
+    /// A rocket is waiting to launch rather than sitting in the pool of
+    /// colors, so it takes no part in matching. Left matchable it could be
+    /// cleared by a cascade before it ever fires, quietly costing the player
+    /// the reward they earned.
+    pub fn match_color(&self, p: Pos) -> Option<u8> {
+        match self.gem(p) {
+            Some(gem) if gem.special != Special::Rocket => Some(gem.color),
+            _ => None,
+        }
+    }
+
     pub fn set_gem(&mut self, p: Pos, gem: Option<Gem>) {
         if let Some(cell) = self.cell_mut(p) {
             cell.gem = gem;
@@ -206,15 +219,6 @@ impl Board {
     /// The renderer turns that into a fall animation; the board itself is
     /// already in its final state.
     pub fn collapse(&mut self, rules: &Rules, rng: &mut Rng) -> Vec<f32> {
-        self.collapse_pinned(rules, rng, &[])
-    }
-
-    /// Settles the board, leaving the gems at `pinned` exactly where they are.
-    ///
-    /// A pinned cell behaves like a wall for the duration: its gem does not
-    /// fall, and nothing falls through it. That is what lets a rocket hang in
-    /// place while the hole its match left fills in around it.
-    pub fn collapse_pinned(&mut self, rules: &Rules, rng: &mut Rng, pinned: &[Pos]) -> Vec<f32> {
         let mut origin: Vec<f32> = self
             .positions()
             .map(|p| p.r as f32)
@@ -225,13 +229,13 @@ impl Board {
             // down onto its own floor and refills from its own ceiling.
             let mut r = self.rows - 1;
             while r >= 0 {
-                if self.is_blocked(Pos::new(r, c), pinned) {
+                if !self.is_open(Pos::new(r, c)) {
                     r -= 1;
                     continue;
                 }
                 let bottom = r;
                 let mut top = r;
-                while top - 1 >= 0 && !self.is_blocked(Pos::new(top - 1, c), pinned) {
+                while top - 1 >= 0 && self.is_open(Pos::new(top - 1, c)) {
                     top -= 1;
                 }
                 self.collapse_segment(c, top, bottom, rules, rng, &mut origin);
@@ -240,11 +244,6 @@ impl Board {
         }
 
         origin
-    }
-
-    /// Whether gems may neither occupy nor pass through this cell right now.
-    fn is_blocked(&self, p: Pos, pinned: &[Pos]) -> bool {
-        !self.is_open(p) || pinned.contains(&p)
     }
 
     fn collapse_segment(
@@ -357,30 +356,6 @@ mod tests {
         assert_eq!(origin[3], 2.0, "its gem entered from just above its own ceiling");
         assert!(board.gem(Pos::new(2, 0)).is_none(), "the wall stays empty");
         assert_eq!(origin[0], 0.0, "the upper tube was already packed");
-    }
-
-    #[test]
-    fn a_pinned_gem_stays_put_and_holds_the_column() {
-        let rules = Rules { rows: 4, cols: 1, ..Rules::default() };
-        let mut board = filled(4, 1, 0);
-        // Mark the middle gem, then empty the cell beneath it.
-        board.set_gem(Pos::new(1, 0), Some(Gem { color: 3, special: Special::Rocket }));
-        board.set_gem(Pos::new(2, 0), None);
-
-        let mut rng = Rng::new(5);
-        board.collapse_pinned(&rules, &mut rng, &[Pos::new(1, 0)]);
-
-        assert_eq!(
-            board.gem(Pos::new(1, 0)).map(|g| g.special),
-            Some(Special::Rocket),
-            "the pinned gem should not have fallen"
-        );
-        assert_eq!(
-            board.gem(Pos::new(0, 0)).map(|g| g.color),
-            Some(0),
-            "nor should the gem resting on it have moved"
-        );
-        assert!(board.gem(Pos::new(2, 0)).is_some(), "the cell below refilled on its own");
     }
 
     #[test]

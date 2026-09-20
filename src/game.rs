@@ -415,10 +415,9 @@ impl Game {
             self.board.set_gem(p, Some(gem));
         }
 
-        // Rockets hold their ground while the hole fills in around them. They
-        // fly once the cascade has run itself out, not before.
-        let rockets = self.rockets_on_board();
-        self.origin = self.board.collapse_pinned(&self.spec.rules, &mut self.rng, &rockets);
+        // A rocket falls like anything else and takes no part in the matches
+        // going on around it. It flies once the cascade has run itself out.
+        self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
         self.begin_fall();
     }
 
@@ -1252,9 +1251,9 @@ mod tests {
     }
 
     #[test]
-    fn the_hole_fills_in_around_the_rocket_before_it_flies() {
-        // The rocket holds its cell while gravity repairs the rest of the
-        // square, and only then launches.
+    fn the_board_settles_before_the_rocket_flies() {
+        // The rocket rides out the cascade like an ordinary gem and only
+        // launches once there is nothing left to clear.
         let mut game = Game::new(spec(4, 4, 6, 10), 72);
         paint(&mut game, &square_board());
         assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
@@ -1270,16 +1269,56 @@ mod tests {
         assert!(saw_launch, "the board never entered its launch phase");
 
         assert_eq!(
-            game.board.gem(Pos::new(1, 1)).map(|g| g.special),
-            Some(Special::Rocket),
-            "the rocket should still be sitting where it was made"
+            game.rockets_on_board().len(),
+            1,
+            "the rocket should have survived the cascade to fly"
         );
-        for cell in [Pos::new(0, 0), Pos::new(0, 1), Pos::new(1, 0)] {
-            assert!(
-                game.board.gem(cell).is_some(),
-                "the rest of the square should have filled in at {cell:?}"
-            );
-        }
+        assert!(
+            game.board.positions().all(|p| !game.board.is_open(p) || game.board.gem(p).is_some()),
+            "and the board should have filled in before it left"
+        );
+        assert!(
+            matching::find_matches(&game.board, game.rules()).is_empty(),
+            "nothing should still be waiting to clear"
+        );
+    }
+
+    #[test]
+    fn a_rocket_falls_like_any_other_gem() {
+        let mut game = Game::new(spec(4, 4, 6, 78), 78);
+        let perch = Pos::new(1, 0);
+        let gem = game.board.gem(perch).expect("the board is full");
+        game.board.set_gem(perch, Some(Gem { special: Special::Rocket, ..gem }));
+        game.board.set_gem(Pos::new(2, 0), None);
+        game.board.set_gem(Pos::new(3, 0), None);
+
+        let rules = *game.rules();
+        game.board.collapse(&rules, &mut game.rng);
+
+        assert_eq!(
+            game.board.gem(Pos::new(3, 0)).map(|g| g.special),
+            Some(Special::Rocket),
+            "it should have dropped to the floor with everything else"
+        );
+    }
+
+    #[test]
+    fn a_rocket_is_not_swept_up_by_a_match() {
+        // Left matchable, a rocket could be cleared by a cascade before it ever
+        // fired, quietly costing the player what they earned.
+        let mut game = Game::new(spec(4, 4, 6, 79), 79);
+        paint(&mut game, &["1112", "2345", "3456", "4567"]);
+        assert_eq!(
+            matching::find_matches(&game.board, game.rules()).len(),
+            1,
+            "three ones across the top is a match"
+        );
+
+        game.board.set_gem(Pos::new(0, 1), Some(Gem { color: 1, special: Special::Rocket }));
+        assert!(
+            matching::find_matches(&game.board, game.rules()).is_empty(),
+            "with a rocket in the middle of them, it is not"
+        );
     }
 
     #[test]
