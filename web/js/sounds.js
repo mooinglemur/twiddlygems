@@ -263,10 +263,10 @@ export const SOUNDS = {
     voice: {
       source: 'sawtooth',
       filters: [
-        { type: 'lowpass', frequency: 2400, q: 1.1, sweep: { to: 620, time: 0.18 } },
+        { type: 'lowpass', frequency: 2400, q: 1.1, sweep: { to: 20, time: 0.68 } },
         { type: 'highpass', frequency: 120, q: 0.5 },
       ],
-      env: { attack: 0.002, decay: 0.415 },
+      env: { attack: 0.002, decay: 0.915 },
       gain: 1,
       jitter: { gain: 0.1 },
     },

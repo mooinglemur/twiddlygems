@@ -623,8 +623,12 @@ impl Game {
     }
 
     fn finish_fall(&mut self) {
-        self.cascade += 1;
+        // Counted per match resolved, not per fall. A fall that turns up
+        // nothing is not a step of the chain: rockets fire from exactly that
+        // fall, so counting it would spend a step on the rocket and land the
+        // clear its impact sets off a step higher than it earned.
         if let Some(resolution) = self.plan_resolution(None) {
+            self.cascade += 1;
             self.events.push(Event::plain(EV_CASCADE, self.cascade.min(65535) as u16));
             self.begin_clear(resolution);
             return;
@@ -1166,7 +1170,7 @@ fn ease_out(t: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::level::levels;
-    use crate::rules::SpecialSet;
+    use crate::rules::{RefillMode, SpecialSet};
 
     fn spec(rows: i32, cols: i32, colors: u8, moves: u32) -> LevelSpec {
         LevelSpec {
@@ -1824,6 +1828,59 @@ mod tests {
         assert!(
             game.board.positions().all(|p| !game.board.is_open(p) || game.board.gem(p).is_some()),
             "and the board fills in once they are all down"
+        );
+    }
+
+    #[test]
+    fn a_rocket_does_not_advance_the_chain() {
+        // The chord climbs one step per match resolved. A rocket firing is not
+        // a match, so the clear its impact sets off is the next step of the
+        // chain rather than the one after that.
+        //
+        // Refill is off so the collapse is entirely determined: nothing random
+        // drops in, and the board after the strike is the board below.
+        let mut game = Game::new(spec(4, 3, 6, 10), 130);
+        game.spec.rules.refill = RefillMode::None;
+        //  R 1 2      . 1 .
+        //  0 1 1  ->  0 1 2   once the rocket leaves (0,0) and takes (3,2),
+        //  1 0 2      1 0 1   column 2 drops by one and the bottom row reads
+        //  2 2 0      2 2 2   three alike.
+        paint(&mut game, &["012", "011", "102", "220"]);
+        let rocket = game.board.gem(Pos::new(0, 0)).expect("the board is full");
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { special: Special::Rocket, ..rocket }));
+        assert!(matching::find_matches(&game.board, game.rules()).is_empty());
+
+        // As though one match has already resolved and left this rocket
+        // behind: the board is mid-chain at step one, falling.
+        game.cascade = 1;
+        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        game.phase = Phase::Falling { elapsed: 0.0 };
+
+        // Run the fall out through the real path: the board finds no match and
+        // sends the rocket. Only its target is then replaced, because it is
+        // picked at random and this board is built around one in particular.
+        for _ in 0..40 {
+            if matches!(game.phase(), Phase::Launching { .. }) {
+                break;
+            }
+            game.update(16.0);
+        }
+        assert!(matches!(game.phase(), Phase::Launching { .. }), "the rocket should have fired");
+        let from = Pos::new(0, 0);
+        let to = Pos::new(3, 2);
+        let shot =
+            Launch { from, to, flight_ms: flight_time(cells_between(from, to)), landed: false };
+        game.launches = vec![shot];
+        game.launch_ms = shot.flight_ms + LAUNCH_HOLD_MS;
+        game.phase = Phase::Launching { elapsed: 0.0 };
+
+        let events = settle(&mut game);
+        let steps: Vec<u16> =
+            events.iter().filter(|e| e.kind == EV_MATCH).map(|e| e.value).collect();
+        assert_eq!(
+            steps,
+            vec![2],
+            "one match resolved after the strike, so it is step two of the chain",
         );
     }
 

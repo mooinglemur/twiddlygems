@@ -298,11 +298,16 @@ of clashing.
 
 A sound may instead be built from `chords`: a list of note lists and a single
 `voice`, with a `stage` picking which chord to spread across that voice. The
-clear chime is twelve chords in F, and a cascade climbs them one step per clear,
-so a long chain walks up the scale and you can hear how well you did. The engine
-stamps every clear with its place in the chain and resets that when the board
-settles, so a fresh chain starts at the bottom on its own. A stage past the end
-holds at the top rather than wrapping back down.
+clear chime is twelve chords in F, and a cascade climbs them one step per match
+resolved, so a long chain walks up the scale and you can hear how well you did.
+The engine stamps every clear with its place in the chain and resets that when
+the board settles, so a fresh chain starts at the bottom on its own. A stage
+past the end holds at the top rather than wrapping back down.
+
+The step counts matches, not falls, which matters where the two come apart. A
+rocket fires from a fall that found nothing to clear, and its flight and impact
+are not a link in the chain; counting that fall would spend a step on the rocket
+and land the clear its impact sets off a chord higher than it earned.
 
 A `waver` walks a pitch glide in small steps and pushes each one slightly off,
 which is how a firework fails to hold its note. Its `depth` is a fraction of the
