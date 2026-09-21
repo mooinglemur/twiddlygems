@@ -370,36 +370,31 @@ impl Board {
         origin[i] = (from.r as f32, from.c as f32);
     }
 
-    /// True when nothing can ever arrive in this cell from directly above it:
-    /// it is off the board, a wall, or a brick.
-    ///
-    /// What sits under an overhang, in other words. A cell that is merely empty
-    /// is not a shelf, because the column above it is still feeding it. A brick
-    /// is, until something breaks it.
-    fn is_shelf(&self, p: Pos) -> bool {
-        !self.is_open(p) || self.brick(p) > 0
-    }
-
     /// Where the gem at `p` slides off to, if it slides at all.
     ///
     /// Only ever for a gem that cannot fall: down and to the left for
     /// preference, then down and to the right.
     ///
-    /// It only slides into a gap that nothing else is going to fill, which
-    /// means the cell directly over that gap has to be a shelf. Without that
-    /// condition a gem standing beside an ordinary hole would dive into it
-    /// sideways instead of letting the column above the hole come down, and
-    /// that would change how every board already built behaves. With it,
-    /// spilling happens only where something is in the way, which is the case
-    /// it exists for.
+    /// It slides into any free gap, and needs no test for whether the column
+    /// above that gap might have filled it instead, because by the time this is
+    /// asked the answer is always no. Spilling only happens once straight-down
+    /// dropping is exhausted, and a cell still free at that point cannot be fed
+    /// from above: a gem over it would already have dropped into it, and a
+    /// clear run up to a refill mouth would already have spawned into it. What
+    /// is left is capped by a wall or a brick, however far up the cap sits.
+    ///
+    /// That ordering is doing the work that a one-cell check for an overhang
+    /// cannot. The cell over a gap in the middle of a brick shelf is itself an
+    /// ordinary empty cell, so looking only at that one says the column is
+    /// still coming, when the bricks two rows up mean nothing is.
     fn spill_for(&self, p: Pos) -> Option<Pos> {
         if self.is_free(Pos::new(p.r + 1, p.c)) {
             return None;
         }
-        [p.c - 1, p.c + 1].into_iter().find_map(|c| {
-            let side = Pos::new(p.r + 1, c);
-            (self.is_free(side) && self.is_shelf(Pos::new(p.r, c))).then_some(side)
-        })
+        [p.c - 1, p.c + 1]
+            .into_iter()
+            .map(|c| Pos::new(p.r + 1, c))
+            .find(|side| self.is_free(*side))
     }
 
     /// The cells fresh gems enter through: the top of each run of open cells in
@@ -453,54 +448,47 @@ mod tests {
         last
     }
 
-    /// Gravity the old way: every column packed down onto its own floor,
-    /// each one on its own. Wherever nothing is in the way this is the answer
-    /// spilling has to agree with, since it is how every board built so far
-    /// behaves.
-    fn packed_by_column(board: &Board) -> Vec<Option<u8>> {
-        let mut out = vec![None; (board.rows * board.cols) as usize];
-        for c in 0..board.cols {
-            let mut write = board.rows - 1;
-            for r in (0..board.rows).rev() {
-                if let Some(gem) = board.gem(Pos::new(r, c)) {
-                    out[(write * board.cols + c) as usize] = Some(gem.color);
-                    write -= 1;
-                }
-            }
-        }
-        out
-    }
-
     #[test]
-    fn a_board_with_nothing_in_the_way_settles_exactly_as_columns_would() {
-        // Spilling is for boards with something to spill around. On a plain
-        // rectangle it has to change nothing at all, because a plain rectangle
-        // is what every level built so far is.
-        let rules = Rules { rows: 8, cols: 6, refill: RefillMode::None, ..Rules::default() };
+    fn a_board_with_nothing_in_the_way_never_moves_a_gem_sideways() {
+        // The column has priority, so on a plain rectangle nothing should ever
+        // spill: every hole is fed from above, and by the time spilling is
+        // asked about there is no hole left. Said as "no gem changes column",
+        // which is the thing that would be visible if it were wrong.
+        let rules = Rules { rows: 8, cols: 6, ..Rules::default() };
         for seed in 0..60 {
             let mut rng = Rng::new(seed);
             let mut board = Board::new(8, 6);
             for p in board.positions().collect::<Vec<_>>() {
-                // Roughly a third of the board punched out, which is a far
-                // rougher shape than any real clear leaves.
-                if rng.below(3) > 0 {
-                    board.set_gem(p, Some(Gem::plain(rng.below(5) as u8)));
+                board.set_gem(p, Some(Gem::plain(rng.below(5) as u8)));
+            }
+            // Roughly a third punched out, a far rougher shape than any real
+            // clear leaves behind.
+            for p in board.positions().collect::<Vec<_>>() {
+                if rng.below(3) == 0 {
+                    board.set_gem(p, None);
                 }
             }
-            let expected = packed_by_column(&board);
 
-            let mut settled = board.clone();
-            settle_all(&mut settled, &rules, &mut Rng::new(seed));
-            let actual: Vec<Option<u8>> =
-                settled.positions().map(|p| settled.gem(p).map(|g| g.color)).collect();
-            assert_eq!(actual, expected, "seed {seed} settled differently");
+            let origin = settle_all(&mut board, &rules, &mut Rng::new(seed));
+            for p in board.positions() {
+                let from = origin[(p.r * board.cols + p.c) as usize];
+                assert_eq!(
+                    from.1, p.c as f32,
+                    "seed {seed}: the gem at {p:?} arrived from column {}",
+                    from.1
+                );
+            }
+            assert!(
+                board.positions().all(|p| board.gem(p).is_some()),
+                "seed {seed} left a hole on a board with nothing in the way",
+            );
         }
     }
 
     #[test]
     fn a_gem_spills_off_a_shelf_into_the_gap_beside_it() {
-        // (1,0) is resting on (2,0) and cannot go down. (2,1) is free, and a
-        // wall sits over it, so nothing is coming down that column to fill it.
+        // (1,0) is resting on (2,0) and cannot go down. (2,1) is free, and with
+        // no refill nothing is ever coming down to fill it.
         let mut board = Board::from_layout(&["...", ".#.", "..."]);
         board.set_gem(Pos::new(1, 0), Some(Gem::plain(1)));
         board.set_gem(Pos::new(2, 0), Some(Gem::plain(2)));
@@ -518,19 +506,36 @@ mod tests {
     }
 
     #[test]
-    fn a_gem_stays_put_when_the_gap_beside_it_is_still_being_fed() {
-        // The same board with the wall taken out. Now the column above the gap
-        // can fill it, and the column has priority: diving in sideways would
-        // change how every board without an overhang behaves.
-        let mut board = Board::from_layout(&["...", "...", "..."]);
-        board.set_gem(Pos::new(1, 0), Some(Gem::plain(1)));
-        board.set_gem(Pos::new(2, 0), Some(Gem::plain(2)));
+    fn a_pocket_under_a_brick_shelf_fills_from_both_ends() {
+        // A four-wide shelf with a two-deep pocket under it. Nothing can reach
+        // the pocket from above, so the only way in is off the ends of the
+        // shelf, and gems have to keep walking in one step at a time.
+        //
+        // The cells directly under the middle of the shelf can never be
+        // reached at all: everything over them, and diagonally over them, is
+        // brick. The row below that is reachable from the ends.
+        let mut board = Board::from_layout(&[
+            "......",
+            ".BBBB.",
+            "......",
+            "......",
+        ]);
+        let rules = Rules { rows: 4, cols: 6, colors: 4, ..Rules::default() };
+        settle_all(&mut board, &rules, &mut Rng::new(7));
 
-        let rules = Rules { rows: 3, cols: 3, refill: RefillMode::None, ..Rules::default() };
-        settle_all(&mut board, &rules, &mut Rng::new(1));
-
-        assert_eq!(board.gem(Pos::new(1, 0)).map(|g| g.color), Some(1), "it should have stayed");
-        assert!(board.gem(Pos::new(2, 1)).is_none(), "and left the gap for the column above");
+        for c in 1..5 {
+            assert!(
+                board.gem(Pos::new(3, c)).is_some(),
+                "the floor under the shelf should have filled from the ends, missing {c}",
+            );
+        }
+        // The ends of the row under the shelf are reachable diagonally from
+        // outside it; the middle two are walled in by brick on every side a gem
+        // could arrive from.
+        assert!(board.gem(Pos::new(2, 1)).is_some(), "under the left end of the shelf");
+        assert!(board.gem(Pos::new(2, 4)).is_some(), "under the right end of the shelf");
+        assert!(board.gem(Pos::new(2, 2)).is_none(), "nothing can reach the middle");
+        assert!(board.gem(Pos::new(2, 3)).is_none(), "nothing can reach the middle");
     }
 
     #[test]

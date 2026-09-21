@@ -232,13 +232,20 @@ so the two alternate until the board stops moving, and nothing is matched until
 it has. A board part way through settling is not a board anybody has finished
 looking at.
 
-A gem only spills into a gap that nothing else is going to fill, which means the
-cell directly over that gap has to be a wall or a brick. The column above has
-priority. Without that condition a gem standing beside an ordinary hole would
-dive into it sideways instead of letting the column come down, which would
-change how every board built before obstacles existed behaves; a property test
-settles sixty randomly punched boards and checks they come out exactly as
-packing each column on its own would.
+The column has priority, and the staging is what enforces it rather than any
+test inside the spill. By the time anything spills, straight-down dropping is
+exhausted, and a cell still free at that point cannot be fed from above: a gem
+over it would already have dropped into it, and a clear run up to a refill mouth
+would already have spawned into it. What is left is capped by a wall or a brick,
+however far up the cap sits. So a gem beside an ordinary hole never dives in
+sideways, and nothing built before obstacles existed changes: a property test
+settles sixty randomly punched boards and checks that no gem ever leaves its own
+column.
+
+Getting there by asking whether the cell directly over a gap is blocked does not
+work, and looked right for a while. The cell over a gap in the middle of a brick
+shelf is itself an ordinary empty cell, so that test says the column is still
+coming when the bricks two rows up mean nothing is, and the pocket never fills.
 
 This is also why a cell can now be empty and stay empty. A pocket under a brick
 shelf fills only from the sides, and if nothing can reach it, it stays a hole.

@@ -2256,8 +2256,10 @@ mod tests {
             game.board.gem(Pos::new(3, 2)).is_none(),
             "and nothing fell into the cell it is holding",
         );
-        // The gem came to rest on top of it rather than passing through.
-        assert_eq!(game.board.gem(Pos::new(2, 2)).map(|g| g.color), Some(1));
+        // The gem stopped on the brick rather than passing through it, and
+        // then slid off, which is what a gem resting on something does when
+        // there is a gap beside it. Left first, so it ends up at (3,1).
+        assert_eq!(game.board.gem(Pos::new(3, 1)).map(|g| g.color), Some(1));
     }
 
     #[test]
