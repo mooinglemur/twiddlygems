@@ -119,16 +119,25 @@ fn specials_made(bot: Bot, seeds: u64) {
     let mut overall = [0u32; 6];
     let mut total_moves = 0u32;
     let mut all_spreads: Vec<u32> = Vec::new();
+    let mut all_voices: Vec<u32> = Vec::new();
     for (index, spec) in levels().into_iter().enumerate() {
         let mut made = [0u32; 6];
         let mut moves = 0u32;
         let mut spreads: Vec<u32> = Vec::new();
+        let mut voices: Vec<u32> = Vec::new();
         for seed in 0..seeds {
-            let game =
-                play_counting(&spec, seed * 7919 + index as u64, bot, &mut made, &mut spreads);
+            let game = play_counting(
+                &spec,
+                seed * 7919 + index as u64,
+                bot,
+                &mut made,
+                &mut spreads,
+                &mut voices,
+            );
             moves += spec.moves - game.moves_left;
         }
         all_spreads.extend_from_slice(&spreads);
+        all_voices.extend_from_slice(&voices);
         let per100 = |n: u32| if moves == 0 { 0.0 } else { n as f64 * 100.0 / moves as f64 };
         println!(
             "{:<16} {:>8.1} {:>8.1} {:>8.1} {:>8.1} {:>8.1}",
@@ -155,6 +164,18 @@ fn specials_made(bot: Bot, seeds: u64) {
         spread_at(99),
         spread_at(100),
         instant as f64 * 100.0 / all_spreads.len().max(1) as f64,
+    );
+    println!();
+    println!(
+        "gems clearing within the same {SOUND_WINDOW_MS}ms, which is how many sounds would fire at once:"
+    );
+    let voices_at = |p: usize| percentile(&mut all_voices.clone(), p).unwrap_or(0);
+    println!(
+        "  p50 {}   p90 {}   p99 {}   worst {}",
+        voices_at(50),
+        voices_at(90),
+        voices_at(99),
+        voices_at(100),
     );
     println!();
 
@@ -236,6 +257,7 @@ fn play_counting(
     bot: Bot,
     made: &mut [u32; 6],
     spreads: &mut Vec<u32>,
+    voices: &mut Vec<u32>,
 ) -> Game {
     let mut game = Game::new(spec.clone(), seed);
     for _ in 0..4_000 {
@@ -260,18 +282,22 @@ fn play_counting(
             }
             game.update(250.0);
             // Every clear arrives as one batch of events, so the widest delay
-            // in a batch is how long that clear takes to finish rippling.
+            // in a batch is how long that clear takes to finish rippling, and
+            // the fullest window within it is how many sounds land at once.
             let mut widest = None;
+            let mut delays: Vec<u32> = Vec::new();
             for event in game.events() {
                 if event.kind == EV_SPECIAL_MADE && (event.special as usize) < made.len() {
                     made[event.special as usize] += 1;
                 }
                 if event.kind == EV_CLEAR {
                     widest = Some(widest.unwrap_or(0).max(event.value as u32));
+                    delays.push(event.value as u32);
                 }
             }
             if let Some(widest) = widest {
                 spreads.push(widest);
+                voices.push(busiest_window(&mut delays, SOUND_WINDOW_MS));
             }
         }
     }
@@ -350,6 +376,24 @@ fn value(game: &Game) -> f64 {
         total += objective.reached(&game.progress) as f64 / needed;
     }
     total + game.progress.score as f64 / 1.0e7
+}
+
+/// Roughly one frame: sounds starting this close together are heard as one
+/// moment, and are what a voice budget has to cover.
+const SOUND_WINDOW_MS: u32 = 30;
+
+/// The most cells that pop within any `window` of each other.
+fn busiest_window(delays: &mut Vec<u32>, window: u32) -> u32 {
+    delays.sort_unstable();
+    let mut best = 0;
+    let mut start = 0;
+    for end in 0..delays.len() {
+        while delays[end] - delays[start] > window {
+            start += 1;
+        }
+        best = best.max((end - start + 1) as u32);
+    }
+    best
 }
 
 fn percentile<T: Copy + Ord>(values: &mut Vec<T>, p: usize) -> Option<T> {

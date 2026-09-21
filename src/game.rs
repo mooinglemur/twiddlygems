@@ -34,8 +34,8 @@ pub const FALL_SPEED: f32 = 0.014;
 /// instead of covering the extra ground faster. Without the cap a long shot
 /// moves so quickly it is hard to see what it did.
 pub const LAUNCH_RAMP_MS: f32 = 400.0;
-/// Top speed, in cells per millisecond — about six and a half cells a second.
-pub const LAUNCH_SPEED: f32 = 0.0065;
+/// Top speed, in cells per millisecond — a little over three cells a second.
+pub const LAUNCH_SPEED: f32 = 0.00325;
 
 const SCORE_PER_GEM: u64 = 50;
 const SCORE_PER_SPECIAL_FIRED: u64 = 120;
@@ -440,14 +440,13 @@ impl Game {
             .map(|(from, to)| flight_time(cells_between(*from, *to)))
             .fold(0.0_f32, f32::max);
 
-        for (from, _) in self.launches.clone() {
-            self.events.push(Event::at(
-                EV_SPECIAL_FIRED,
-                from,
-                255,
-                Special::Rocket,
-                self.cascade.max(1),
-            ));
+        for (from, to) in self.launches.clone() {
+            let mut event =
+                Event::at(EV_SPECIAL_FIRED, from, 255, Special::Rocket, self.cascade.max(1));
+            // How long this one is in the air, so the front end can make its
+            // whistle last exactly as far as it flies.
+            event.value = flight_time(cells_between(from, to)).clamp(0.0, 65_535.0) as u16;
+            self.events.push(event);
         }
         self.phase = Phase::Launching { elapsed: 0.0 };
         true
@@ -1549,6 +1548,27 @@ mod tests {
             delays.iter().all(|d| (*d as f32) < matching::RAINBOW_SPREAD_MS),
             "and all within its window"
         );
+    }
+
+    #[test]
+    fn a_launch_says_how_long_it_will_be_in_the_air() {
+        // The front end needs this to make the whistle last the whole flight.
+        let mut game = Game::new(spec(4, 4, 6, 10), 105);
+        paint(&mut game, &square_board());
+        assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
+        let events = settle(&mut game);
+
+        let launch = events
+            .iter()
+            .find(|e| e.kind == EV_SPECIAL_FIRED && e.special == Special::Rocket.code())
+            .expect("a rocket should have launched");
+        let flown = f32::from(launch.value);
+        assert!(flown > 0.0, "a flight takes some time");
+        assert!(
+            (flown - flight_time(1.0)).abs() < 1.0 || flown >= flight_time(1.0),
+            "it should be at least as long as the shortest hop, got {flown}ms"
+        );
+        assert!(flown < 4_000.0, "and not absurd, got {flown}ms");
     }
 
     #[test]

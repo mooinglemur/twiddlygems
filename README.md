@@ -228,6 +228,104 @@ Measured in headless Chromium with the CPU throttled 8x, as a stand-in for a
 slow device: 12.4fps before these changes, 42.4fps after, with per-frame draw
 time falling from 3.4ms to 0.9ms.
 
+## Sound
+
+Effects are synthesized in the browser rather than shipped as files: nothing to
+download, no codec to negotiate (Safari has never taken Ogg, which narrows the
+universal set to MP3, AAC and WAV), and a sound can be pitched per play instead
+of shipping variants. A sample set would have been several times the size of the
+game.
+
+Sounds are data, in [`web/js/sounds.js`](web/js/sounds.js). One is a stack of
+layers, each an oscillator or a burst of noise shaped by an envelope, and each
+carrying its own pitch and its own offset — so a chord is several layers at one
+moment and an arpeggio is the same layers a few milliseconds apart:
+
+```js
+pop: {
+  gain: 0.5,
+  layers: [
+    {
+      source: 'noise',
+      filters: [
+        { type: 'highpass', frequency: 340, q: 0.6 },
+        { type: 'lowpass', frequency: 4200, q: 0.9, sweep: { to: 680, time: 0.075 } },
+      ],
+      env: { attack: 0.007, decay: 0.08 },
+      jitter: { frequency: 0.18, gain: 0.25 },
+    },
+  ],
+}
+```
+
+A sound may declare a natural `duration`, and be played with a different one —
+the holds, decays and glides scale to fit while attacks are left alone, since a
+transient that stretches is not one. That is how a rocket's whistle lasts
+exactly as long as its flight: the engine works the flight time out from the
+distance and sends it along with the launch, so a shot across the board whistles
+for longer than one next door. A layer sets `stretch: false` to stay put — an
+ignition hiss is the same length however far the rocket is going.
+
+A `waver` walks a pitch glide in small steps and pushes each one slightly off,
+which is how a firework fails to hold its note. Its `depth` is a fraction of the
+frequency, and the useful range is far narrower than it looks: 0.022 is about a
+third of a semitone either way and reads as a waver, while 0.16 is two and a
+half semitones and is an unmistakable vibrato. A `sweep` on a filter glides its cutoff, so a sound gets *darker* as it fades
+rather than merely quieter. That turns out to be most of the difference between
+a poof and a click — along with a soft attack, since a sub-millisecond onset is
+a click transient however the rest of it is shaped.
+
+`jitter` wobbles a layer per play so that repeats do not phase into one tone,
+which matters when twenty of the same sound land together.
+
+Sounds are **scheduled on the audio clock**, not fired from a timer, using the
+same per-cell delay the engine hands the renderer. A blast sweeping along a row
+keeps its rhythm even if the frame loop stutters, and the pops arrive panned by
+the column they came from.
+
+`make audio` renders the sounds through an `OfflineAudioContext` — the same
+graph the game plays, but exact and repeatable — and measures them:
+
+```
+pop x1       peak 0.104  tail   61ms  bright 4731 -> 2954
+pop x20      peak 0.290  tail   72ms  bright 3628 -> 2787
+boom         peak 0.330  tail  505ms  bright  291 ->  149
+boom x2      peak 0.325  tail  518ms
+rocket .5s   peak 0.221  tail  437ms  bright 4636 -> 1612
+rocket 1.4s  peak 0.214  tail 1393ms  bright 4186 -> 1658
+glide plain  peak 0.493  tail  888ms                      wobble 0.016
+glide waver  peak 0.493  tail  888ms                      wobble 0.016
+glide wild   peak 0.493  tail  888ms                      wobble 0.212
+```
+
+The last three are a control: the same falling glide plain, with the waver the
+rocket actually ships, and with an absurd one. Note that the shipped waver
+measures the same as no waver at all. That is not a bug in the waver, it is the
+floor of measuring pitch through zero crossings while the frequency is being
+automated — so the check proves the *mechanism* works using the exaggerated
+control, and says nothing about the shipped depth, which is set by ear. It does
+enforce a ceiling, because shipping a wild one is a mistake already made here
+once.
+
+It also reports how much of a sound survives a 200Hz high-pass, which is
+roughly what a phone speaker throws away. A boom pitched down at 40Hz measures
+loud here and arrives as silence on the device most people will play on, so the
+body of that one is deliberately kept near 190Hz falling to 72Hz — 89% of it
+gets through.
+
+It fails the build on several counts. If the sounds designed to pile up — twenty
+pops, two booms — reach the limiter threshold, because the limiter is a safety
+net rather than part of the mix. (Four booms at once may well engage it, and
+that is what it is for.) If a sound is no darker at its end than at its start, because that
+means its filter sweep has stopped working and it has quietly become a click
+again. If the boom drifts far from the half second it is meant to run,
+or sinks so low that a phone cannot reproduce it. And if the waver stops
+wavering, or a rocket's whistle stops tracking its flight time.
+
+What none of this can tell you is whether a sound is any good. Levels,
+durations and brightness are measurable; character is not. Listen, then edit
+`sounds.js`.
+
 ## Where this is going
 
 1. **A playable solo game.** Done: mechanics, levels, objectives, and the browser

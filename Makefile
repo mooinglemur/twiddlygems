@@ -10,7 +10,7 @@ BUILT  := target/$(TARGET)/release/twiddlygems.wasm
 OUT    := web/twiddlygems.wasm
 PORT   ?= 8080
 
-.PHONY: all wasm test abi check serve smoke shots balance clean target-check
+.PHONY: all wasm test abi check serve smoke shots audio balance clean target-check
 
 all: check wasm
 
@@ -57,6 +57,10 @@ serve: wasm
 ## Play the game in a headless browser and write screenshots to shots/.
 shots: wasm
 	node tools/shoot.mjs shots
+
+## Render the synthesized sounds offline and measure them.
+audio:
+	node tools/audio_check.mjs
 
 ## Play every level with two bots and report how hard they turned out to be.
 balance:

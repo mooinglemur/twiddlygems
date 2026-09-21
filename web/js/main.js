@@ -2,13 +2,15 @@
 // loop. All gameplay decisions live in wasm; this file only feeds it time and
 // input and asks what to draw.
 
-import { loadEngine, Phase, Status } from './engine.js';
+import { EventKind, Special, loadEngine, Phase, Status } from './engine.js';
+import { Audio } from './audio.js';
 import { Renderer } from './render.js';
 import { attachInput } from './input.js';
 import { Hud } from './hud.js';
 
 const WASM_URL = 'twiddlygems.wasm';
 const SAVE_KEY = 'twiddlygems.save.v1';
+const SOUND_KEY = 'twiddlygems.sound.v1';
 /** How long a player may stare at the board before it offers a move. */
 const HINT_DELAY_MS = 6000;
 /** A backgrounded tab hands back one enormous frame; cap what we feed in. */
@@ -30,6 +32,7 @@ const dom = {
   levelsButton: document.getElementById('levels-button'),
   hintButton: document.getElementById('hint-button'),
   retryButton: document.getElementById('retry-button'),
+  soundButton: document.getElementById('sound-button'),
 };
 
 /** Progress lives in the browser; the engine is told about it on start. */
@@ -88,6 +91,59 @@ async function boot() {
   const renderer = new Renderer(dom.canvas, engine);
   hud.rebuild();
 
+  const audio = new Audio();
+  let soundOn = true;
+  try {
+    soundOn = window.localStorage.getItem(SOUND_KEY) !== 'off';
+  } catch (error) {
+    console.warn('could not read the sound setting', error);
+  }
+  audio.setEnabled(soundOn);
+  dom.soundButton.textContent = soundOn ? '\u{1F50A}' : '\u{1F507}';
+  dom.soundButton.setAttribute('aria-pressed', String(!soundOn));
+
+  // Audio may only be opened from a gesture, and on iOS it must happen inside
+  // the handler itself, so this runs on the first touch anywhere.
+  const openAudio = () => audio.unlock();
+  window.addEventListener('pointerdown', openAudio, { once: true, capture: true });
+  window.addEventListener('keydown', openAudio, { once: true, capture: true });
+
+  dom.soundButton.addEventListener('click', () => {
+    soundOn = !soundOn;
+    audio.unlock();
+    audio.setEnabled(soundOn);
+    dom.soundButton.textContent = soundOn ? '\u{1F50A}' : '\u{1F507}';
+    dom.soundButton.setAttribute('aria-pressed', String(!soundOn));
+    try {
+      window.localStorage.setItem(SOUND_KEY, soundOn ? 'on' : 'off');
+    } catch (error) {
+      console.warn('could not save the sound setting', error);
+    }
+  });
+
+  /// Each cleared gem gets its pop, scheduled on the audio clock with the delay
+  /// the engine gave it, and placed left to right by the column it was in.
+  const playEvents = (events) => {
+    const spread = Math.max(1, engine.cols - 1);
+    for (const event of events) {
+      if (event.kind === EventKind.CLEAR) {
+        audio.play('pop', {
+          delay: event.value / 1000,
+          pan: ((event.c / spread) * 2 - 1) * 0.55,
+        });
+      } else if (event.kind === EventKind.ROCKET_HIT) {
+        audio.play('boom', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
+      } else if (event.kind === EventKind.SPECIAL_FIRED && event.special === Special.ROCKET) {
+        // The engine sends the flight time, so the whistle lasts exactly as
+        // long as the rocket is in the air.
+        audio.play('rocket', {
+          duration: event.value / 1000,
+          pan: ((event.c / spread) * 2 - 1) * 0.4,
+        });
+      }
+    }
+  };
+
   let hintAt = performance.now() + HINT_DELAY_MS;
   let resultShown = false;
 
@@ -138,7 +194,7 @@ async function boot() {
   // renderer are reachable from the console, and from the screenshot tooling,
   // which is how the animation timings get checked.
   if (new URLSearchParams(window.location?.search ?? '').has('debug')) {
-    window.twiddlygems = { engine, renderer, hud };
+    window.twiddlygems = { engine, renderer, hud, audio };
   }
 
   let last = performance.now();
@@ -149,8 +205,8 @@ async function boot() {
     engine.update(dt);
     const events = engine.drainEvents();
     if (events.length > 0) {
-      // Debris for everything that cleared; sound hooks in here too, later.
       renderer.addEvents(events, now);
+      playEvents(events);
     }
 
     if (engine.phase !== Phase.IDLE) {

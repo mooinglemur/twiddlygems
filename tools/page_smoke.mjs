@@ -72,6 +72,10 @@ function stubElement(id) {
     getBoundingClientRect() {
       return { left: 0, top: 0, width: 360, height: 360, right: 360, bottom: 360 };
     },
+    attributes: {},
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    removeAttribute(name) { delete this.attributes[name]; },
     setPointerCapture() {},
     releasePointerCapture() {},
     getContext() { return element === canvas ? context2d : stubContext(); },
@@ -82,7 +86,7 @@ function stubElement(id) {
 for (const id of [
   'board', 'stage', 'level-number', 'level-name', 'score', 'moves', 'objectives',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons', 'level-grid',
-  'levels-button', 'hint-button', 'retry-button',
+  'levels-button', 'hint-button', 'retry-button', 'sound-button',
 ]) {
   elements.set(id, stubElement(id));
 }
@@ -135,9 +139,11 @@ globalThis.fetch = async (url) => {
 
 await import(path.resolve('web/js/main.js'));
 
-// boot() is async; give its awaits a chance to land before driving frames.
-for (let i = 0; i < 50 && pending.length === 0; i += 1) {
-  await new Promise((resolve) => setImmediate(resolve));
+// boot() is async and pulls in a module graph, so give it real time rather
+// than a fixed number of microtask turns — that raced as soon as another
+// module was added.
+for (let i = 0; i < 400 && pending.length === 0; i += 1) {
+  await new Promise((resolve) => setTimeout(resolve, 5));
 }
 assert.ok(pending.length > 0, 'the page never reached its frame loop');
 
@@ -222,6 +228,18 @@ dispatch('retry-button', 'click', {});
 pump(5);
 assert.equal(elements.get('score').textContent, '0', 'restarting did not reset the score on screen');
 assert.equal(elements.get('moves').textContent, '20', 'restarting did not restore the moves');
+
+// Sound is off by default here (the stub has no AudioContext), but the button
+// must still toggle without throwing and must remember the choice.
+const soundLabel = elements.get('sound-button').textContent;
+dispatch('sound-button', 'click', {});
+assert.notEqual(
+  elements.get('sound-button').textContent,
+  soundLabel,
+  'the sound button did not change state',
+);
+assert.ok(store.has('twiddlygems.sound.v1'), 'the sound setting was not saved');
+dispatch('sound-button', 'click', {});
 
 // The level picker builds one chip per level, with the locked ones disabled.
 dispatch('levels-button', 'click', {});
