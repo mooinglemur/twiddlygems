@@ -832,6 +832,11 @@ impl Game {
                 best.push(p);
                 continue;
             }
+            // An empty cell is nothing to aim at. That matters most for jelly:
+            // it is peeled by clearing the gem standing on it, so bare jelly
+            // has nothing to clear, and orphaned jelly in a pocket nothing can
+            // refill would otherwise swallow every rocket for the rest of the
+            // level.
             let Some(gem) = self.board.gem(p) else { continue };
             if gem.special == Special::Rocket {
                 continue;
@@ -2525,6 +2530,44 @@ mod tests {
             );
         });
         assert_eq!(seen.len(), 2, "and both kinds of progress should come up");
+    }
+
+    #[test]
+    fn a_rocket_does_not_aim_at_jelly_with_nothing_standing_on_it() {
+        // Jelly is peeled by clearing the gem on top of it, so bare jelly has
+        // nothing to clear and a strike there is a wasted rocket. Orphaned
+        // jelly in a pocket nothing can refill is exactly where that would
+        // happen, and it would happen every volley for the rest of the level.
+        let mut game = targeting_game(186, vec![Objective::Jelly]);
+        let bare = Pos::new(2, 2);
+        let covered = Pos::new(4, 4);
+        for p in [bare, covered] {
+            game.board.cell_mut(p).expect("on the board").jelly = 1;
+        }
+        game.board.set_gem(bare, None);
+        game.progress.jelly_total = 2;
+        game.progress.jelly_left = 2;
+
+        let seen = aim_spread(&mut game);
+        assert!(!seen.contains(&bare), "it aimed at jelly with nothing standing on it");
+        assert_eq!(seen, vec![covered], "the covered jelly is the only jelly worth shooting");
+    }
+
+    #[test]
+    fn a_rocket_ignores_empty_cells_entirely() {
+        // Nothing to hit is nothing to aim at, jelly or no jelly. A board that
+        // has holes in it is ordinary now, so this is not a corner case.
+        let mut game = targeting_game(187, vec![Objective::Score(10_000)]);
+        let holes = [Pos::new(1, 1), Pos::new(3, 2), Pos::new(4, 0)];
+        for p in holes {
+            game.board.set_gem(p, None);
+        }
+
+        let seen = aim_spread(&mut game);
+        for hole in holes {
+            assert!(!seen.contains(&hole), "it aimed at the empty cell {hole:?}");
+        }
+        assert!(!seen.is_empty(), "and it still found the gems that are there");
     }
 
     #[test]
