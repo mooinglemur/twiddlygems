@@ -256,8 +256,6 @@ pub struct Game {
     launch_ms: f32,
     /// How long the current fall needs, set by whichever gem has furthest to go.
     fall_ms: f32,
-    /// Specials to drop in once the clear finishes.
-    pending: Vec<(Pos, Gem)>,
     /// Rockets in flight. Each keeps its own flight time and lands on it.
     launches: Vec<Launch>,
     /// Specials a strike landed on, waiting for the last rocket to be down
@@ -291,7 +289,6 @@ impl Game {
             clear_ms: POP_MS,
             launch_ms: LAUNCH_RAMP_MS,
             fall_ms: FALL_ACCEL_MS,
-            pending: Vec::new(),
             launches: Vec::new(),
             triggered: Vec::new(),
             origin: Vec::new(),
@@ -329,7 +326,6 @@ impl Game {
         self.clear_ms = POP_MS;
         self.launch_ms = LAUNCH_RAMP_MS;
         self.fall_ms = FALL_ACCEL_MS;
-        self.pending.clear();
         self.launches.clear();
         self.triggered.clear();
         self.cascade = 0;
@@ -525,9 +521,6 @@ impl Game {
     fn finish_clear(&mut self) {
         for (p, _) in std::mem::take(&mut self.clearing) {
             self.board.set_gem(p, None);
-        }
-        for (p, gem) in std::mem::take(&mut self.pending) {
-            self.board.set_gem(p, Some(gem));
         }
 
         // A rocket falls like anything else and takes no part in the matches
@@ -1123,8 +1116,14 @@ impl Game {
         for (p, special) in &blast.fired {
             self.events.push(Event::at(EV_SPECIAL_FIRED, *p, 255, *special, cascade));
         }
+        // A new special belongs to the match that made it rather than to what
+        // follows, so it is on the board from this moment: it is seen coming
+        // out of the gems instead of out of the hole they leave behind. The
+        // gem it stands in for still counts as cleared and still bursts, but
+        // it does not pop, because the special is already in its place.
         for (p, gem) in &resolution.creations {
             self.events.push(Event::at(EV_SPECIAL_MADE, *p, gem.color, gem.special, cascade));
+            self.board.set_gem(*p, Some(*gem));
         }
 
         // The clear runs until the furthest cell has finished popping.
@@ -1135,8 +1134,8 @@ impl Game {
             .iter()
             .copied()
             .zip(blast.delays.iter().copied())
+            .filter(|(p, _)| !resolution.creations.iter().any(|(made, _)| made == p))
             .collect();
-        self.pending = resolution.creations;
         self.phase = Phase::Clearing { elapsed: 0.0 };
     }
 
@@ -1688,6 +1687,58 @@ mod tests {
         assert!(!made.is_empty(), "a 2x2 should leave a rocket");
         assert_eq!(made[0].special, Special::Rocket.code());
         assert_eq!((made[0].r, made[0].c), (1, 1), "it takes the swapped gem's place");
+    }
+
+    #[test]
+    fn a_new_special_is_there_while_the_match_that_made_it_is_still_popping() {
+        // Waiting for the pops to finish made the gem look like it arrived
+        // from nowhere. It belongs to the match, so it is on the board from
+        // the moment the match resolves, standing still while the rest goes.
+        let mut game = Game::new(spec(4, 4, 6, 10), 73);
+        paint(&mut game, &square_board());
+        assert!(game.try_swap(Pos::new(1, 1), Pos::new(1, 2)));
+
+        let mut frames = 0;
+        while !matches!(game.phase(), Phase::Clearing { .. }) && frames < 100 {
+            game.update(16.0);
+            frames += 1;
+        }
+        assert!(matches!(game.phase(), Phase::Clearing { .. }), "the swap never resolved");
+
+        let made = Pos::new(1, 1);
+        assert_eq!(
+            game.board.gem(made).map(|gem| gem.special),
+            Some(Special::Rocket),
+            "the rocket should be on the board as soon as the match resolves"
+        );
+
+        let slot = (made.r * game.board.cols + made.c) as usize;
+        let mut saw_a_neighbor_pop = false;
+        while matches!(game.phase(), Phase::Clearing { .. }) && frames < 200 {
+            game.update(16.0);
+            frames += 1;
+            if !matches!(game.phase(), Phase::Clearing { .. }) {
+                break;
+            }
+            assert_eq!(
+                game.cells_bytes()[slot * 4 + 3] & Game::FLAG_CLEARING,
+                0,
+                "the new rocket was marked as clearing at frame {frames}"
+            );
+            assert_eq!(
+                game.offsets()[slot * 3 + 2],
+                1.0,
+                "the new rocket shrank with the match at frame {frames}"
+            );
+            // The corner above it is part of the same square and does pop,
+            // which is what says this loop ran during a clear rather than
+            // over an empty one.
+            let corner = Pos::new(0, 1);
+            let neighbor = (corner.r * game.board.cols + corner.c) as usize;
+            saw_a_neighbor_pop |=
+                game.cells_bytes()[neighbor * 4 + 3] & Game::FLAG_CLEARING != 0;
+        }
+        assert!(saw_a_neighbor_pop, "nothing was popping, so the check proved nothing");
     }
 
     #[test]
