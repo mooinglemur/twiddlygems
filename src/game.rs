@@ -54,6 +54,13 @@ pub const EV_LOST: u8 = 9;
 /// A rocket reaching its target. Carried alongside the ordinary clear so the
 /// front end can make more of it than a gem simply going away.
 pub const EV_ROCKET_HIT: u8 = 10;
+/// A match resolving, once per step of a chain, carrying that step's number.
+///
+/// This is the step itself rather than the gems it took, which is what a front
+/// end wants for anything that belongs to the chain as a whole — the rising
+/// chord, say. Gems also go away for reasons that are not a step in a chain: a
+/// rocket takes one when it lands, and that is not a beat of the music.
+pub const EV_MATCH: u8 = 11;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -764,6 +771,7 @@ impl Game {
         }
 
         let cascade = self.cascade.max(1);
+        self.events.push(Event::plain(EV_MATCH, cascade.min(65_535) as u16));
         let points = (blast.cleared.len() as u64 * SCORE_PER_GEM
             + blast.fired.len() as u64 * SCORE_PER_SPECIAL_FIRED
             + resolution.creations.len() as u64 * SCORE_PER_SPECIAL_MADE)
@@ -1648,6 +1656,56 @@ mod tests {
             );
         }
         assert!(frames > 20, "a flight across the board should last many frames");
+    }
+
+    #[test]
+    fn a_match_announces_its_place_in_the_chain() {
+        let mut game = Game::new(spec(4, 4, 6, 10), 115);
+        paint(&mut game, &["1200", "1300", "2100", "0000"]);
+        assert!(game.try_swap(Pos::new(2, 0), Pos::new(2, 1)));
+        let events = settle(&mut game);
+
+        let steps: Vec<&Event> = events.iter().filter(|e| e.kind == EV_MATCH).collect();
+        assert!(!steps.is_empty(), "a match should announce itself");
+        assert_eq!(steps[0].value, 1, "the first step of a chain is the first chord");
+        for pair in steps.windows(2) {
+            assert!(pair[1].value > pair[0].value, "a chain only climbs");
+        }
+    }
+
+    #[test]
+    fn a_rocket_landing_is_not_a_step_in_the_chain() {
+        // It takes a gem with it, but that is not a beat of the music — the
+        // chord should neither advance nor sound again.
+        let mut game = Game::new(spec(8, 8, 6, 10), 116);
+        let from = Pos::new(0, 0);
+        let to = Pos::new(4, 4);
+        let gem = game.board.gem(from).expect("the board is full");
+        game.board.set_gem(from, Some(Gem { special: Special::Rocket, ..gem }));
+        let launch = Launch {
+            from,
+            to,
+            flight_ms: flight_time(cells_between(from, to)),
+            landed: false,
+        };
+        game.launches = vec![launch];
+        game.launch_ms = launch.flight_ms;
+        game.phase = Phase::Launching { elapsed: 0.0 };
+
+        // Watch only the flight, so nothing the later collapse does can muddy it.
+        let mut hits = 0;
+        let mut steps = 0;
+        for _ in 0..400 {
+            if !matches!(game.phase(), Phase::Launching { .. }) {
+                break;
+            }
+            game.update(16.0);
+            hits += game.events().iter().filter(|e| e.kind == EV_ROCKET_HIT).count();
+            steps += game.events().iter().filter(|e| e.kind == EV_MATCH).count();
+        }
+
+        assert_eq!(hits, 1, "the rocket should have landed");
+        assert_eq!(steps, 0, "and raised no step of the chain doing it");
     }
 
     #[test]

@@ -115,6 +115,7 @@ compare(
         ("WON", "WON"),
         ("LOST", "LOST"),
         ("ROCKET_HIT", "ROCKET_HIT"),
+        ("MATCH", "MATCH"),
     ],
 )
 

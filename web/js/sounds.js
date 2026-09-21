@@ -22,6 +22,15 @@
 //             pushed slightly off, the way a firework fails to hold its note
 //   stretch   false to keep a layer at a fixed length when the sound as a whole
 //             is stretched to fill a duration the caller asked for
+//   harmonic  { of, from, to } draws a random whole multiple of one root note
+//             per play, between those two multiples. Any filter whose frequency
+//             is the string 'harmonic' tunes to it. It is a filter frequency,
+//             not a pitch: free random frequencies scattered across a cascade
+//             are noise, while overtones of one fundamental are a chord
+//
+// A sound may declare `scatter`, in seconds: each play is held back by a random
+// moment up to that long, so a pile of them fired at one instant spreads out
+// instead of landing as a single event.
 //
 // A sound may declare `duration`, its natural length in seconds. Playing it
 // with a `duration` option then scales the holds, decays and glides to fit —
@@ -51,6 +60,47 @@ export const SOUNDS = {
         env: { attack: 0.007, decay: 0.08 },
         gain: 1,
         jitter: { frequency: 0.18, gain: 0.25 },
+      },
+    ],
+  },
+
+  /// The shimmer left behind by a gem, ringing on long after the pop.
+  ///
+  /// The note underneath never changes: a sawtooth held at a low F, which has
+  /// energy at every whole multiple of itself. What varies is where the
+  /// band-pass listens — a different overtone of that one fundamental each
+  /// time — so every gem picks out a real partial of the same note and twenty
+  /// of them ring as one chord rather than a scatter of unrelated tones.
+  ///
+  /// (Swapping `source` to 'noise' gives the airier version of the same idea:
+  /// the filter rings on its own and the noise merely feeds it.)
+  ///
+  /// Very quiet, because these pile up several seconds deep.
+  sparkle: {
+    // Judge this by ear rather than by its peak. A band-passed tone ringing
+    // for over a second sits far higher in the mix than its peak suggests:
+    // it is sustained, narrow, and right where hearing is sharpest, where a
+    // pop is a broadband tick lasting sixty milliseconds.
+    gain: 0.05,
+    voiceCap: 16,
+    // Every gem in a clear asks for one of these at the same instant. Spreading
+    // their starts across a fifth of a second turns a single chime into
+    // something that twinkles.
+    scatter: 0.2,
+    layers: [
+      {
+        source: 'sawtooth',
+        note: 'F4',
+        harmonic: { of: 'F1', from: 16, to: 36 },
+        filters: [
+          // Two passes at the same centre: one band-pass this resonant still
+          // leaks noise around the skirts, and a second cleans it into a tone.
+          { type: 'bandpass', frequency: 'harmonic', q: 34 },
+          { type: 'bandpass', frequency: 'harmonic', q: 16 },
+        ],
+        env: { attack: 0.01, decay: 1.5 },
+        gain: 1,
+        jitter: { gain: 0.35 },
       },
     ],
   },
@@ -106,7 +156,7 @@ export const SOUNDS = {
   /// closing as the note falls away, which is what a sawtooth needs to stop
   /// sounding like a buzzer.
   chime: {
-    gain: 0.2,
+    gain: 0.4,
     voiceCap: 6,
     chords: [
       ['A3', 'C4', 'F4'],
@@ -153,7 +203,7 @@ export const SOUNDS = {
           { type: 'highpass', frequency: 900, q: 0.6 },
           { type: 'lowpass', frequency: 7500, q: 0.7, sweep: { to: 2200, time: 0.14 } },
         ],
-        env: { attack: 0.005, decay: 0.15 },
+        env: { attack: 0.105, decay: 0.85 },
         gain: 0.8,
         jitter: { frequency: 0.15, gain: 0.15 },
       },

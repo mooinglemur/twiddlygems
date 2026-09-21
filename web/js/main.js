@@ -126,21 +126,22 @@ async function boot() {
   const playEvents = (events) => {
     const spread = Math.max(1, engine.cols - 1);
 
-    // One chord per clear, not per gem, climbing with the chain. The engine
-    // stamps every clear with its place in the cascade and resets that when the
-    // board settles, so a fresh chain starts at the bottom of the progression
-    // on its own.
-    const chain = events.find((event) => event.kind === EventKind.CLEAR);
-    if (chain) {
-      audio.play('chime', { stage: Math.max(0, chain.cascade - 1) });
+    // One chord per step of the chain, climbing as it goes. This keys off the
+    // step itself rather than off gems going away — a rocket landing takes a
+    // gem with it, but it is not a beat of the music. The engine resets the
+    // count when the board settles, so a fresh chain starts at the bottom of
+    // the progression on its own.
+    const step = events.find((event) => event.kind === EventKind.MATCH);
+    if (step) {
+      audio.play('chime', { stage: Math.max(0, step.value - 1) });
     }
 
     for (const event of events) {
       if (event.kind === EventKind.CLEAR) {
-        audio.play('pop', {
-          delay: event.value / 1000,
-          pan: ((event.c / spread) * 2 - 1) * 0.55,
-        });
+        const pan = ((event.c / spread) * 2 - 1) * 0.55;
+        audio.play('pop', { delay: event.value / 1000, pan });
+        // And the shimmer it leaves behind, ringing on after the pop.
+        audio.play('sparkle', { delay: event.value / 1000, pan });
       } else if (event.kind === EventKind.ROCKET_HIT) {
         audio.play('boom', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.SPECIAL_FIRED && event.special === Special.ROCKET) {

@@ -134,7 +134,11 @@ export class Audio {
     this.voices.set(name, live + 1);
     this.started += 1;
 
-    const at = this.ctx.currentTime + Math.max(0, delay);
+    // `scatter` holds a sound back by a random moment of its own. Twenty gems
+    // cleared together ask for twenty of these at the same instant; without it
+    // they arrive as one event rather than as a shimmer spreading out.
+    const scatter = Math.random() * Math.max(0, sound.scatter ?? 0);
+    const at = this.ctx.currentTime + Math.max(0, delay) + scatter;
     const level = (sound.gain ?? 1) * gain;
     // A sound with a declared length can be asked to fill a different one — a
     // rocket's whistle has to last exactly as long as its flight, and flights
@@ -159,6 +163,19 @@ export class Audio {
     const ctx = this.ctx;
     const jitter = layer.jitter ?? {};
     const wobble = (amount) => (amount ? 1 + (Math.random() * 2 - 1) * amount : 1);
+
+    // A layer may draw a random overtone of one root for its filters to tune
+    // to. Free frequencies scattered across a cascade are noise; whole
+    // multiples of a single fundamental are the harmonic series, and a pile of
+    // them rings as one sound however many arrive. This sets no pitch of its
+    // own — it is a frequency for a filter, not a note.
+    let harmonicHz = null;
+    if (layer.harmonic) {
+      const root = noteToHz(layer.harmonic.of ?? A4);
+      const from = Math.max(1, Math.round(layer.harmonic.from ?? 1));
+      const to = Math.max(from, Math.round(layer.harmonic.to ?? from));
+      harmonicHz = root * (from + Math.floor(Math.random() * (to - from + 1)));
+    }
 
     // A layer opts out of stretching when it is a fixed event rather than part
     // of the body of the sound — an ignition hiss is the same length however
@@ -220,7 +237,10 @@ export class Audio {
     for (const spec of layer.filters ?? []) {
       const filter = ctx.createBiquadFilter();
       filter.type = spec.type ?? 'lowpass';
-      const from = Math.max(20, (spec.frequency ?? 1000) * wobble(jitter.frequency));
+      // `frequency: 'harmonic'` tunes the filter to the overtone this play
+      // drew, which is how a high-Q band-pass on noise becomes a pitch.
+      const centre = spec.frequency === 'harmonic' ? harmonicHz ?? 1000 : spec.frequency ?? 1000;
+      const from = Math.max(20, centre * wobble(jitter.frequency));
       filter.frequency.setValueAtTime(from, start);
       if (spec.sweep) {
         // A cutoff that falls as the sound decays is what makes air disperse

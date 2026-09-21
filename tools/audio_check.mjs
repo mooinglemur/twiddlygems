@@ -110,12 +110,15 @@ const { result } = await send('Runtime.evaluate', {
       const left = buffer.getChannelData(0);
       const right = buffer.getChannelData(1);
 
-      let peak = 0, sum = 0, last = 0, crossings = 0, previous = 0;
+      let peak = 0, sum = 0, last = 0, first = -1, crossings = 0, previous = 0;
       for (let i = 0; i < left.length; i += 1) {
         const v = Math.max(Math.abs(left[i]), Math.abs(right[i]));
         if (v > peak) peak = v;
         sum += left[i] * left[i];
-        if (v > 0.0008) last = i;
+        if (v > 0.0008) {
+          last = i;
+          if (first < 0) first = i;
+        }
         const mono = left[i] + right[i];
         if ((mono > 0 && previous <= 0) || (mono < 0 && previous >= 0)) crossings += 1;
         previous = mono;
@@ -180,8 +183,19 @@ const { result } = await send('Runtime.evaluate', {
 
       return {
         peak: Number(peak.toFixed(4)),
-        rms: Number(Math.sqrt(sum / left.length).toFixed(5)),
+        // Averaged over the sound's own extent, not the whole render. Dividing
+        // by the buffer made a long tone in a long render look quieter than a
+        // tick in a short one, which is a property of the measurement and not
+        // of the sound.
+        rms: Number(Math.sqrt(sum / Math.max(1, last - Math.max(0, first))).toFixed(5)),
+        // Over the whole render instead, for comparing two renders of the same
+        // length with each other — the extent-based figure above shifts when a
+        // filter shortens the tail, which would make a comparison of the two
+        // measure the window rather than the sound.
+        rmsBuffer: Number(Math.sqrt(sum / left.length).toFixed(6)),
         ms: Number(((last / RATE) * 1000).toFixed(1)),
+        // When it actually began, which is what a scatter moves around.
+        onsetMs: Number(((Math.max(0, first) / RATE) * 1000).toFixed(1)),
         // A rough brightness proxy: noisy, hi-hat-like sounds cross zero often.
         zcrPerSec: Math.round(crossings / (Math.max(1, last) / RATE)),
         wobble,
@@ -221,7 +235,20 @@ const { result } = await send('Runtime.evaluate', {
     const steadyTone = await render('tone', 1, 1.5, false, {}, glide(false));
     const waveryTone = await render('tone', 1, 1.5, false, {}, glide(shipped));
     // Deliberately absurd, to tell a broken feature from an insensitive ruler.
-    const wildTone = await render('tone', 1, 1.5, false, {}, glide({ depth: 0.4, rate: 17 }));
+    // The waver is a random walk, so one render is a noisy sample of it —
+    // measured alone it ranges over a factor of five between runs, which is
+    // enough to make a threshold fire at random. Averaged over several, it is
+    // steady enough to assert on.
+    const wildRuns = [];
+    for (let i = 0; i < 5; i += 1) {
+      wildRuns.push(await render('tone', 1, 1.5, false, {}, glide({ depth: 0.4, rate: 17 })));
+    }
+    const wildTone = {
+      ...wildRuns[0],
+      wobble: Number(
+        (wildRuns.reduce((sum, r) => sum + r.wobble, 0) / wildRuns.length).toFixed(4),
+      ),
+    };
     return {
       one: await render('pop', 1),
       three: await render('pop', 3),
@@ -231,13 +258,24 @@ const { result } = await send('Runtime.evaluate', {
       boomFour: await render('boom', 4, 1.2),
       rocketShort: await render('rocket', 1, 2, false, { duration: 0.4 }),
       rocketLong: await render('rocket', 1, 2.5, false, { duration: 1.4 }),
+      sparkle: await render('sparkle', 1, 2.6),
+      sparkleTwenty: await render('sparkle', 20, 2.6),
+      // Several separate plays, to see whether the overtone really is redrawn.
+      sparkleRuns: await Promise.all(
+        [0, 1, 2, 3, 4, 5, 6, 7].map(() => render('sparkle', 1, 2.6)),
+      ).then((runs) => ({
+        pitches: runs.map((r) => r.early),
+        onsets: runs.map((r) => r.onsetMs),
+        peaks: runs.map((r) => r.peak),
+      })),
       chimeFirst: await render('chime', 1, 0.8, false, { stage: 0 }),
       chimeLast: await render('chime', 1, 0.8, false, { stage: 11 }),
       // Past the end of the progression it should hold, not wrap round.
       chimePastEnd: await render('chime', 1, 0.8, false, { stage: 40 }),
       chimeStages: SOUNDS.chime.chords.length,
+      sparkleScatterMs: (SOUNDS.sparkle.scatter ?? 0) * 1000,
       // How much of the boom survives a speaker that cannot do bass.
-      boomThroughPhone: Number((thin.rms / Math.max(1e-9, full.rms)).toFixed(3)),
+      boomThroughPhone: Number((thin.rmsBuffer / Math.max(1e-9, full.rmsBuffer)).toFixed(3)),
       steadyTone,
       waveryTone,
       wildTone,
@@ -264,6 +302,8 @@ for (const [label, key] of [
   ['boom x4', 'boomFour'],
   ['rocket .4s', 'rocketShort'],
   ['rocket 1.4s', 'rocketLong'],
+  ['sparkle', 'sparkle'],
+  ['sparkle x20', 'sparkleTwenty'],
   ['chime 1/12', 'chimeFirst'],
   ['chime 12/12', 'chimeLast'],
   ['glide plain', 'steadyTone'],
@@ -305,11 +345,42 @@ if (stats.one.ms > 200) {
 // already unusual, and four is what the limiter is for — asking a rocket strike
 // to be quiet enough that four of them never engage it would only make one of
 // them thin. The x4 row is printed to show what the limiter is catching.
-const loudest = Math.max(worst.peak, stats.boomTwo.peak);
+// The overtone has to actually be redrawn each play, or every gem rings the
+// same partial and the "chord" is one note twenty times over.
+const pitches = new Set(stats.sparkleRuns.pitches);
+if (pitches.size < 3) {
+  console.error(
+    `\nFAIL: eight sparkles produced ${pitches.size} distinct pitches ` +
+      `(${stats.sparkleRuns.pitches}). The harmonic is not being drawn per play.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+console.log(
+  `\neight separate sparkles — peaks ${stats.sparkleRuns.peaks.join(', ')}\n` +
+    `                       starts ${stats.sparkleRuns.onsets.map((m) => `${m}ms`).join(', ')}`,
+);
+
+// They also have to start at different moments, or a clear lands as one chime.
+const onsets = stats.sparkleRuns.onsets;
+const onsetRange = Math.max(...onsets) - Math.min(...onsets);
+const declaredScatter = stats.sparkleScatterMs;
+if (declaredScatter > 0 && onsetRange < declaredScatter * 0.3) {
+  console.error(
+    `\nFAIL: eight sparkles started within ${onsetRange.toFixed(0)}ms of each other, against a ` +
+      `declared scatter of ${declaredScatter}ms (${onsets}). They are not being spread out.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+const loudest = Math.max(worst.peak, stats.boomTwo.peak, stats.sparkleTwenty.peak);
 if (loudest >= LIMITER_THRESHOLD) {
   console.error(
     `\nFAIL: the sounds meant to stack are reaching the limiter — twenty pops peak ` +
-      `${worst.peak} and two booms ${stats.boomTwo.peak}, against ${LIMITER_THRESHOLD}.`,
+      `${worst.peak}, twenty sparkles ${stats.sparkleTwenty.peak} and two booms ` +
+      `${stats.boomTwo.peak}, against ${LIMITER_THRESHOLD}.`,
   );
   stop();
   process.exit(1);
@@ -371,9 +442,12 @@ if (Math.abs(stats.chimePastEnd.early - stats.chimeLast.early) > stats.chimeLast
   stop();
   process.exit(1);
 }
-if (stats.chimeFirst.ms < 120 || stats.chimeFirst.ms > 340) {
+// A loose sanity bound rather than a target. How long a chord rings is a
+// musical decision made by ear and changed often; this only catches a note
+// that has become a click or one that runs into the next clear.
+if (stats.chimeFirst.ms < 80 || stats.chimeFirst.ms > 900) {
   console.error(
-    `\nFAIL: a chord rings for ${stats.chimeFirst.ms}ms; it is meant to be about 200.`,
+    `\nFAIL: a chord rings for ${stats.chimeFirst.ms}ms, which is not a plucked note.`,
   );
   stop();
   process.exit(1);

@@ -269,6 +269,20 @@ distance and sends it along with the launch, so a shot across the board whistles
 for longer than one next door. A layer sets `stretch: false` to stay put — an
 ignition hiss is the same length however far the rocket is going.
 
+A `scatter` holds each play back by a random moment of its own, in seconds.
+Every gem in a clear asks for its shimmer at the same instant; spreading those
+starts across a fifth of a second is the difference between a chime and a
+twinkle.
+
+A `harmonic` draws a random whole multiple of one root note per play, for a
+filter to tune to — `frequency: 'harmonic'`. It is a filter frequency, not a
+pitch. The shimmer left behind by a cleared gem is a sawtooth held at a constant
+low F with a high-resonance band-pass picking out one of its overtones, a
+different one each time. That distinction is the whole sound: frequencies
+scattered freely across a cascade are noise, while overtones of a single
+fundamental are a chord, so twenty gems clearing at once ring together instead
+of clashing.
+
 A sound may instead be built from `chords`: a list of note lists and a single
 `voice`, with a `stage` picking which chord to spread across that voice. The
 clear chime is twelve chords in F, and a cascade climbs them one step per clear,
