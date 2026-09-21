@@ -7,7 +7,7 @@
 // has touched the page, so the context is created on the first gesture and
 // anything asked for before that is dropped. And clears arrive from the engine
 // with a delay attached, so sounds are *scheduled* on the audio clock rather
-// than fired from a timer — a blast sweeping along a row keeps its rhythm even
+// than fired from a timer: a blast sweeping along a row keeps its rhythm even
 // if the frame loop stutters.
 
 import { SOUNDS } from './sounds.js';
@@ -49,8 +49,8 @@ export class Audio {
   }
 
   get ready() {
-    // An OfflineAudioContext is never "running" — it reports suspended until
-    // it renders — so it is recognised by the method only it has. Tests render
+    // An OfflineAudioContext is never "running" (it reports suspended until it
+    // renders), so it is recognized by the method only it has. Tests render
     // the same graph the game plays.
     return (
       this.ctx !== null &&
@@ -89,7 +89,7 @@ export class Audio {
     //
     // It sits just under the ceiling, not down in the mix. At -6dB it was
     // catching an ordinary three-gem clear, which peaks around -4dB before it
-    // gets here — so it was shaping every cascade rather than saving the rare
+    // gets here, so it was shaping every cascade rather than saving the rare
     // one, and the levels were being tuned by ear through a compressor that was
     // quietly doing the work. Up here it only meets genuine overs.
     const limiter = this.ctx.createDynamicsCompressor();
@@ -148,7 +148,7 @@ export class Audio {
     const scatter = Math.random() * Math.max(0, sound.scatter ?? 0);
     const at = this.ctx.currentTime + Math.max(0, delay) + scatter;
     const level = (sound.gain ?? 1) * gain;
-    // A sound with a declared length can be asked to fill a different one — a
+    // A sound with a declared length can be asked to fill a different one. A
     // rocket's whistle has to last exactly as long as its flight, and flights
     // vary with distance.
     const stretch = duration && sound.duration ? Math.max(0.05, duration) / sound.duration : 1;
@@ -176,7 +176,7 @@ export class Audio {
     // to. Free frequencies scattered across a cascade are noise; whole
     // multiples of a single fundamental are the harmonic series, and a pile of
     // them rings as one sound however many arrive. This sets no pitch of its
-    // own — it is a frequency for a filter, not a note.
+    // own: it is a frequency for a filter, not a note.
     let harmonicHz = null;
     if (layer.harmonic) {
       const root = noteToHz(layer.harmonic.of ?? A4);
@@ -186,7 +186,7 @@ export class Audio {
     }
 
     // A layer opts out of stretching when it is a fixed event rather than part
-    // of the body of the sound — an ignition hiss is the same length however
+    // of the body of the sound: an ignition hiss is the same length however
     // far the rocket is going.
     const span = layer.stretch === false ? 1 : stretch;
 
@@ -295,7 +295,7 @@ export class Audio {
 ///
 /// Most sounds simply list theirs. A sound built from `chords` instead names a
 /// list of note lists and a single `voice`, and the stage picks which chord to
-/// spread across that voice — one definition covering a whole progression. A
+/// spread across that voice, one definition covering a whole progression. A
 /// stage past the end holds on the last chord rather than wrapping back to the
 /// bottom, so a very long chain stays at its peak instead of collapsing.
 function layersFor(sound, stage) {

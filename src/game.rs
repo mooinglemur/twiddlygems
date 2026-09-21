@@ -24,7 +24,7 @@ pub const SHUFFLE_MS: f32 = 700.0;
 /// the height of the board takes longer than one dropping a single row rather
 /// than both arriving together.
 pub const FALL_ACCEL_MS: f32 = 160.0;
-/// Terminal velocity, in cells per millisecond — about fourteen cells a second.
+/// Terminal velocity, in cells per millisecond: about fourteen cells a second.
 pub const FALL_SPEED: f32 = 0.014;
 
 /// A rocket eases up to a top speed and then holds it.
@@ -34,8 +34,16 @@ pub const FALL_SPEED: f32 = 0.014;
 /// instead of covering the extra ground faster. Without the cap a long shot
 /// moves so quickly it is hard to see what it did.
 pub const LAUNCH_RAMP_MS: f32 = 400.0;
-/// Top speed, in cells per millisecond — a little over three cells a second.
+/// Top speed, in cells per millisecond: a little over three cells a second.
 pub const LAUNCH_SPEED: f32 = 0.00325;
+/// A beat of stillness between the last rocket striking and the board
+/// collapsing into the holes.
+///
+/// Without it the strike and the gravity that answers it happen in the same
+/// breath and read as one event: the target is taken and the column above it is
+/// already moving. The pause lets the impact land as its own thing and gives
+/// the fall something to be a consequence of.
+pub const LAUNCH_HOLD_MS: f32 = 260.0;
 
 const SCORE_PER_GEM: u64 = 50;
 const SCORE_PER_SPECIAL_FIRED: u64 = 120;
@@ -57,9 +65,10 @@ pub const EV_ROCKET_HIT: u8 = 10;
 /// A match resolving, once per step of a chain, carrying that step's number.
 ///
 /// This is the step itself rather than the gems it took, which is what a front
-/// end wants for anything that belongs to the chain as a whole — the rising
-/// chord, say. Gems also go away for reasons that are not a step in a chain: a
-/// rocket takes one when it lands, and that is not a beat of the music.
+/// end wants for anything that belongs to the chain as a whole, the rising
+/// chord being the one here. Gems also go away for reasons that are not a step
+/// in a chain: a rocket takes one when it lands, and that is not a beat of the
+/// music.
 pub const EV_MATCH: u8 = 11;
 /// Gems touching down after a fall, carrying the milliseconds until they do.
 ///
@@ -108,7 +117,8 @@ pub enum Phase {
     Swapping { elapsed: f32, reverting: bool },
     Clearing { elapsed: f32 },
     /// Rockets are in the air. Nothing falls until they land, so that the cells
-    /// they came from and the cells they hit collapse together.
+    /// they came from and the cells they hit collapse together, and then not
+    /// for a beat longer, so the strike is not swallowed by its own aftermath.
     Launching { elapsed: f32 },
     Falling { elapsed: f32 },
     Shuffling { elapsed: f32 },
@@ -470,8 +480,10 @@ impl Game {
             return false;
         }
 
-        // The phase runs until the last one lands; each lands on its own clock.
-        self.launch_ms = self.launches.iter().map(|l| l.flight_ms).fold(0.0_f32, f32::max);
+        // The phase runs until the last one lands, and then holds a beat before
+        // gravity answers; each rocket lands on its own clock.
+        let last = self.launches.iter().map(|l| l.flight_ms).fold(0.0_f32, f32::max);
+        self.launch_ms = last + LAUNCH_HOLD_MS;
 
         for launch in self.launches.clone() {
             let mut event = Event::at(
@@ -529,7 +541,8 @@ impl Game {
         self.progress.jelly_left = self.board.jelly_remaining();
     }
 
-    /// The last rocket is down, so the board may finally settle.
+    /// The last rocket is down and its beat has passed, so the board may
+    /// finally settle.
     fn finish_launch(&mut self) {
         self.land_arrivals(f32::INFINITY);
         self.launches.clear();
@@ -542,7 +555,7 @@ impl Game {
     ///
     /// Gems fall on one shared clock, so two that drop the same distance land
     /// together however far apart they are. Gathering them by column and by
-    /// distance turns a collapse into a handful of landings — see [`EV_LAND`].
+    /// distance turns a collapse into a handful of landings. See [`EV_LAND`].
     fn begin_fall(&mut self) {
         let mut furthest = 0.0_f32;
         // (column, rows dropped, where that group touches down).
@@ -698,7 +711,7 @@ impl Game {
 
     /// Extra cells cleared because of what the player swapped together.
     ///
-    /// A special pushed against an ordinary gem does nothing — it waits for a
+    /// A special pushed against an ordinary gem does nothing: it waits for a
     /// match of its color. Two specials swapped together always set each other
     /// off, and the rainbow answers to anything.
     ///
@@ -1055,7 +1068,7 @@ impl Game {
                     // The target is left entirely alone. It used to start
                     // shrinking once the rocket was most of the way there,
                     // which on a long flight meant it was visibly cringing for
-                    // half a second before anything reached it — and told the
+                    // half a second before anything reached it, and told the
                     // player where the rocket was going before it arrived.
                     // Nothing happens to it until it is hit.
                 }
@@ -1305,7 +1318,7 @@ mod tests {
     #[test]
     fn a_row_of_four_leaves_a_downward_clearer_under_the_swap() {
         let mut game = Game::new(spec(5, 5, 6, 10), 6);
-        // Row 0 reads 1,1,2,1,3 — no match yet. Lifting the 1 at (1,2) into the
+        // Row 0 reads 1,1,2,1,3, no match yet. Lifting the 1 at (1,2) into the
         // gap completes four across, and the special should land on the cell
         // the player moved.
         paint(&mut game, &["11213", "30120", "23401", "12340", "34012"]);
@@ -1664,7 +1677,7 @@ mod tests {
     #[test]
     fn the_target_is_untouched_until_the_rocket_arrives() {
         // Nothing may happen to the gem being aimed at until it is actually
-        // hit — not a shrink, not a flag. On a long flight an early flinch is
+        // hit: not a shrink, not a flag. On a long flight an early flinch is
         // both wrong to look at and a giveaway of where the rocket is headed.
         let mut game = Game::new(spec(8, 8, 6, 10), 114);
         let from = Pos::new(0, 0);
@@ -1721,7 +1734,7 @@ mod tests {
 
     #[test]
     fn a_rocket_landing_is_not_a_step_in_the_chain() {
-        // It takes a gem with it, but that is not a beat of the music — the
+        // It takes a gem with it, but that is not a beat of the music: the
         // chord should neither advance nor sound again.
         let mut game = Game::new(spec(8, 8, 6, 10), 116);
         let from = Pos::new(0, 0);
@@ -1778,7 +1791,7 @@ mod tests {
             game.board.set_gem(p, Some(Gem { special: Special::Rocket, ..gem }));
         }
         game.launches = vec![near, far];
-        game.launch_ms = far.flight_ms;
+        game.launch_ms = far.flight_ms + LAUNCH_HOLD_MS;
         game.phase = Phase::Launching { elapsed: 0.0 };
 
         // Run the clock to just past the short flight.
@@ -1811,6 +1824,50 @@ mod tests {
         assert!(
             game.board.positions().all(|p| !game.board.is_open(p) || game.board.gem(p).is_some()),
             "and the board fills in once they are all down"
+        );
+    }
+
+    #[test]
+    fn a_strike_and_the_gravity_that_answers_it_are_separate_events() {
+        let mut game = Game::new(spec(8, 8, 6, 10), 113);
+        let from = Pos::new(0, 0);
+        let to = Pos::new(4, 3);
+        let shot =
+            Launch { from, to, flight_ms: flight_time(cells_between(from, to)), landed: false };
+        let gem = game.board.gem(from).expect("the board is full");
+        game.board.set_gem(from, Some(Gem { special: Special::Rocket, ..gem }));
+        game.launches = vec![shot];
+        game.launch_ms = shot.flight_ms + LAUNCH_HOLD_MS;
+        game.phase = Phase::Launching { elapsed: 0.0 };
+
+        // Walked in small steps, because what is being measured is the gap
+        // between two moments rather than what happened by the end.
+        let step = 4.0;
+        let (mut now, mut struck, mut fell) = (0.0_f32, None, None);
+        for _ in 0..600 {
+            game.update(step);
+            now += step;
+            if game.events().iter().any(|e| e.kind == EV_ROCKET_HIT) {
+                struck = Some(now);
+            }
+            if game.events().iter().any(|e| e.kind == EV_LAND) {
+                fell = Some(now);
+                break;
+            }
+        }
+
+        let struck = struck.expect("the rocket never hit anything");
+        let fell = fell.expect("the board never collapsed");
+        let beat = fell - struck;
+        // Asserted against a floor of its own as well as against the constant.
+        // A check that only compares the gap to LAUNCH_HOLD_MS agrees just as
+        // happily when that is set to zero, which is the thing being ruled out:
+        // two events closer together than this read as one.
+        assert!(beat > 150.0, "only {beat:.0}ms between the strike and the fall");
+        // Either moment can be seen up to a step late, so allow for both.
+        assert!(
+            beat >= LAUNCH_HOLD_MS - step * 2.0,
+            "the hold is {beat:.0}ms, short of the {LAUNCH_HOLD_MS} it is set to",
         );
     }
 
@@ -1933,8 +1990,8 @@ mod tests {
         assert!(game.try_swap(Pos::new(3, 2), Pos::new(2, 2)));
         let lands = first_landing(&mut game);
 
-        // Three gems come down each of those columns — two survivors and a
-        // newcomer — but they arrive together and are heard once.
+        // Three gems come down each of those columns (two survivors and a
+        // newcomer), but they arrive together and are heard once.
         assert_eq!(lands.len(), 3, "three columns emptied, three landings");
         let mut cols: Vec<u8> = lands.iter().map(|e| e.c).collect();
         cols.sort();

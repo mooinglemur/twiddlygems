@@ -2,7 +2,7 @@
 //!
 //! [`Session`] is the seam where progression lives: today it unlocks the next
 //! level when you clear one, and later the Archipelago layer will answer the
-//! same question — which levels may be played — from received items instead.
+//! same question (which levels may be played) from received items instead.
 
 use crate::game::{Game, Status};
 use crate::level::{levels, LevelSpec};

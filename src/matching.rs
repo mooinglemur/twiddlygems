@@ -4,8 +4,8 @@ use crate::board::{Board, Pos, Special};
 use crate::rng::Rng;
 use crate::rules::{Rules, SpecialSet, MAX_COLORS};
 
-/// One connected clump of matched gems. Overlapping shapes — an L, a T, a 2x2
-/// with a run hanging off it — arrive as a single group, so a shape earns one
+/// One connected clump of matched gems. Overlapping shapes (an L, a T, a 2x2
+/// with a run hanging off it) arrive as a single group, so a shape earns one
 /// special rather than one per run.
 #[derive(Clone, Debug)]
 pub struct MatchGroup {
@@ -25,11 +25,11 @@ impl MatchGroup {
     ///
     /// A run outranks a square. A 2x2 on its own leaves a rocket, but if the
     /// same clump also earns a line gem, a cross or a rainbow, that is what the
-    /// player gets — the rocket is the consolation prize, not the trophy.
+    /// player gets: the rocket is the consolation prize, not the trophy.
     ///
     /// The line gems run against the grain on purpose. To finish a row of four
     /// you slide a gem in from above or below, so the gem you are left with
-    /// clears in the direction you were moving — down the column, not along the
+    /// clears in the direction you were moving: down the column, not along the
     /// row you just completed.
     pub fn award(&self, specials: &SpecialSet) -> Special {
         let longest = self.h_run.max(self.v_run);
@@ -301,7 +301,7 @@ fn forms_square(view: &SwapView, p: Pos) -> bool {
 ///
 /// Specials are inert against ordinary gems: a line gem or a cross goes off
 /// when a match of its color sweeps it up, not because it was pushed around.
-/// Two of them swapped together is a different matter — they set each other
+/// Two of them swapped together is a different matter: they set each other
 /// off. And the rainbow has no match of its own to wait for, so swapping it
 /// against anything is how it fires.
 pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
@@ -512,7 +512,7 @@ pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng, seed_jitter_ms: f32
         blast(board, p, special, fallback, &mut hits);
         for hit in std::mem::take(&mut hits) {
             // A blast starts when the gem that carried it pops, and spreads
-            // outward from there — except a rainbow, whose cells are scattered
+            // outward from there, except a rainbow, whose cells are scattered
             // and so go off in no particular order.
             let step = if special == Special::Rainbow {
                 rng.below(RAINBOW_SPREAD_MS as u32) as f32

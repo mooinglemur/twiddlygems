@@ -3,7 +3,7 @@
 // A sound is a stack of layers, each one an oscillator or a burst of noise
 // shaped by an envelope. Layers carry their own pitch and their own offset, so
 // a chord is several layers at the same moment and an arpeggio is the same
-// layers a few milliseconds apart. Everything here is data — see audio.js for
+// layers a few milliseconds apart. Everything here is data. See audio.js for
 // what plays it.
 //
 //   source    'noise', or an oscillator: 'sine' 'square' 'sawtooth' 'triangle'
@@ -33,8 +33,8 @@
 // instead of landing as a single event.
 //
 // A sound may declare `duration`, its natural length in seconds. Playing it
-// with a `duration` option then scales the holds, decays and glides to fit —
-// attacks are left alone, because a transient that stretches is not one.
+// with a `duration` option then scales the holds, decays and glides to fit.
+// Attacks are left alone, because a transient that stretches is not one.
 //
 // A sound may instead declare `chords` and a `voice`: a list of note lists, and
 // the single layer each note is played through. Playing it with a `stage` picks
@@ -69,7 +69,7 @@ export const SOUNDS = {
   /// A woodblock is a short pitched body with a click on the front, so each
   /// knock is a triangle dropping a little in pitch as it dies, with a narrow
   /// band of noise for the strike itself. Unlike every other sound here, the
-  /// click is wanted — this one is meant to sound like a thing being hit.
+  /// click is wanted: this one is meant to sound like a thing being hit.
   ///
   /// The two land a breath apart, which is what makes it read as a rattle
   /// rather than a single knock.
@@ -115,7 +115,7 @@ export const SOUNDS = {
   /// A column of gems touching down after gravity: a soft, low thud.
   ///
   /// A handful of these land within a fraction of a second of each other every
-  /// time the board collapses, so it is quiet and short — it is meant to give
+  /// time the board collapses, so it is quiet and short: it is meant to give
   /// the fall a floor to hit, not to be an event in itself.
   ///
   /// The body falls in pitch rather than holding one, because an impact
@@ -155,8 +155,8 @@ export const SOUNDS = {
   ///
   /// The note underneath never changes: a sawtooth held at a low F, which has
   /// energy at every whole multiple of itself. What varies is where the
-  /// band-pass listens — a different overtone of that one fundamental each
-  /// time — so every gem picks out a real partial of the same note and twenty
+  /// band-pass listens (a different overtone of that one fundamental each
+  /// time), so every gem picks out a real partial of the same note and twenty
   /// of them ring as one chord rather than a scatter of unrelated tones.
   ///
   /// (Swapping `source` to 'noise' gives the airier version of the same idea:
@@ -195,9 +195,10 @@ export const SOUNDS = {
   /// A rocket reaching its target: a low boom with debris behind it.
   ///
   /// The body is kept above roughly 70Hz on purpose. A phone speaker cannot
-  /// move air below about 200Hz, so energy underneath that is spent on nothing
-  /// — it eats headroom and arrives as silence on the device most people will
-  /// play this on. What makes a boom read small is the low-mid behind it.
+  /// move air below about 200Hz, so energy underneath that is spent on
+  /// nothing: it eats headroom and arrives as silence on the device most
+  /// people will play this on. What makes a boom read small is the low-mid
+  /// behind it.
   boom: {
     gain: 0.46,
     voiceCap: 4,
@@ -297,7 +298,7 @@ export const SOUNDS = {
       {
         // The whistle, high and slowly falling, never quite holding its pitch.
         // Depth is a fraction of the frequency, so 0.022 is about a third of a
-        // semitone either way — a waver, not a vibrato.
+        // semitone either way: a waver, not a vibrato.
         source: 'triangle',
         note: 2050,
         sweep: { to: 720, time: 0.86 },

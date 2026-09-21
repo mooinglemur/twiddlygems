@@ -466,7 +466,7 @@ export class Renderer {
  * Paints one gem into a sprite: body, highlight, then its special marking.
  *
  * Run once per color and special rather than once per gem per frame, which is
- * what lets the highlight be clipped at all — `clip()` is one of the most
+ * what lets the highlight be clipped at all. `clip()` is one of the most
  * expensive things a canvas can be asked to do, and a phone shows it.
  */
 function paintGem(ctx, x, y, radius, colorIndex, special) {

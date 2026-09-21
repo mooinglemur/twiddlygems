@@ -4,8 +4,8 @@
 //
 // This is not a substitute for opening the page: nothing here knows what the
 // board looks like. What it does catch is the whole class of faults that turn
-// the page blank — a bad import, a misspelled DOM id, a canvas call that does
-// not exist, an exception in the frame loop — none of which the engine's own
+// the page blank (a bad import, a misspelled DOM id, a canvas call that does
+// not exist, an exception in the frame loop), none of which the engine's own
 // tests can see.
 //
 //   make page
@@ -140,7 +140,7 @@ globalThis.fetch = async (url) => {
 await import(path.resolve('web/js/main.js'));
 
 // boot() is async and pulls in a module graph, so give it real time rather
-// than a fixed number of microtask turns — that raced as soon as another
+// than a fixed number of microtask turns, which raced as soon as another
 // module was added.
 for (let i = 0; i < 400 && pending.length === 0; i += 1) {
   await new Promise((resolve) => setTimeout(resolve, 5));

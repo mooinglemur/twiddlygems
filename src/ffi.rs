@@ -4,8 +4,8 @@
 //! dependencies, so the wasm build is a plain `cargo build --target
 //! wasm32-unknown-unknown` with no bindgen step and nothing to fetch.
 //!
-//! The boundary is kept cheap on purpose. Per-frame data — the whole board and
-//! its animation offsets — is written into two buffers the front end reads
+//! The boundary is kept cheap on purpose. Per-frame data (the whole board and
+//! its animation offsets) is written into two buffers the front end reads
 //! straight out of wasm memory, so drawing a frame costs one call and two
 //! typed-array views rather than a call per cell.
 //!

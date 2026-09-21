@@ -217,7 +217,7 @@ impl Board {
     /// Settles the board after a clear: gems fall into the holes below them and
     /// fresh gems enter from above.
     ///
-    /// Returns, for every cell, the row its current gem started at — the same
+    /// Returns, for every cell, the row its current gem started at: the same
     /// row when it did not move, a negative row for a gem that just spawned.
     /// The renderer turns that into a fall animation; the board itself is
     /// already in its final state.

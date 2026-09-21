@@ -34,14 +34,14 @@ through it. Neither knows what the board looks like, but between them they catch
 the faults that leave a blank page. `make shots` goes further and plays the game
 in a real headless Chrome over the DevTools Protocol, at phone and desktop sizes,
 writing screenshots to `shots/` and failing if the page threw anything. Set
-`SHOT_LEVEL` to photograph a later level — level 1 has specials switched off, so
+`SHOT_LEVEL` to photograph a later level. Level 1 has specials switched off, so
 it never shows one.
 
 (If you reach for `chrome --screenshot` instead, note that `--virtual-time-budget`
 freezes the compositor: `requestAnimationFrame` fires two or three times, the
 frame loop never runs, and you get a first frame that never advances. That is why
 `shots` drives the browser over CDP in real time.) `make balance` plays every level with two bots and reports how hard each one
-turned out to be. `make serve` is the one to use — a `.wasm` module cannot be loaded from a
+turned out to be. `make serve` is the one to use: a `.wasm` module cannot be loaded from a
 `file://` page, so opening `web/index.html` directly will not work.
 
 ## How it fits together
@@ -55,7 +55,7 @@ version pairing between a crate and a CLI tool.
 **The engine owns the rules and the clock.** The front end calls `tg_update` with
 elapsed milliseconds and then asks what to draw. Every decision about when a swap
 lands, when a cascade fires, what a match is worth and when a level ends is made
-in Rust, which is why the whole of the gameplay is testable without a browser —
+in Rust, which is why the whole of the gameplay is testable without a browser,
 including a bot that plays every level asserting board invariants as it goes.
 
 **The boundary is cheap on purpose.** Board state is written into two buffers the
@@ -100,8 +100,8 @@ tools/
 Levels are tuned against two bots that bracket the range of players. One takes
 the first legal move it finds, with no thought for cascades, specials or where
 the jelly is; the other tries every move, plays each one out, and keeps whichever
-made the most progress. The first is a floor — a level it clears easily is asking
-nothing of anyone — and the second is close to an attentive player, and the only
+made the most progress. The first is a floor (a level it clears easily is asking
+nothing of anyone), and the second is close to an attentive player, and the only
 fair read on positional goals like jelly, which the floor bot can only clear by
 accident.
 
@@ -113,24 +113,24 @@ difficulty rather than fix it: the ladder still wants playtesting.
 
 ## The game
 
-Swap two neighboring gems to line up three or more, or to close a 2x2 block — a
+Swap two neighboring gems to line up three or more, or to close a 2x2 block. A
 square is a match in its own right.
 
 What a match leaves behind:
 
 - **A 2x2 square** leaves a **rocket**. It falls with gravity like any other
   gem and rides out the rest of the cascade; once there is nothing left to
-  clear, it flies off and takes out one other gem — picked at random for now, by
-  preference later. Neither the cell it leaves nor the cell it is aimed at moves
+  clear, it flies off and takes out one other gem, picked at random for now and
+  by preference later. Neither the cell it leaves nor the cell it is aimed at moves
   until impact, so the two collapse in the same drop. A rocket takes no part in
   matching while it waits: left matchable, a cascade could sweep it away before
   it ever fired, quietly costing you the reward you earned. It wears no gem's
-  colors either — it belongs to no color, and tinting it like a gem would
+  colors either: it belongs to no color, and tinting it like a gem would
   promise a match it will not make. The rocket is also
-  the consolation prize — if the same clump earns a line gem, a cross or a
+  the consolation prize. If the same clump earns a line gem, a cross or a
   rainbow, that is what you get instead.
 - **Four in a row** leaves a gem that clears *downward*; **four in a column**
-  leaves one that clears *across*. They run against the grain on purpose — you
+  leaves one that clears *across*. They run against the grain on purpose: you
   finish a row by sliding a gem in from above or below, so the gem you are left
   with clears the way you were moving.
 - **An L or a T** leaves a gem that takes a row and a column together.
@@ -142,8 +142,8 @@ achieves nothing.
 
 Two specials swapped together always set each other off, each doing its own job:
 a cross takes a row and a column, a line gem takes its line. The one wrinkle is
-two gems facing the *same* way, which would otherwise clear the same line twice
-— there, the gem the player actually moved turns and clears across its own
+two gems facing the *same* way, which would otherwise clear the same line twice.
+There, the gem the player actually moved turns and clears across its own
 grain, so the pair still takes a row and a column.
 
 The rainbow answers to anything, because it has no match of its own to wait for.
@@ -169,7 +169,7 @@ same way. Progress is kept in the browser's local storage.
 ## Timing and effects
 
 Animation is paced to be followed by eye rather than to get out of the way, and
-the engine owns all of it — the phase lengths are the constants at the top of
+the engine owns all of it: the phase lengths are the constants at the top of
 [`src/game.rs`](src/game.rs).
 
 Two of those lengths are worked out per event rather than fixed. A clear runs
@@ -180,7 +180,7 @@ reads to hold that cell's debris back until the blast reaches it.
 
 The delay accumulates through a chain. A blast begins when the gem carrying it
 pops, so a line gem four cells into another gem's sweep does not fire until the
-sweep reaches it, and its own sweep starts from there — a clear really does
+sweep reaches it, and its own sweep starts from there. A clear really does
 travel across the board rather than happening everywhere at once. An ordinary
 match has no direction to travel in and pops as one.
 
@@ -196,15 +196,21 @@ does not have gravity so much as a scheduled animation.
 
 The landings are announced too, so the fall has a floor to hit. Gems fall on one
 shared clock, so everything in a column that drops the same distance arrives at
-the same instant — the engine gathers those and raises one landing per column
+the same instant, so the engine gathers those and raises one landing per column
 per wave, carrying the moment it touches down. A row clear drops most of the
 board by a row, and that is three columns settling rather than fifteen separate
 impacts; a column emptied in two places lands twice, once for each depth.
 
 A rocket's flight is worked out from distance rather than given a fixed
 duration. It eases up to a top speed and then holds it, so crossing the board
-takes longer than going next door instead of covering the extra ground faster —
-without the cap a long shot moves too quickly to follow.
+takes longer than going next door instead of covering the extra ground faster.
+Without the cap a long shot moves too quickly to follow.
+
+Once the last rocket is down the board holds still for a beat before gravity
+answers it. Without that pause the strike and the collapse happen in the same
+breath and read as a single event: the target is taken and the column above it
+is already moving. The hold lets the impact land as its own thing and gives the
+fall something to be a consequence of.
 
 Every cleared cell throws off shards in its own color and a puff of smoke. A
 rocket strike raises an event of its own on top of the ordinary clear, and gets
@@ -227,8 +233,8 @@ the frame cheap:
 - **The board under the gems is painted once.** The panel and its empty sockets
   never change between resizes, so they live in their own canvas. Only jelly is
   redrawn, and only where there is jelly.
-- **A board at rest is not redrawn at all.** If nothing is animating — no phase
-  in progress, no particles, no hint or selection pulsing — the frame is
+- **A board at rest is not redrawn at all.** If nothing is animating (no phase
+  in progress, no particles, no hint or selection pulsing), the frame is
   skipped, which is most of what the page was previously being asked to do.
 
 The backing store is also capped at 2x device pixels. Past that the extra pixels
@@ -248,7 +254,7 @@ game.
 
 Sounds are data, in [`web/js/sounds.js`](web/js/sounds.js). One is a stack of
 layers, each an oscillator or a burst of noise shaped by an envelope, and each
-carrying its own pitch and its own offset — so a chord is several layers at one
+carrying its own pitch and its own offset, so a chord is several layers at one
 moment and an arpeggio is the same layers a few milliseconds apart:
 
 ```js
@@ -268,12 +274,12 @@ pop: {
 }
 ```
 
-A sound may declare a natural `duration`, and be played with a different one —
+A sound may declare a natural `duration`, and be played with a different one:
 the holds, decays and glides scale to fit while attacks are left alone, since a
 transient that stretches is not one. That is how a rocket's whistle lasts
 exactly as long as its flight: the engine works the flight time out from the
 distance and sends it along with the launch, so a shot across the board whistles
-for longer than one next door. A layer sets `stretch: false` to stay put — an
+for longer than one next door. A layer sets `stretch: false` to stay put: an
 ignition hiss is the same length however far the rocket is going.
 
 A `scatter` holds each play back by a random moment of its own, in seconds.
@@ -282,7 +288,7 @@ starts across a fifth of a second is the difference between a chime and a
 twinkle.
 
 A `harmonic` draws a random whole multiple of one root note per play, for a
-filter to tune to — `frequency: 'harmonic'`. It is a filter frequency, not a
+filter to tune to, via `frequency: 'harmonic'`. It is a filter frequency, not a
 pitch. The shimmer left behind by a cleared gem is a sawtooth held at a constant
 low F with a high-resonance band-pass picking out one of its overtones, a
 different one each time. That distinction is the whole sound: frequencies
@@ -304,7 +310,7 @@ frequency, and the useful range is far narrower than it looks: 0.022 is about a
 third of a semitone either way and reads as a waver, while 0.16 is two and a
 half semitones and is an unmistakable vibrato. A `sweep` on a filter glides its cutoff, so a sound gets *darker* as it fades
 rather than merely quieter. That turns out to be most of the difference between
-a poof and a click — along with a soft attack, since a sub-millisecond onset is
+a poof and a click, along with a soft attack, since a sub-millisecond onset is
 a click transient however the rest of it is shaped.
 
 `jitter` wobbles a layer per play so that repeats do not phase into one tone,
@@ -315,8 +321,8 @@ same per-cell delay the engine hands the renderer. A blast sweeping along a row
 keeps its rhythm even if the frame loop stutters, and the pops arrive panned by
 the column they came from.
 
-`make audio` renders the sounds through an `OfflineAudioContext` — the same
-graph the game plays, but exact and repeatable — and measures them:
+`make audio` renders the sounds through an `OfflineAudioContext` (the same
+graph the game plays, but exact and repeatable) and measures them:
 
 ```
 pop x1       peak 0.265  tail   52ms  bright 6800 -> 2817
@@ -336,7 +342,7 @@ The last three are a control: the same falling glide plain, with the waver the
 rocket actually ships, and with an absurd one. Note that the shipped waver
 measures the same as no waver at all. That is not a bug in the waver, it is the
 floor of measuring pitch through zero crossings while the frequency is being
-automated — so the check proves the *mechanism* works using the exaggerated
+automated. So the check proves the *mechanism* works using the exaggerated
 control, and says nothing about the shipped depth, which is set by ear. It does
 enforce a ceiling, because shipping a wild one is a mistake already made here
 once.
@@ -348,8 +354,8 @@ bodies of the boom and the landing thud are deliberately kept near 190Hz and
 172Hz respectively, and both are checked for what gets through.
 
 It fails the build on several counts. If the stacks ordinary play actually asks
-for — three pops, twenty sparkles, two booms, a whole board's eight columns
-landing at once — reach the limiter threshold, because the limiter is a safety
+for (three pops, twenty sparkles, two booms, a whole board's eight columns
+landing at once) reach the limiter threshold, because the limiter is a safety
 net rather than part of the mix. (Twenty pops is a rainbow taking a color and
 four booms at once may well engage it; those rows are printed, not asserted.)
 If a sound is no darker at its end than at its start, because that
@@ -372,6 +378,6 @@ durations and brightness are measurable; character is not. Listen, then edit
    unlocks the next level on a win, and it is where received items will decide
    what may be played instead.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
-   emits an event stream — clears, specials made and fired, cascades, shuffles —
+   emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles
    hook in.

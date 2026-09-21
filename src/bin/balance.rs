@@ -41,8 +41,8 @@ fn main() {
 /// ceiling a target has to be set against.
 ///
 /// Score and color goals are inflated out of reach so the level cannot end
-/// early and the bot plays every move it has. Jelly cannot be inflated — it is
-/// all or nothing — so for those levels the useful number is how many moves
+/// early and the bot plays every move it has. Jelly cannot be inflated (it is
+/// all or nothing), so for those levels the useful number is how many moves
 /// clearing the board actually took.
 fn calibrate(bot: Bot, seeds: u64) {
     let name = match bot {

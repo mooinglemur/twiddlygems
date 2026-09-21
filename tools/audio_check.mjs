@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Renders the synthesized sounds offline and measures them.
 //
-// Web Audio only exists in a browser, so this drives a headless one — but it
+// Web Audio only exists in a browser, so this drives a headless one, but it
 // renders through an OfflineAudioContext rather than a sound card, which makes
 // the result exact and repeatable. The graph is the same one the game plays.
 //
@@ -97,7 +97,7 @@ const { result } = await send('Runtime.evaluate', {
       // Two reasons. The question these levels answer is whether a sound
       // reaches the limiter at all, which is a question about what arrives at
       // it. And a DynamicsCompressorNode begins an offline render deep in gain
-      // reduction, recovering over about a tenth of a second — so anything
+      // reduction, recovering over about a tenth of a second, so anything
       // starting at the top of a render came back five times too quiet, an
       // artifact of the measurement that does not happen in a context that has
       // been running.
@@ -129,7 +129,7 @@ const { result } = await send('Runtime.evaluate', {
       }
       // Where a sound is judged to start and stop, relative to its own peak
       // rather than an absolute level. A fixed floor measures something
-      // different at every volume — change a gain anywhere and every duration
+      // different at every volume: change a gain anywhere and every duration
       // moves with it, which is the measurement talking, not the sound.
       const floor = Math.max(1e-6, peak * 0.004);
 
@@ -198,7 +198,7 @@ const { result } = await send('Runtime.evaluate', {
       const wobble = (() => {
         // Crossings are interpolated between samples. Snapping them to whole
         // samples sounds harmless, but a period at these pitches is only about
-        // thirty samples long, so rounding alone adds over a percent of noise —
+        // thirty samples long, so rounding alone adds over a percent of noise,
         // the same size as the waver being measured, and enough to bury it.
         const marks = [];
         let was = 0;
@@ -239,7 +239,7 @@ const { result } = await send('Runtime.evaluate', {
         // of the sound.
         rms: Number(Math.sqrt(sum / Math.max(1, last - Math.max(0, first))).toFixed(5)),
         // Over the whole render instead, for comparing two renders of the same
-        // length with each other — the extent-based figure above shifts when a
+        // length with each other. The extent-based figure above shifts when a
         // filter shortens the tail, which would make a comparison of the two
         // measure the window rather than the sound.
         rmsBuffer: Number(Math.sqrt(sum / left.length).toFixed(6)),
@@ -295,7 +295,7 @@ const { result } = await send('Runtime.evaluate', {
     const steadyTone = await render('tone', 1, 1.5, false, {}, glide(false));
     const waveryTone = await render('tone', 1, 1.5, false, {}, glide(shipped));
     // Deliberately absurd, to tell a broken feature from an insensitive ruler.
-    // The waver is a random walk, so one render is a noisy sample of it —
+    // The waver is a random walk, so one render is a noisy sample of it:
     // measured alone it ranges over a factor of five between runs, which is
     // enough to make a threshold fire at random. Averaged over several, it is
     // steady enough to assert on.
@@ -403,7 +403,7 @@ for (const [label, key] of [
 }
 
 // Twenty pops is a rainbow taking a whole color, and it does exceed the
-// threshold — that one is the limiter's to catch. What must not is ordinary
+// threshold; that one is the limiter's to catch. What must not is ordinary
 // play, checked further down against the concurrency `make balance` measures.
 const worst = stats.twenty;
 if (stats.one.early <= stats.one.late) {
@@ -421,7 +421,7 @@ if (stats.one.ms > 200) {
 }
 // What has to stay clear of the limiter is the sound designed to pile up.
 // Twenty pops is an ordinary rainbow clear; two rocket impacts at once is
-// already unusual, and four is what the limiter is for — asking a rocket strike
+// already unusual, and four is what the limiter is for. Asking a rocket strike
 // to be quiet enough that four of them never engage it would only make one of
 // them thin. The x4 row is printed to show what the limiter is catching.
 // The overtone has to actually be redrawn each play, or every gem rings the
@@ -437,7 +437,7 @@ if (pitches.size < 3) {
 }
 
 console.log(
-  `\neight separate sparkles — peaks ${stats.sparkleRuns.peaks.join(', ')}\n` +
+  `\neight separate sparkles, peaks ${stats.sparkleRuns.peaks.join(', ')}\n` +
     `                       starts ${stats.sparkleRuns.onsets.map((m) => `${m}ms`).join(', ')}`,
 );
 
@@ -458,7 +458,7 @@ if (declaredScatter > 0 && onsetRange < declaredScatter * 0.3) {
 // `make balance` counts gems clearing within one frame of each other across
 // whole playthroughs: three is the median and four the ninetieth percentile.
 // Twenty is a rainbow taking a whole color, and letting that one meet the
-// limiter is what the limiter is for — its row is printed, not asserted.
+// limiter is what the limiter is for, so its row is printed, not asserted.
 // Every column landing at once is asserted rather than printed, unlike the
 // extremes above: eight is not a worst case a rare move reaches but what any
 // board-wide collapse does, so the thud has to be quiet enough for all of it.
@@ -470,7 +470,7 @@ const loudest = Math.max(
 );
 if (loudest >= LIMITER_THRESHOLD) {
   console.error(
-    `\nFAIL: ordinary play is reaching the limiter — three pops peak ${stats.three.peak}, ` +
+    `\nFAIL: ordinary play is reaching the limiter. Three pops peak ${stats.three.peak}, ` +
       `twenty sparkles ${stats.sparkleTwenty.peak}, two booms ${stats.boomTwo.peak} and ` +
       `eight thuds ${stats.thudEight.peak}, against ${LIMITER_THRESHOLD}.`,
   );
@@ -521,14 +521,14 @@ if (stats.boom.ms < 350 || stats.boom.ms > 700) {
 // noise.
 //
 // That it is not a wild vibrato is checked directly, because shipping one is a
-// mistake that has already been made here once — 0.16 measured about 0.06 and
+// mistake that has already been made here once: 0.16 measured about 0.06 and
 // was unmistakable.
 //
 // The depth itself is set by ear. No number here has an opinion about it.
 const WAVER_CEILING = 0.045;
 if (stats.wildTone.wobble < stats.steadyTone.wobble * 4) {
   console.error(
-    `\nFAIL: the waver does nothing even at an absurd depth — a plain glide wobbles ` +
+    `\nFAIL: the waver does nothing even at an absurd depth. A plain glide wobbles ` +
       `${stats.steadyTone.wobble} and one wavering by 40% only ${stats.wildTone.wobble}. ` +
       `The mechanism is broken.`,
   );
@@ -537,8 +537,8 @@ if (stats.wildTone.wobble < stats.steadyTone.wobble * 4) {
 }
 if (stats.waveryTone.wobble > WAVER_CEILING) {
   console.error(
-    `\nFAIL: the shipped waver measures ${stats.waveryTone.wobble}, past ${WAVER_CEILING} — ` +
-      `that is a vibrato, not a firework failing to hold its note.`,
+    `\nFAIL: the shipped waver measures ${stats.waveryTone.wobble}, past ${WAVER_CEILING}. ` +
+      `That is a vibrato, not a firework failing to hold its note.`,
   );
   stop();
   process.exit(1);
@@ -577,7 +577,7 @@ if (stats.chimeLast.early <= stats.chimeFirst.early * 1.4) {
 if (Math.abs(stats.chimePastEnd.early - stats.chimeLast.early) > stats.chimeLast.early * 0.25) {
   console.error(
     `\nFAIL: a stage past the end of the progression (${stats.chimePastEnd.early}) does not ` +
-      `hold at the last chord (${stats.chimeLast.early}) — a long chain would wrap round.`,
+      `hold at the last chord (${stats.chimeLast.early}); a long chain would wrap round.`,
   );
   stop();
   process.exit(1);

@@ -127,7 +127,7 @@ async function boot() {
     const spread = Math.max(1, engine.cols - 1);
 
     // One chord per step of the chain, climbing as it goes. This keys off the
-    // step itself rather than off gems going away — a rocket landing takes a
+    // step itself rather than off gems going away: a rocket landing takes a
     // gem with it, but it is not a beat of the music. The engine resets the
     // count when the board settles, so a fresh chain starts at the bottom of
     // the progression on its own.
