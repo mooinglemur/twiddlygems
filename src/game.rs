@@ -2456,6 +2456,55 @@ mod tests {
     }
 
     #[test]
+    fn no_two_rockets_share_a_target() {
+        // Four rockets and five gems: a pool barely bigger than the volley, so
+        // a duplicate turns up immediately if targets are drawn rather than
+        // taken out of the pool.
+        let mut game = targeting_game(184, vec![Objective::Score(10_000)]);
+        for p in game.board.positions().collect::<Vec<_>>() {
+            game.board.set_gem(p, None);
+        }
+        let rockets: Vec<Pos> = (0..4).map(|c| Pos::new(0, c)).collect();
+        for p in &rockets {
+            game.board.set_gem(*p, Some(Gem { color: 3, special: Special::Rocket }));
+        }
+        for c in 0..5 {
+            game.board.set_gem(Pos::new(4, c), Some(Gem::plain(3)));
+        }
+
+        for _ in 0..200 {
+            let launches = game.pick_targets(&rockets);
+            assert_eq!(launches.len(), 4, "every rocket should have found something");
+            let mut taken: Vec<Pos> = launches.iter().map(|(_, to)| *to).collect();
+            taken.sort_by_key(|p| (p.r, p.c));
+            taken.dedup();
+            assert_eq!(taken.len(), 4, "two rockets were sent at the same cell");
+        }
+    }
+
+    #[test]
+    fn a_volley_bigger_than_its_best_targets_drops_to_the_next_tier() {
+        // One gem worth having and three rockets. The first takes it and the
+        // other two go elsewhere, rather than all three piling onto the one
+        // cell because it is the best thing on the board.
+        let mut game = targeting_game(185, vec![Objective::Color { color: 5, count: 10 }]);
+        let prize = Pos::new(4, 4);
+        game.board.set_gem(prize, Some(Gem::plain(5)));
+        let rockets: Vec<Pos> = (0..3).map(|c| Pos::new(0, c)).collect();
+        for p in &rockets {
+            game.board.set_gem(*p, Some(Gem { color: 3, special: Special::Rocket }));
+        }
+
+        let launches = game.pick_targets(&rockets);
+        assert_eq!(launches.len(), 3, "all three should have found something");
+        assert_eq!(
+            launches.iter().filter(|(_, to)| *to == prize).count(),
+            1,
+            "the one gem worth shooting should be shot once",
+        );
+    }
+
+    #[test]
     fn a_rocket_goes_for_whatever_moves_an_objective_along() {
         // One gem of the wanted color and one sitting on jelly, in a board of
         // gems that are neither. Those two are the whole pool.
