@@ -80,7 +80,10 @@ html, body {
   display: flex;
   gap: var(--gap);
   flex: 0 0 auto;
-  overflow-x: auto;
+  /* Wraps rather than scrolling. A level can carry four goals now, one per
+     seal color, which is wider than a phone; scrolling them with the scrollbar
+     hidden left the last one off the edge with nothing to say it was there. */
+  flex-wrap: wrap;
   scrollbar-width: none;
 }
 #objectives::-webkit-scrollbar { display: none; }

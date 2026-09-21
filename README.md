@@ -177,6 +177,20 @@ It takes one hit per clear however many gems went off beside it, since taking
 one per neighbor would mean a single ordinary match wiped it out. Being nothing
 but an obstacle it has no color, matches nothing, and never moves.
 
+A **seal** is the same obstacle keyed to one color. Only that color going off
+beside it counts; every other color may clear right on top of it and leave it
+untouched. A beam still shoots it, because being shot is not a question of
+color. That turns a blocker from something you have to *reach* into something
+you have to bring the right gems to, which is a different kind of problem. It
+wears its color rather than being shaped like it: a plain rounded box with rings
+drawn inside, so it never reads as the gem of the same color sitting next to it.
+
+Seals are why a level can name its palette. Dealing colors no seal answers to
+dilutes the draw and turns a seal into a wall with a lie painted on it, so a
+level may list exactly which colors it deals rather than taking the first few of
+the palette. A test refuses any layout whose seals ask for a color the level
+never deals.
+
 The rocket is the odd one out, and deliberately. It is the only thing that can
 be *aimed* at a brick rather than happening to go off near one, so it is the one
 answer to a brick standing somewhere awkward. In exchange its strike is only a
@@ -199,10 +213,15 @@ tiers would mean nothing. A rainbow set off this way has no color to answer to,
 so it takes the most populous one, drawn at random between colors that tie.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
-score, clear a number of gems of one color, peel every layer of jelly, or break
-every brick. Bricks are counted in hits rather than in bricks, the way jelly is
-counted in layers, so the bar moves when one cracks instead of sitting still
-until it finally goes. A
+score, clear a number of gems of one color, peel every layer of jelly, break
+every brick, or break every seal of one color. Blockers are counted in hits
+rather than in blockers, the way jelly is counted in layers, so the bar moves
+when one cracks instead of sitting still until it finally goes.
+
+Per-color seal goals are not the same puzzle as one lumped total. A single count
+lets a player finish by breaking whichever seals were easiest to reach; a goal
+per color makes the level about bringing each color to its own, which is the
+thing a seal is for. A
 board with no legal move left reshuffles itself rather than ending the level,
 and says so as it does: a line of text swells and fades over the board, with a
 riffle to go with it. The same pop-over announces a short move budget, once,

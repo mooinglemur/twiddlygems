@@ -78,6 +78,10 @@ const send = (method, params = {}) =>
 
 await send('Page.enable');
 await send('Runtime.enable');
+// The profile lives across runs, so without this the sounds measured could be
+// the ones cached from a previous run rather than the ones on disk.
+await send('Network.enable');
+await send('Network.setCacheDisabled', { cacheDisabled: true });
 await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
 await sleep(1500);
 

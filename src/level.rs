@@ -13,6 +13,13 @@ pub enum Objective {
     Jelly,
     /// Break every brick on the board, cracked ones counting as half gone.
     Brick,
+    /// Break every seal of one color, counted the same way.
+    ///
+    /// Separate from [`Objective::Brick`] so a board of seals can ask for each
+    /// color in turn. One lumped total lets a player finish by breaking
+    /// whatever was easiest to reach; four of these make the level about
+    /// bringing the right color to each one, which is what a seal is for.
+    Seal { color: u8 },
 }
 
 impl Objective {
@@ -23,13 +30,14 @@ impl Objective {
             Objective::Color { .. } => 1,
             Objective::Jelly => 2,
             Objective::Brick => 3,
+            Objective::Seal { .. } => 4,
         }
     }
 
     /// The color this objective concerns, or 255 when it concerns none.
     pub fn color(self) -> u8 {
         match self {
-            Objective::Color { color, .. } => color,
+            Objective::Color { color, .. } | Objective::Seal { color } => color,
             _ => 255,
         }
     }
@@ -40,6 +48,7 @@ impl Objective {
             Objective::Color { count, .. } => count,
             Objective::Jelly => progress.jelly_total,
             Objective::Brick => progress.brick_total,
+            Objective::Seal { color } => progress.seal_total(color),
         }
     }
 
@@ -50,6 +59,7 @@ impl Objective {
             Objective::Color { color, .. } => progress.cleared_by_color(color),
             Objective::Jelly => progress.jelly_total - progress.jelly_left,
             Objective::Brick => progress.brick_total - progress.brick_left,
+            Objective::Seal { color } => progress.seal_total(color) - progress.seal_left(color),
         };
         raw.min(self.needed(progress))
     }
@@ -71,11 +81,23 @@ pub struct Progress {
     /// when a brick cracks instead of sitting still until it breaks.
     pub brick_total: u32,
     pub brick_left: u32,
+    /// The same split by color, for the seals among them. A plain brick
+    /// belongs to no color and appears in neither of these.
+    pub seals_at_start: [u32; MAX_COLORS],
+    pub seals_now: [u32; MAX_COLORS],
 }
 
 impl Progress {
     pub fn cleared_by_color(&self, color: u8) -> u32 {
         self.cleared.get(color as usize).copied().unwrap_or(0)
+    }
+
+    pub fn seal_total(&self, color: u8) -> u32 {
+        self.seals_at_start.get(color as usize).copied().unwrap_or(0)
+    }
+
+    pub fn seal_left(&self, color: u8) -> u32 {
+        self.seals_now.get(color as usize).copied().unwrap_or(0)
     }
 }
 
@@ -105,6 +127,19 @@ impl LevelSpec {
 
     fn colors(mut self, colors: u8) -> Self {
         self.rules.colors = colors;
+        self
+    }
+
+    /// Names exactly which colors this level deals, rather than taking the
+    /// first few of the palette.
+    ///
+    /// What a board of seals wants: the colors on it should be the colors the
+    /// seals answer to, with nothing else in the way to dilute the draw.
+    fn palette(mut self, colors: &[u8]) -> Self {
+        self.rules.colors = colors.len() as u8;
+        for (slot, color) in self.rules.palette.iter_mut().zip(colors) {
+            *slot = *color;
+        }
         self
     }
 
@@ -162,10 +197,10 @@ const QUARRY: &[&str] = &[
     ".........",
     ".........",
     ".........",
-    "..BBBBB..",
+    "..=====..",
     "..o...o..",
     ".........",
-    "..bbbbb..",
+    "..-----..",
     "..o...o..",
     ".........",
 ];
@@ -181,14 +216,14 @@ const QUARRY: &[&str] = &[
 // The top row is whole brick and the rest is cracked. Breaking a cell of the
 // top row opens a new way in, because the top row is where gems enter.
 const SLOPE: &[&str] = &[
-    "BBBBBBBB.",
-    "bbbbbbb..",
-    "bbbbbb...",
-    "bbbbb....",
-    "bbbb.....",
-    "bbb......",
-    "bb.......",
-    "b........",
+    "========.",
+    "-------..",
+    "------...",
+    "-----....",
+    "----.....",
+    "---......",
+    "--.......",
+    "-........",
     ".........",
 ];
 
@@ -201,15 +236,33 @@ const SLOPE: &[&str] = &[
 // over it but wall, and the jelly there is orphaned the moment it is first
 // cleared: the level cannot then be finished at all. Brick has the shape of
 // wall until something breaks it, and a broken brick is a way through.
+// Seals, four colors, each column answering to one of them. The level names
+// its palette so those four are the only colors dealt: a seal you cannot bring
+// the right color to is just a wall, and diluting the draw with colors no seal
+// wants would do exactly that.
+//
+// Colors here are palette indices: 0 red, 1 blue, 2 green, 3 yellow.
+const VAULT: &[&str] = &[
+    ".........",
+    ".A.B.C.D.",
+    ".a.b.c.d.",
+    ".........",
+    "..ooooo..",
+    ".........",
+    ".d.c.b.a.",
+    ".D.C.B.A.",
+    ".........",
+];
+
 const PILLARS: &[&str] = &[
     "..o###o..",
-    "..oB#Bo..",
+    "..o=#=o..",
     "..ooooo..",
     ".........",
     ".........",
     ".........",
     "..ooooo..",
-    "..oB#Bo..",
+    "..o=#=o..",
     "..o###o..",
 ];
 
@@ -250,6 +303,21 @@ pub fn levels() -> Vec<LevelSpec> {
         // gems above spill around the ends.
         LevelSpec::new("Quarry", 34, vec![Objective::Jelly]).with_layout(QUARRY),
         LevelSpec::new("Landslide", 40, vec![Objective::Brick]).with_layout(SLOPE),
+        // A goal per color rather than one lumped total, so the level is about
+        // bringing each color to its own seals rather than breaking whichever
+        // happened to be easiest to reach.
+        LevelSpec::new(
+            "The Vault",
+            30,
+            vec![
+                Objective::Seal { color: 0 },
+                Objective::Seal { color: 1 },
+                Objective::Seal { color: 2 },
+                Objective::Seal { color: 3 },
+            ],
+        )
+        .with_layout(VAULT)
+        .palette(&[0, 1, 2, 3]),
         LevelSpec::new(
             "Last Call",
             30,
@@ -285,6 +353,91 @@ mod tests {
     }
 
     #[test]
+    fn a_seal_objective_counts_only_its_own_color() {
+        // Breaking every red seal should finish the red goal whatever is left
+        // of the blue ones, which is the whole reason these are separate.
+        let red = Objective::Seal { color: 0 };
+        let blue = Objective::Seal { color: 1 };
+        let mut progress = Progress {
+            seals_at_start: [4, 6, 0, 0, 0, 0, 0, 0],
+            seals_now: [4, 6, 0, 0, 0, 0, 0, 0],
+            ..Progress::default()
+        };
+        assert_eq!(red.needed(&progress), 4);
+        assert_eq!(blue.needed(&progress), 6);
+
+        progress.seals_now[0] = 0;
+        assert!(red.is_met(&progress), "every red seal is gone");
+        assert!(!blue.is_met(&progress), "and the blue ones are somebody else's problem");
+        assert_eq!(red.reached(&progress), 4);
+        assert_eq!(blue.reached(&progress), 0);
+    }
+
+    #[test]
+    fn a_seal_objective_asks_for_a_color_the_level_actually_seals() {
+        // A goal for a color with no seals of it on the board is met before the
+        // level starts, which is not a goal.
+        for level in levels() {
+            let Some(layout) = level.layout else { continue };
+            for objective in &level.objectives {
+                let Objective::Seal { color } = objective else { continue };
+                let whole = (b'A' + color) as char;
+                let cracked = (b'a' + color) as char;
+                let count = layout
+                    .iter()
+                    .flat_map(|row| row.chars())
+                    .filter(|ch| *ch == whole || *ch == cracked)
+                    .count();
+                assert!(
+                    count > 0,
+                    "{} asks for color {color} seals and has none",
+                    level.name,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_seal_answers_to_a_color_the_level_deals() {
+        // A seal is broken by its own color going off beside it. Key one to a
+        // color the level never deals and it is a wall with a lie painted on
+        // it: only a beam could ever touch it, and a brick objective built on
+        // that would be a puzzle nobody could read.
+        for level in levels() {
+            let Some(layout) = level.layout else { continue };
+            for (r, row) in layout.iter().enumerate() {
+                for (c, ch) in row.chars().enumerate() {
+                    let color = match ch {
+                        'A'..='H' => ch as u8 - b'A',
+                        'a'..='h' => ch as u8 - b'a',
+                        _ => continue,
+                    };
+                    assert!(
+                        level.rules.deals(color),
+                        "{}: the seal at ({r},{c}) wants color {color}, which is never dealt",
+                        level.name,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_named_palette_is_the_only_thing_dealt() {
+        let level = levels()
+            .into_iter()
+            .find(|level| level.name == "The Vault")
+            .expect("the seal level should be in the ladder");
+        assert_eq!(level.rules.colors, 4);
+        for color in 0..4u8 {
+            assert!(level.rules.deals(color));
+        }
+        for color in 4..8u8 {
+            assert!(!level.rules.deals(color), "color {color} should not be in play");
+        }
+    }
+
+    #[test]
     fn every_brick_can_be_got_at() {
         // A brick is broken by something clearing beside it or by a beam going
         // through it, and a beam runs the length of a row or a column. So a
@@ -299,11 +452,13 @@ mod tests {
             let rows = layout.len();
             let cols = level.rules.cols as usize;
             let at = |r: usize, c: usize| layout[r].chars().nth(c).unwrap_or('.');
-            let playable = |r: usize, c: usize| !matches!(at(r, c), '#' | 'b' | 'B');
+            let blocker =
+                |r: usize, c: usize| matches!(at(r, c), '=' | '-' | 'A'..='H' | 'a'..='h');
+            let playable = |r: usize, c: usize| at(r, c) != '#' && !blocker(r, c);
 
             for r in 0..rows {
                 for c in 0..cols {
-                    if !matches!(at(r, c), 'b' | 'B') {
+                    if !blocker(r, c) {
                         continue;
                     }
                     let along_row = (0..cols).any(|x| playable(r, x));
@@ -368,9 +523,11 @@ mod tests {
             assert!(!level.objectives.is_empty(), "{} has no objectives", level.name);
             for objective in &level.objectives {
                 if let Objective::Color { color, .. } = objective {
+                    // Against the palette rather than the count, since a level
+                    // may name any set of colors rather than the first few.
                     assert!(
-                        *color < level.rules.colors,
-                        "{} asks for a color that is not in play",
+                        level.rules.deals(*color),
+                        "{} asks for color {color}, which it never deals",
                         level.name
                     );
                 }

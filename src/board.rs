@@ -1,7 +1,7 @@
 //! The grid itself: cells, gems, and gravity.
 
 use crate::rng::Rng;
-use crate::rules::{RefillMode, Rules};
+use crate::rules::{RefillMode, Rules, MAX_COLORS};
 
 /// A cell coordinate. Signed so neighbor arithmetic can run off the edge
 /// and be rejected by `contains` instead of underflowing.
@@ -81,17 +81,28 @@ pub struct Cell {
     pub gem: Option<Gem>,
     /// Layers of jelly under the gem; clearing a gem here peels one layer.
     pub jelly: u8,
-    /// How much brick is in the way: 0 none, 1 cracked, 2 whole.
+    /// How much blocker is in the way: 0 none, 1 cracked, 2 whole.
     ///
-    /// A brick is not a gem and not a wall. It holds a cell the way a wall
+    /// A blocker is not a gem and not a wall. It holds a cell the way a wall
     /// does, so nothing swaps with it and nothing falls through it, but it can
-    /// be broken: twice over, whole to cracked to gone. It has no color, takes
-    /// no part in matching, and is never swapped or moved.
+    /// be broken: twice over, whole to cracked to gone. It takes no part in
+    /// matching and is never swapped or moved.
     pub brick: u8,
+    /// The color a blocker answers to, or [`ANY_COLOR`] for a plain brick.
+    ///
+    /// A brick is broken by anything clearing beside it. A seal is the same
+    /// thing keyed to one color: only that color going off next to it counts,
+    /// which makes it an obstacle you have to bring the right gems to rather
+    /// than one you merely have to reach.
+    pub brick_color: u8,
 }
 
+/// A blocker that answers to every color, which is what a plain brick is.
+pub const ANY_COLOR: u8 = 255;
+
 impl Cell {
-    const OPEN: Cell = Cell { terrain: Terrain::Open, gem: None, jelly: 0, brick: 0 };
+    const OPEN: Cell =
+        Cell { terrain: Terrain::Open, gem: None, jelly: 0, brick: 0, brick_color: ANY_COLOR };
 }
 
 #[derive(Clone, Debug)]
@@ -107,11 +118,15 @@ impl Board {
     }
 
     /// Builds a board from an ASCII sketch, one string per row:
-    /// `.` open, `#` wall, `o` one layer of jelly, `O` two layers,
-    /// `b` a cracked brick, `B` a whole one.
     ///
-    /// Lower case is the lesser of the pair in both cases, the way `o` is one
-    /// layer of jelly where `O` is two.
+    /// - `.` open, `#` wall
+    /// - `o` one layer of jelly, `O` two
+    /// - `=` a whole brick, `-` a cracked one
+    /// - `A` to `H` a whole seal of color 0 to 7, `a` to `h` a cracked one
+    ///
+    /// The lesser of each pair is the lighter mark: one layer of jelly is `o`
+    /// against `O` for two, a cracked brick is a single rule against a double,
+    /// and a cracked seal is lower case.
     ///
     /// Rows shorter than `cols` are padded with open cells, so ragged art
     /// still yields a rectangle.
@@ -127,8 +142,16 @@ impl Board {
                     '#' => cell.terrain = Terrain::Wall,
                     'o' => cell.jelly = 1,
                     'O' => cell.jelly = 2,
-                    'b' => cell.brick = 1,
-                    'B' => cell.brick = 2,
+                    '=' => cell.brick = 2,
+                    '-' => cell.brick = 1,
+                    'A'..='H' => {
+                        cell.brick = 2;
+                        cell.brick_color = ch as u8 - b'A';
+                    }
+                    'a'..='h' => {
+                        cell.brick = 1;
+                        cell.brick_color = ch as u8 - b'a';
+                    }
                     _ => {}
                 }
             }
@@ -237,9 +260,23 @@ impl Board {
         self.is_open(p) && self.gem(p).is_none() && self.brick(p) == 0
     }
 
-    /// How much brick is in this cell: 0 none, 1 cracked, 2 whole.
+    /// How much blocker is in this cell: 0 none, 1 cracked, 2 whole.
     pub fn brick(&self, p: Pos) -> u8 {
         self.cell(p).map_or(0, |cell| cell.brick)
+    }
+
+    /// The color the blocker here answers to, or [`ANY_COLOR`].
+    pub fn brick_color(&self, p: Pos) -> u8 {
+        self.cell(p).map_or(ANY_COLOR, |cell| cell.brick_color)
+    }
+
+    /// Whether a gem of `color` clearing beside the blocker here counts
+    /// against it. A brick takes anything; a seal takes only its own color.
+    pub fn answers_to(&self, p: Pos, color: u8) -> bool {
+        match self.brick_color(p) {
+            ANY_COLOR => true,
+            sealed => sealed == color,
+        }
     }
 
     /// Knocks one hit off the brick here, reporting what is left of it.
@@ -258,6 +295,18 @@ impl Board {
 
     pub fn bricks_remaining(&self) -> u32 {
         self.cells.iter().map(|cell| cell.brick as u32).sum()
+    }
+
+    /// The same count split by the color each blocker answers to. Plain bricks
+    /// belong to no color and are left out.
+    pub fn seals_remaining(&self) -> [u32; MAX_COLORS] {
+        let mut counts = [0; MAX_COLORS];
+        for cell in &self.cells {
+            if cell.brick > 0 && (cell.brick_color as usize) < MAX_COLORS {
+                counts[cell.brick_color as usize] += cell.brick as u32;
+            }
+        }
+        counts
     }
 
     /// Settles the board after a clear: gems fall into the holes below them and
@@ -308,7 +357,7 @@ impl Board {
                         continue;
                     }
                     let i = self.index(mouth);
-                    self.set_gem(mouth, Some(Gem::plain(rng.below(rules.colors as u32) as u8)));
+                    self.set_gem(mouth, Some(Gem::plain(rules.draw_color(rng))));
                     origin[i] = ((mouth.r - 1 - spawned[i]) as f32, mouth.c as f32);
                     spawned[i] += 1;
                     resting = false;

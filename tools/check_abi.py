@@ -100,6 +100,7 @@ compare(
         ("SELECTED", "SELECTED"),
         ("BRICK", "BRICK"),
         ("CRACKED", "CRACKED"),
+        ("SEAL", "SEAL"),
     ],
 )
 
@@ -168,7 +169,13 @@ compare(
     "objective kinds",
     rust_arms(read(ROOT / "src" / "level.rs"), "kind_code"),
     js_object(engine_source, "ObjectiveKind"),
-    [("Score", "SCORE"), ("Color", "COLOR"), ("Jelly", "JELLY"), ("Brick", "BRICK")],
+    [
+        ("Score", "SCORE"),
+        ("Color", "COLOR"),
+        ("Jelly", "JELLY"),
+        ("Brick", "BRICK"),
+        ("Seal", "SEAL"),
+    ],
 )
 
 if problems:

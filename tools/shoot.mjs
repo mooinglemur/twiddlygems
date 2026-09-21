@@ -134,6 +134,11 @@ const readout = () =>
 
 await send('Page.enable');
 await send('Runtime.enable');
+// The profile lives across runs, and only the wasm module is fetched
+// no-cache, so without this the page comes back with yesterday's JS and the
+// screenshot quietly shows the last version of the front end.
+await send('Network.enable');
+await send('Network.setCacheDisabled', { cacheDisabled: true });
 
 for (const [name, metrics] of [
   ['phone', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }],

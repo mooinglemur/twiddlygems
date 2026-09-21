@@ -44,8 +44,15 @@ impl SpecialSet {
 pub struct Rules {
     pub rows: i32,
     pub cols: i32,
-    /// Distinct gem colors in play, at most [`MAX_COLORS`].
+    /// How many distinct gem colors are in play, at most [`MAX_COLORS`].
     pub colors: u8,
+    /// Which colors those are, in dealing order.
+    ///
+    /// Only the first `colors` entries mean anything. A level normally takes
+    /// the first few of the palette and this is the identity, but it can name
+    /// any set instead: a board of seals wants the colors on the board to be
+    /// the colors the seals answer to, and nothing else cluttering it.
+    pub palette: [u8; MAX_COLORS],
     /// Shortest run that counts as a match.
     pub min_match: i32,
     /// Whether a 2x2 block of one color counts as a match on its own.
@@ -62,12 +69,31 @@ pub struct Rules {
 /// The engine indexes per-color counters with fixed arrays, so colors are capped.
 pub const MAX_COLORS: usize = 8;
 
+impl Rules {
+    /// Draws one of the colors this level deals.
+    ///
+    /// The single place a gem's color is invented, so a level that names its
+    /// palette gets those colors everywhere: the deal, the refill, and anything
+    /// that comes along later.
+    pub fn draw_color(&self, rng: &mut crate::rng::Rng) -> u8 {
+        let count = (self.colors as usize).clamp(1, MAX_COLORS);
+        self.palette[rng.below(count as u32) as usize]
+    }
+
+    /// Whether this level deals that color at all.
+    pub fn deals(&self, color: u8) -> bool {
+        let count = (self.colors as usize).clamp(0, MAX_COLORS);
+        self.palette[..count].contains(&color)
+    }
+}
+
 impl Default for Rules {
     fn default() -> Self {
         Rules {
             rows: 9,
             cols: 9,
             colors: 6,
+            palette: [0, 1, 2, 3, 4, 5, 6, 7],
             min_match: 3,
             square_match: true,
             specials: SpecialSet::ALL,
@@ -76,5 +102,30 @@ impl Default for Rules {
             revert_invalid: true,
             shuffle_when_stuck: true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rng::Rng;
+
+    #[test]
+    fn a_named_palette_deals_those_colors_and_no_others() {
+        let rules = Rules { colors: 3, palette: [4, 6, 7, 0, 0, 0, 0, 0], ..Rules::default() };
+
+        let mut rng = Rng::new(9);
+        let mut seen = [false; MAX_COLORS];
+        for _ in 0..600 {
+            let color = rules.draw_color(&mut rng);
+            assert!(
+                matches!(color, 4 | 6 | 7),
+                "dealt color {color}, which is not in the palette",
+            );
+            seen[color as usize] = true;
+        }
+        assert!(seen[4] && seen[6] && seen[7], "all three should come up");
+        assert!(rules.deals(6));
+        assert!(!rules.deals(5), "a color left out of the palette is not dealt");
     }
 }

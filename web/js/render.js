@@ -97,14 +97,16 @@ export class Renderer {
           tint: event.color === EMPTY_CELL ? BRICK_DEBRIS : null,
         });
       } else if (event.kind === EventKind.BRICK) {
-        // Chips when it cracks, a proper shower when it goes.
+        // Chips when it cracks, a proper shower when it goes. A seal throws
+        // its own color, a plain brick throws masonry.
+        const sealed = event.color !== EMPTY_CELL;
         this.pendingBursts.push({
           at: now,
           r: event.r,
           c: event.c,
-          color: 0,
+          color: sealed ? event.color : 0,
           impact: event.value === 0,
-          tint: BRICK_DEBRIS,
+          tint: sealed ? null : BRICK_DEBRIS,
         });
       } else if (event.kind === EventKind.SHUFFLE) {
         // The board is about to rearrange itself. Without a word about it the
@@ -458,13 +460,16 @@ export class Renderer {
         continue;
       }
       const inset = Math.round(cell * 0.03);
-      drawBrick(
-        ctx,
-        pad + (i % cols) * cell + inset,
-        pad + Math.floor(i / cols) * cell + inset,
-        cell - inset * 2,
-        (flags & Flag.CRACKED) !== 0,
-      );
+      const x = pad + (i % cols) * cell + inset;
+      const y = pad + Math.floor(i / cols) * cell + inset;
+      const side = cell - inset * 2;
+      const cracked = (flags & Flag.CRACKED) !== 0;
+      if (flags & Flag.SEAL) {
+        const gem = PALETTE[cells[i * 4] % PALETTE.length];
+        drawSeal(ctx, x, y, side, gem.fill, gem.edge, cracked);
+      } else {
+        drawBrick(ctx, x, y, side, cracked);
+      }
     }
 
     // Rockets fly over the board, so they are held back and blitted last.
@@ -472,7 +477,9 @@ export class Renderer {
 
     for (let i = 0; i < cells.length / 4; i += 1) {
       const color = cells[i * 4];
-      if (color === EMPTY_CELL) {
+      // A blocker holds no gem, and a seal puts the color it answers to in
+      // this byte, so the flag is what says whether there is a gem here.
+      if (color === EMPTY_CELL || cells[i * 4 + 3] & Flag.BRICK) {
         continue;
       }
       const r = Math.floor(i / cols);
@@ -698,6 +705,59 @@ function drawSpecial(ctx, x, y, radius, special) {
   }
 
   ctx.restore();
+}
+
+/**
+ * A seal: a blocker keyed to one gem color, which is the only color that
+ * breaks it.
+ *
+ * Wearing that color is the whole point, so it is a plain rounded square in the
+ * gem's own fill with rings drawn inside it, rather than anything shaped. The
+ * rings are what separate it from the gem of the same color at a glance: gems
+ * are silhouettes, this is a box with something locked in it.
+ *
+ * Cracked, the rings break open down one side and a fracture runs across, so
+ * "one more of this color" reads without having to count rings.
+ */
+function drawSeal(ctx, x, y, size, fill, edge, cracked) {
+  const radius = size * 0.16;
+  ctx.save();
+  roundRect(ctx, x, y, size, size, radius);
+  ctx.clip();
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, size, size);
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fillRect(x, y, size, size * 0.3);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(x, y + size * 0.8, size, size * 0.2);
+
+  // Rings, drawn from the outside in and fading as they go, so the middle
+  // reads as depth rather than as a target.
+  ctx.lineWidth = Math.max(1, size * 0.045);
+  for (const [inset, alpha] of [[0.16, 0.5], [0.28, 0.34], [0.4, 0.2]]) {
+    ctx.strokeStyle = `rgba(255,255,255,${cracked ? alpha * 0.45 : alpha})`;
+    const pad = size * inset;
+    roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, radius * (1 - inset));
+    ctx.stroke();
+  }
+
+  if (cracked) {
+    ctx.strokeStyle = 'rgba(16,10,26,0.85)';
+    ctx.lineWidth = Math.max(1, size * 0.08);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x + size * 0.2, y);
+    ctx.lineTo(x + size * 0.5, y + size * 0.42);
+    ctx.lineTo(x + size * 0.34, y + size * 0.62);
+    ctx.lineTo(x + size * 0.7, y + size);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = edge;
+  ctx.lineWidth = Math.max(1, size * 0.06);
+  roundRect(ctx, x, y, size, size, radius);
+  ctx.stroke();
 }
 
 /**

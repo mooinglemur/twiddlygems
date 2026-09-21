@@ -29,7 +29,7 @@ export class Hud {
 
       const label = document.createElement('div');
       label.className = 'objective-label';
-      if (objective.kind === ObjectiveKind.COLOR) {
+      if (objective.kind === ObjectiveKind.COLOR || objective.kind === ObjectiveKind.SEAL) {
         const swatch = document.createElement('span');
         swatch.className = 'objective-swatch';
         swatch.style.background = PALETTE[objective.color % PALETTE.length].fill;
@@ -189,6 +189,8 @@ function describe(objective) {
       return 'Clear jelly';
     case ObjectiveKind.BRICK:
       return 'Break the bricks';
+    case ObjectiveKind.SEAL:
+      return `${PALETTE[objective.color % PALETTE.length].name} seals`;
     default:
       return 'Goal';
   }

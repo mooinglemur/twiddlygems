@@ -6,7 +6,7 @@
 //! rules hold whether the front end is a browser, a test, or a headless
 //! simulation.
 
-use crate::board::{Board, Gem, Pos, Special};
+use crate::board::{Board, Gem, Pos, Special, ANY_COLOR};
 use crate::level::{LevelSpec, Objective, Progress};
 use crate::matching::{self, MatchGroup};
 use crate::rng::Rng;
@@ -320,6 +320,8 @@ impl Game {
         self.progress.jelly_left = self.progress.jelly_total;
         self.progress.brick_total = self.board.bricks_remaining();
         self.progress.brick_left = self.progress.brick_total;
+        self.progress.seals_at_start = self.board.seals_remaining();
+        self.progress.seals_now = self.progress.seals_at_start;
         self.moves_left = self.spec.moves;
         self.phase = Phase::Idle;
         self.status = Status::Playing;
@@ -600,8 +602,9 @@ impl Game {
             // The strike still lands as a strike, so it booms and throws
             // debris; the color is 255 because there is no gem behind it,
             // which is how the front end knows to throw brick and not gem.
+            let sealed = self.board.brick_color(launch.to);
             if let Some(left) = self.board.damage_brick(launch.to) {
-                let mut broke = Event::at(EV_BRICK, launch.to, 255, Special::None, cascade);
+                let mut broke = Event::at(EV_BRICK, launch.to, sealed, Special::None, cascade);
                 broke.value = left as u16;
                 self.events.push(broke);
                 self.events.push(Event::at(
@@ -613,6 +616,7 @@ impl Game {
                 ));
                 self.progress.score += (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
                 self.progress.brick_left = self.board.bricks_remaining();
+                self.progress.seals_now = self.board.seals_remaining();
                 continue;
             }
 
@@ -743,24 +747,34 @@ impl Game {
     /// Either way the brick takes exactly one hit per clear, so the same brick
     /// beside three gems of one match is cracked rather than demolished.
     fn strike_bricks(&mut self, blast: &matching::Detonation, cascade: u32) {
+        // A beam counts against whatever it goes through, seal or brick alike:
+        // being shot is not a question of color.
         let mut hit = blast.struck.clone();
         for (p, _) in blast.cleared.iter().zip(&blast.cracks).filter(|(_, hits)| **hits) {
+            // Still on the board at this point: gems are not taken off it until
+            // the pop animation finishes, so their colors are readable here.
+            let Some(color) = self.board.color(*p) else { continue };
             for side in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                 let neighbor = Pos::new(p.r + side.0, p.c + side.1);
-                if self.board.brick(neighbor) > 0 && !hit.contains(&neighbor) {
+                if self.board.brick(neighbor) > 0
+                    && self.board.answers_to(neighbor, color)
+                    && !hit.contains(&neighbor)
+                {
                     hit.push(neighbor);
                 }
             }
         }
 
         for p in hit {
+            let color = self.board.brick_color(p);
             if let Some(left) = self.board.damage_brick(p) {
-                let mut event = Event::at(EV_BRICK, p, 255, Special::None, cascade);
+                let mut event = Event::at(EV_BRICK, p, color, Special::None, cascade);
                 event.value = left as u16;
                 self.events.push(event);
             }
         }
         self.progress.brick_left = self.board.bricks_remaining();
+        self.progress.seals_now = self.board.seals_remaining();
     }
 
     /// Runs the next stage of a settle and puts the board into the fall that
@@ -1195,7 +1209,6 @@ impl Game {
     /// Fills every open cell, avoiding matches that would resolve before the
     /// player has touched anything, and guaranteeing at least one legal move.
     fn deal(&mut self) {
-        let colors = self.spec.rules.colors.max(1) as u32;
         for _ in 0..64 {
             // Brick cells are open ground with something already standing on
             // it, so they are dealt around rather than into.
@@ -1206,7 +1219,7 @@ impl Game {
                 // A handful of tries is enough to dodge a starting match; if
                 // the colors run out we accept it and let the shuffle catch it.
                 for _ in 0..12 {
-                    color = self.rng.below(colors) as u8;
+                    color = self.spec.rules.draw_color(&mut self.rng);
                     if !self.would_start_a_shape(p, color) {
                         break;
                     }
@@ -1280,10 +1293,14 @@ impl Game {
     pub const FLAG_WALL: u8 = 1;
     pub const FLAG_CLEARING: u8 = 2;
     pub const FLAG_SELECTED: u8 = 4;
-    /// A brick stands here. With [`Game::FLAG_CRACKED`] as well, it is the
-    /// cracked one, which the next hit breaks.
+    /// Something immovable stands here. With [`Game::FLAG_CRACKED`] as well it
+    /// is the damaged one, which the next hit breaks.
     pub const FLAG_BRICK: u8 = 8;
     pub const FLAG_CRACKED: u8 = 16;
+    /// And it is the kind keyed to a color, which the cell's color byte
+    /// carries. Without this the cell holds a plain brick and the color byte
+    /// is the empty marker.
+    pub const FLAG_SEAL: u8 = 32;
 
     fn refresh_snapshot(&mut self) {
         let count = (self.board.rows * self.board.cols) as usize;
@@ -1295,8 +1312,12 @@ impl Game {
         for p in self.board.positions() {
             let i = (p.r * self.board.cols + p.c) as usize;
             let cell = self.board.cell(p).expect("position came from the board");
+            // A blocker holds no gem, so the color byte is free for the color a
+            // seal answers to. A cell carrying one is flagged, and the front
+            // end draws the seal rather than reading this as a gem.
             let (color, special) = match cell.gem {
                 Some(gem) => (gem.color, gem.special.code()),
+                None if cell.brick > 0 => (cell.brick_color, 0),
                 None => (255, 0),
             };
             let mut flags = 0;
@@ -1310,6 +1331,9 @@ impl Game {
                 flags |= Self::FLAG_BRICK;
                 if cell.brick == 1 {
                     flags |= Self::FLAG_CRACKED;
+                }
+                if cell.brick_color != ANY_COLOR {
+                    flags |= Self::FLAG_SEAL;
                 }
             }
             self.cells_buf[i * 4] = color;
@@ -2278,9 +2302,29 @@ mod tests {
     fn bricked_game(seed: u64) -> Game {
         let mut game = Game::new(spec(4, 5, 8, 10), seed);
         game.spec.rules.refill = RefillMode::None;
+        game.board = Board::from_layout(&[".....", ".....", ".....", "..=.."]);
+        game.cascade = 1;
+        game
+    }
+
+    /// The same, with a seal keyed to color 1 where the brick was.
+    fn sealed_game(seed: u64) -> Game {
+        let mut game = Game::new(spec(4, 5, 8, 10), seed);
+        game.spec.rules.refill = RefillMode::None;
         game.board = Board::from_layout(&[".....", ".....", ".....", "..B.."]);
         game.cascade = 1;
         game
+    }
+
+    /// Clears a row of three of `color` at row 2, which sits directly over the
+    /// blocker at (3,2), and hands back what that raised.
+    fn clear_beside_the_blocker(game: &mut Game, color: u8) -> Vec<Event> {
+        for c in 0..3 {
+            game.board.set_gem(Pos::new(2, c), Some(Gem::plain(color)));
+        }
+        let resolution = game.plan_resolution(None).expect("the row should match");
+        game.begin_clear(resolution);
+        game.events().to_vec()
     }
 
     #[test]
@@ -2331,6 +2375,49 @@ mod tests {
 
         assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "nothing went off beside it");
         assert!(game.events().iter().all(|e| e.kind != EV_BRICK));
+    }
+
+    #[test]
+    fn a_seal_cracks_only_for_its_own_color() {
+        // Color 1 is what this seal answers to. Three of color 4 going off
+        // right on top of it do nothing at all.
+        let mut game = sealed_game(190);
+        let seal = Pos::new(3, 2);
+        let wrong = clear_beside_the_blocker(&mut game, 4);
+        assert_eq!(game.board.brick(seal), 2, "the wrong color should not have touched it");
+        assert!(wrong.iter().all(|e| e.kind != EV_BRICK));
+
+        // The same clear in the color it answers to cracks it.
+        let mut game = sealed_game(191);
+        let right = clear_beside_the_blocker(&mut game, 1);
+        assert_eq!(game.board.brick(seal), 1, "its own color should have cracked it");
+        let broke: Vec<&Event> = right.iter().filter(|e| e.kind == EV_BRICK).collect();
+        assert_eq!(broke.len(), 1);
+        assert_eq!(broke[0].color, 1, "and the event should carry the color it was");
+    }
+
+    #[test]
+    fn a_plain_brick_answers_to_any_color() {
+        // The difference between the two: a brick does not care what broke it.
+        let mut game = bricked_game(192);
+        clear_beside_the_blocker(&mut game, 4);
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 1, "a brick takes any color");
+    }
+
+    #[test]
+    fn a_beam_shoots_a_seal_whatever_color_it_is() {
+        // Being shot is not a question of color: the beam goes through the seal
+        // and counts against it the same as it would a brick.
+        let mut game = sealed_game(193);
+        let seal = Pos::new(3, 2);
+        game.board.set_gem(Pos::new(3, 0), Some(Gem { color: 4, special: Special::LineH }));
+        game.board.set_gem(Pos::new(3, 4), Some(Gem::plain(4)));
+
+        let blast =
+            matching::detonate(&game.board, &[Pos::new(3, 0)], &[], &mut game.rng, 0.0);
+        assert!(blast.struck.contains(&seal), "the beam should have marked it");
+        game.strike_bricks(&blast, 1);
+        assert_eq!(game.board.brick(seal), 1, "and cracked it, though the color was wrong");
     }
 
     #[test]

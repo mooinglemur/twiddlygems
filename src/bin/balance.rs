@@ -110,6 +110,7 @@ fn inflate(spec: &LevelSpec) -> LevelSpec {
             // the board actually took.
             Objective::Jelly => Objective::Jelly,
             Objective::Brick => Objective::Brick,
+            Objective::Seal { color } => Objective::Seal { color: *color },
         })
         .collect();
     probe
@@ -419,5 +420,6 @@ fn label(objective: &Objective) -> &'static str {
         Objective::Color { .. } => "color",
         Objective::Jelly => "jelly",
         Objective::Brick => "brick",
+        Objective::Seal { .. } => "seal",
     }
 }

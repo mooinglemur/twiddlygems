@@ -29,7 +29,15 @@ export const Special = {
   ROCKET: 5,
 };
 
-export const Flag = { WALL: 1, CLEARING: 2, SELECTED: 4, BRICK: 8, CRACKED: 16 };
+export const Flag = {
+  WALL: 1,
+  CLEARING: 2,
+  SELECTED: 4,
+  BRICK: 8,
+  CRACKED: 16,
+  /// The blocker here is keyed to a color, which the cell's color byte holds.
+  SEAL: 32,
+};
 
 export const EventKind = {
   CLEAR: 1,
@@ -48,7 +56,7 @@ export const EventKind = {
   BRICK: 14,
 };
 
-export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3 };
+export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
 export const EMPTY_CELL = 255;
 
