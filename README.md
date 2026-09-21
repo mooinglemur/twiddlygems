@@ -160,12 +160,43 @@ up by a match. A swap is its way out, or another special catching it.
 **Bricks** are the board fighting back. A brick is not a gem and not a wall: it
 holds its cell the way a wall does, so nothing swaps with it and nothing falls
 through it, but it can be broken. It comes whole and goes cracked, then goes.
-Two things hit it: something clearing in one of the four cells around it, or a
-line or cross gem's beam passing through it, which does not stop at the brick
-but marks it on the way. It takes one hit per clear however many gems went off
-beside it, since taking one per neighbor would mean a single ordinary match
-wiped it out. Being nothing but an obstacle it has no color, matches nothing,
-and never moves.
+What hits a brick is not simply "a gem cleared next to it", it is *how* that gem
+came to be cleared:
+
+- a gem taken by a match, in one of the four cells around it: **cracks** it;
+- a rainbow sweeping up its color, wherever on the board that color sat, beside
+  it: **cracks** it, because that is still a clear the player spent something
+  on;
+- a line or cross gem's beam passing *through* the brick: **cracks** it, and the
+  beam carries on rather than stopping;
+- that same beam merely running over a gem *beside* the brick: **nothing**. A
+  beam is a line drawn across the board, and what it happens to cross is not
+  something anybody matched there.
+
+It takes one hit per clear however many gems went off beside it, since taking
+one per neighbor would mean a single ordinary match wiped it out. Being nothing
+but an obstacle it has no color, matches nothing, and never moves.
+
+The rocket is the odd one out, and deliberately. It is the only thing that can
+be *aimed* at a brick rather than happening to go off near one, so it is the one
+answer to a brick standing somewhere awkward. In exchange its strike is only a
+strike: it takes the cell it was pointed at and does nothing to the bricks
+beside it.
+
+A rocket picks its target in tiers, and takes the best on offer:
+
+1. Anything that moves an objective along: a gem of a color still being counted,
+   a gem sitting on jelly, or a brick. Within the tier the choice is even.
+2. Any ordinary gem.
+3. A special, which the strike **sets off** rather than taking. That is the last
+   resort by weight but the best thing that can happen, so a board down to it is
+   a board about to go up. Several strikes landing on specials wait for the last
+   rocket to be down and then fire together.
+
+A score target does not count as an objective here. Everything on the board
+advances score, so counting it would put every cell in the first tier and the
+tiers would mean nothing. A rainbow set off this way has no color to answer to,
+so it takes the most populous one, drawn at random between colors that tie.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
 score, clear a number of gems of one color, or peel every layer of jelly. A
@@ -258,6 +289,15 @@ slope and everything else filling by running down it.
 
 This is also why a cell can now be empty and stay empty. A pocket under a brick
 shelf fills only from the sides, and if nothing can reach it, it stays a hole.
+
+That makes a constraint for anyone drawing a level: a cell is only ever fed from
+the three cells above it, so a solid block of wall three wide leaves the middle
+of the row beneath it fed by nothing at all. Put jelly there and the level
+becomes unwinnable the moment that jelly is first cleared, because nothing can
+ever cover it again. Pillars was exactly that until its inner corners were
+changed from wall to brick, brick being wall-shaped until something breaks it
+and a way through afterwards. A test walks every layout and fails on jelly
+nothing can reach.
 Holes cannot be swapped with, which falls out of the swap rule already requiring
 a gem in both cells, and is the same reason bricks cannot. It is also why walls
 are drawn as solid blocks rather than as bare panel: "nothing here" and "nothing

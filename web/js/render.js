@@ -86,7 +86,16 @@ export class Renderer {
       if (event.kind === EventKind.CLEAR) {
         this.pendingBursts.push({ at: now + event.value, r: event.r, c: event.c, color: event.color });
       } else if (event.kind === EventKind.ROCKET_HIT) {
-        this.pendingBursts.push({ at: now, r: event.r, c: event.c, color: event.color, impact: true });
+        // A strike on a brick carries no gem color, which is how this knows to
+        // throw masonry rather than a cyan gem that was never there.
+        this.pendingBursts.push({
+          at: now,
+          r: event.r,
+          c: event.c,
+          color: event.color,
+          impact: true,
+          tint: event.color === EMPTY_CELL ? BRICK_DEBRIS : null,
+        });
       } else if (event.kind === EventKind.BRICK) {
         // Chips when it cracks, a proper shower when it goes.
         this.pendingBursts.push({

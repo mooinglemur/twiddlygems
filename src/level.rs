@@ -176,15 +176,24 @@ const SLOPE: &[&str] = &[
     ".........",
 ];
 
+// The inner corners of each pillar are brick rather than wall, and that is
+// load bearing rather than decoration.
+//
+// Gems arrive from off the top of the board or by spilling in from the side,
+// so a cell is only reachable from the three cells above it. Under a solid
+// three-wide block that leaves the middle of the row below it with nothing
+// over it but wall, and the jelly there is orphaned the moment it is first
+// cleared: the level cannot then be finished at all. Brick has the shape of
+// wall until something breaks it, and a broken brick is a way through.
 const PILLARS: &[&str] = &[
     "..o###o..",
-    "..o###o..",
+    "..oB#Bo..",
     "..ooooo..",
     ".........",
     ".........",
     ".........",
     "..ooooo..",
-    "..o###o..",
+    "..oB#Bo..",
     "..o###o..",
 ];
 
@@ -239,6 +248,49 @@ pub fn levels() -> Vec<LevelSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_jelly_cell_can_be_reached() {
+        // Gems arrive from off the top of the board or by spilling in from the
+        // side, so a cell is only ever fed from the three cells above it. Jelly
+        // that nothing can reach can be cleared once and then never covered
+        // again, and the level becomes unwinnable the moment it is.
+        //
+        // Brick counts as a way through, because it can be broken. Wall does
+        // not. Pillars was unwinnable for exactly this reason: a three-wide
+        // block of wall left the middle of the row under it fed by nothing.
+        for level in levels() {
+            let Some(layout) = level.layout else { continue };
+            let rows = layout.len();
+            let cols = level.rules.cols as usize;
+            let at = |r: usize, c: usize| layout[r].chars().nth(c).unwrap_or('.');
+            let wall = |r: usize, c: usize| at(r, c) == '#';
+
+            let mut fed = vec![vec![false; cols]; rows];
+            for r in 0..rows {
+                for c in 0..cols {
+                    if wall(r, c) {
+                        continue;
+                    }
+                    fed[r][c] = r == 0
+                        || [c.wrapping_sub(1), c, c + 1]
+                            .into_iter()
+                            .any(|over| over < cols && !wall(r - 1, over) && fed[r - 1][over]);
+                }
+            }
+
+            for r in 0..rows {
+                for c in 0..cols {
+                    let jelly = matches!(at(r, c), 'o' | 'O');
+                    assert!(
+                        !jelly || fed[r][c],
+                        "{}: nothing can ever reach the jelly at ({r},{c})",
+                        level.name,
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn every_level_is_winnable_in_principle() {

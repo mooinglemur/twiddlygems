@@ -106,6 +106,10 @@ pub const LOW_MOVES: u32 = 5;
 /// A brick takes at most one hit per clear, however many gems went off beside
 /// it. Taking one per neighbor would mean a single ordinary match wiped a whole
 /// brick out, which is not much of an obstacle.
+///
+/// A rocket is the exception in both directions: it can be aimed at a brick,
+/// which nothing else can, and its strike does nothing to the bricks around
+/// what it hits. It takes the one cell it was pointed at, and that is all.
 pub const EV_BRICK: u8 = 14;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
@@ -256,6 +260,9 @@ pub struct Game {
     pending: Vec<(Pos, Gem)>,
     /// Rockets in flight. Each keeps its own flight time and lands on it.
     launches: Vec<Launch>,
+    /// Specials a strike landed on, waiting for the last rocket to be down
+    /// before they all go off together.
+    triggered: Vec<Pos>,
     /// Per-cell row and column a gem started falling from, which is not always
     /// its own column: see [`Board::collapse`].
     origin: Vec<(f32, f32)>,
@@ -286,6 +293,7 @@ impl Game {
             fall_ms: FALL_ACCEL_MS,
             pending: Vec::new(),
             launches: Vec::new(),
+            triggered: Vec::new(),
             origin: Vec::new(),
             cascade: 0,
             swap: None,
@@ -319,6 +327,7 @@ impl Game {
         self.fall_ms = FALL_ACCEL_MS;
         self.pending.clear();
         self.launches.clear();
+        self.triggered.clear();
         self.cascade = 0;
         self.swap = None;
         self.selected = None;
@@ -585,10 +594,47 @@ impl Game {
             self.launches[index].landed = true;
             self.board.set_gem(launch.from, None);
 
+            // A brick target takes the hit itself rather than being cleared.
+            // The strike still lands as a strike, so it booms and throws
+            // debris; the color is 255 because there is no gem behind it,
+            // which is how the front end knows to throw brick and not gem.
+            if let Some(left) = self.board.damage_brick(launch.to) {
+                let mut broke = Event::at(EV_BRICK, launch.to, 255, Special::None, cascade);
+                broke.value = left as u16;
+                self.events.push(broke);
+                self.events.push(Event::at(
+                    EV_ROCKET_HIT,
+                    launch.to,
+                    255,
+                    Special::Rocket,
+                    cascade,
+                ));
+                self.progress.score += (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
+                continue;
+            }
+
             let gem = match self.board.gem(launch.to) {
                 Some(gem) => gem,
                 None => continue,
             };
+
+            // A special is set off rather than taken. It stays where it is for
+            // now and goes on a list; once every rocket is down, the lot of
+            // them fire together as an ordinary clear. Taking it instead would
+            // waste the best thing a rocket can land on.
+            if gem.special.is_special() {
+                self.triggered.push(launch.to);
+                self.events.push(Event::at(
+                    EV_ROCKET_HIT,
+                    launch.to,
+                    gem.color,
+                    Special::Rocket,
+                    cascade,
+                ));
+                self.progress.score += SCORE_PER_SPECIAL_FIRED * cascade as u64;
+                continue;
+            }
+
             if (gem.color as usize) < MAX_COLORS {
                 self.progress.cleared[gem.color as usize] += 1;
             }
@@ -613,6 +659,21 @@ impl Game {
     fn finish_launch(&mut self) {
         self.land_arrivals(f32::INFINITY);
         self.launches.clear();
+
+        // Specials the strikes landed on go off now, all together, as a clear
+        // like any other. It has to wait until here: firing one while another
+        // rocket was still in the air would collapse the board under it.
+        if !self.triggered.is_empty() {
+            let seeds = std::mem::take(&mut self.triggered);
+            self.begin_clear(Resolution {
+                seeds,
+                creations: Vec::new(),
+                spent: Vec::new(),
+                jitter_ms: 0.0,
+            });
+            return;
+        }
+
         if !self.begin_settle_stage() {
             self.origin = self.settled_origin();
             self.begin_fall();
@@ -670,13 +731,17 @@ impl Game {
 
     /// Knocks a hit off every brick this clear reached.
     ///
-    /// A brick is reached two ways: a beam went through it, or something
-    /// cleared in one of the four cells around it. Either way it takes exactly
-    /// one hit per clear, so the same brick beside three gems of one match is
-    /// cracked rather than demolished.
+    /// A brick is reached two ways: a beam went through it, or a gem the
+    /// player actually matched went away in one of the four cells around it.
+    /// A rainbow counts as matched, wherever on the board its color happened to
+    /// be. A gem a beam merely ran over does not: the beam's business with
+    /// bricks is the ones it passes through.
+    ///
+    /// Either way the brick takes exactly one hit per clear, so the same brick
+    /// beside three gems of one match is cracked rather than demolished.
     fn strike_bricks(&mut self, blast: &matching::Detonation, cascade: u32) {
         let mut hit = blast.struck.clone();
-        for p in &blast.cleared {
+        for (p, _) in blast.cleared.iter().zip(&blast.cracks).filter(|(_, hits)| **hits) {
             for side in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                 let neighbor = Pos::new(p.r + side.0, p.c + side.1);
                 if self.board.brick(neighbor) > 0 && !hit.contains(&neighbor) {
@@ -722,25 +787,79 @@ impl Game {
             .collect()
     }
 
-    /// Picks what each rocket flies at. For now that is any other live gem,
-    /// chosen at random; preference rules come later. Rockets are never aimed
-    /// at each other, and no two pick the same gem.
+    /// Picks what each rocket flies at, best use first.
+    ///
+    /// Three tiers, and a rocket takes the best one on offer:
+    ///
+    /// 1. Anything that moves an objective along: a gem of a color still being
+    ///    counted, a gem sitting on jelly, or a brick. Within the tier the
+    ///    choice is even, so a rocket does not always go for the same kind of
+    ///    progress.
+    /// 2. Any ordinary gem.
+    /// 3. A special, which the strike sets off rather than simply taking. That
+    ///    is the last resort by weight but the best thing that can happen, so
+    ///    it is worth the board being down to it.
+    ///
+    /// Score is not an objective for this purpose. Everything on the board
+    /// advances a score target, so counting it would put every cell in the
+    /// first tier and the tiers would mean nothing.
+    ///
+    /// Rockets are never aimed at each other: one waiting to launch is about to
+    /// do this itself. No two rockets pick the same target.
     fn pick_targets(&mut self, rockets: &[Pos]) -> Vec<(Pos, Pos)> {
-        let mut candidates: Vec<Pos> = self
-            .board
-            .positions()
-            .filter(|p| {
-                self.board.gem(*p).map_or(false, |gem| gem.special != Special::Rocket)
+        let mut best: Vec<Pos> = Vec::new();
+        let mut plain: Vec<Pos> = Vec::new();
+        let mut specials: Vec<Pos> = Vec::new();
+
+        let wants_jelly = self
+            .spec
+            .objectives
+            .iter()
+            .any(|o| matches!(o, Objective::Jelly) && !o.is_met(&self.progress));
+        let wanted_colors: Vec<u8> = self
+            .spec
+            .objectives
+            .iter()
+            .filter(|o| !o.is_met(&self.progress))
+            .filter_map(|o| match o {
+                Objective::Color { color, .. } => Some(*color),
+                _ => None,
             })
             .collect();
 
+        for p in self.board.positions() {
+            if self.board.brick(p) > 0 {
+                best.push(p);
+                continue;
+            }
+            let Some(gem) = self.board.gem(p) else { continue };
+            if gem.special == Special::Rocket {
+                continue;
+            }
+            if (wants_jelly && self.board.jelly(p) > 0) || wanted_colors.contains(&gem.color) {
+                best.push(p);
+            } else if gem.special.is_special() {
+                specials.push(p);
+            } else {
+                plain.push(p);
+            }
+        }
+
         let mut launches = Vec::new();
         for from in rockets {
-            if candidates.is_empty() {
+            // Re-chosen per rocket, because an earlier one may have taken the
+            // last of a tier.
+            let pool = if !best.is_empty() {
+                &mut best
+            } else if !plain.is_empty() {
+                &mut plain
+            } else if !specials.is_empty() {
+                &mut specials
+            } else {
                 break;
-            }
-            let pick = self.rng.below(candidates.len() as u32) as usize;
-            launches.push((*from, candidates.swap_remove(pick)));
+            };
+            let pick = self.rng.below(pool.len() as u32) as usize;
+            launches.push((*from, pool.swap_remove(pick)));
         }
         launches
     }
@@ -2206,6 +2325,49 @@ mod tests {
     }
 
     #[test]
+    fn a_beam_running_over_a_gem_does_not_crack_the_brick_beside_it() {
+        // The gem at (2,2) sits directly over the brick. Taken by a match it
+        // would crack it; swept up by a beam crossing row 2 it does not,
+        // because a beam is a line drawn across the board rather than
+        // something the player lined up there.
+        let mut game = bricked_game(170);
+        game.board.set_gem(Pos::new(2, 0), Some(Gem { color: 1, special: Special::LineH }));
+        for c in 1..5 {
+            game.board.set_gem(Pos::new(2, c), Some(Gem::plain(c as u8 % 3 + 1)));
+        }
+
+        let blast =
+            matching::detonate(&game.board, &[Pos::new(2, 0)], &[], &mut game.rng, 0.0);
+        assert!(blast.cleared.contains(&Pos::new(2, 2)), "the beam took the gem over the brick");
+        game.strike_bricks(&blast, 1);
+
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "the brick should be untouched");
+        assert!(game.events().iter().all(|e| e.kind != EV_BRICK));
+    }
+
+    #[test]
+    fn a_rainbow_sweeping_up_a_color_cracks_what_it_goes_off_beside() {
+        // A rainbow takes its color wherever it is on the board, and each of
+        // those is a gem going away because the player spent the rainbow on it.
+        // So it hits what it is next to, unlike a beam.
+        let mut game = bricked_game(171);
+        game.board.set_gem(Pos::new(2, 2), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(0, 4), Some(Gem::plain(1)));
+
+        // Seeded the way a spent rainbow seeds its color: the cells themselves.
+        let blast = matching::detonate(
+            &game.board,
+            &[Pos::new(2, 2), Pos::new(0, 4)],
+            &[],
+            &mut game.rng,
+            0.0,
+        );
+        game.strike_bricks(&blast, 1);
+
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 1, "the brick under it should be cracked");
+    }
+
+    #[test]
     fn a_beam_goes_through_a_brick_rather_than_stopping_at_it() {
         let mut game = bricked_game(163);
         // A row clearer on the brick's own row, with the brick between it and
@@ -2225,6 +2387,189 @@ mod tests {
             blast.cleared.contains(&Pos::new(3, 4)),
             "and carried on past it to the far side",
         );
+    }
+
+    /// Flies a rocket from `from` to `to` and runs the clock until it lands,
+    /// handing back everything raised on the way.
+    fn strike(game: &mut Game, from: Pos, to: Pos) -> Vec<Event> {
+        game.board.set_gem(from, Some(Gem { color: 2, special: Special::Rocket }));
+        game.launches =
+            vec![Launch { from, to, flight_ms: flight_time(cells_between(from, to)), landed: false }];
+        game.launch_ms = game.launches[0].flight_ms + LAUNCH_HOLD_MS;
+        game.phase = Phase::Launching { elapsed: 0.0 };
+
+        let mut seen = Vec::new();
+        for _ in 0..400 {
+            game.update(16.0);
+            seen.extend_from_slice(game.events());
+            if seen.iter().any(|e| e.kind == EV_ROCKET_HIT) {
+                break;
+            }
+        }
+        seen
+    }
+
+    #[test]
+    fn a_rocket_can_be_aimed_at_a_brick() {
+        // Everything else that breaks a brick is incidental: something went off
+        // beside it, or a beam happened to run through it. A rocket is the one
+        // thing that can be pointed at one deliberately.
+        let mut game = bricked_game(166);
+        let brick = Pos::new(3, 2);
+        let events = strike(&mut game, Pos::new(0, 0), brick);
+
+        let struck: Vec<&Event> = events.iter().filter(|e| e.kind == EV_BRICK).collect();
+        assert_eq!(struck.len(), 1, "the strike should have hit the brick");
+        assert_eq!((struck[0].r, struck[0].c), (brick.r as u8, brick.c as u8));
+        assert_eq!(struck[0].value, 1, "cracked, not broken outright");
+        assert_eq!(game.board.brick(brick), 1);
+        assert!(
+            events.iter().any(|e| e.kind == EV_ROCKET_HIT),
+            "and it still lands as a strike, with the boom that goes with one",
+        );
+    }
+
+    /// A board of one plain color with a rocket at (0,0), ready to have the
+    /// interesting cells put on it.
+    fn targeting_game(seed: u64, objectives: Vec<Objective>) -> Game {
+        let mut spec = spec(5, 5, 6, 10);
+        spec.objectives = objectives;
+        let mut game = Game::new(spec, seed);
+        for p in game.board.positions().collect::<Vec<_>>() {
+            game.board.set_gem(p, Some(Gem::plain(3)));
+        }
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 3, special: Special::Rocket }));
+        game
+    }
+
+    /// Where a rocket at (0,0) aims, over enough draws to see the whole pool.
+    fn aim_spread(game: &mut Game) -> Vec<Pos> {
+        let mut seen = Vec::new();
+        for _ in 0..300 {
+            for (_, to) in game.pick_targets(&[Pos::new(0, 0)]) {
+                if !seen.contains(&to) {
+                    seen.push(to);
+                }
+            }
+        }
+        seen
+    }
+
+    #[test]
+    fn a_rocket_goes_for_whatever_moves_an_objective_along() {
+        // One gem of the wanted color and one sitting on jelly, in a board of
+        // gems that are neither. Those two are the whole pool.
+        let mut game = targeting_game(
+            180,
+            vec![Objective::Color { color: 5, count: 10 }, Objective::Jelly],
+        );
+        game.board.set_gem(Pos::new(4, 4), Some(Gem::plain(5)));
+        game.board.cell_mut(Pos::new(2, 1)).unwrap().jelly = 1;
+        game.progress.jelly_total = 1;
+        game.progress.jelly_left = 1;
+
+        let seen = aim_spread(&mut game);
+        seen.iter().for_each(|p| {
+            assert!(
+                *p == Pos::new(4, 4) || *p == Pos::new(2, 1),
+                "aimed at {p:?}, which does no objective any good",
+            );
+        });
+        assert_eq!(seen.len(), 2, "and both kinds of progress should come up");
+    }
+
+    #[test]
+    fn a_score_target_alone_does_not_make_everything_worth_shooting() {
+        // Every gem on the board advances a score target, so counting score as
+        // an objective would put the whole board in the top tier and the tiers
+        // would mean nothing. A plain gem it is.
+        let mut game = targeting_game(181, vec![Objective::Score(10_000)]);
+        game.board.set_gem(Pos::new(4, 4), Some(Gem { color: 3, special: Special::Cross }));
+
+        let seen = aim_spread(&mut game);
+        assert!(seen.len() > 5, "it should be drawing from the plain gems at large");
+        assert!(!seen.contains(&Pos::new(4, 4)), "and not from the special while those last");
+    }
+
+    #[test]
+    fn a_rocket_falls_back_to_a_special_only_when_nothing_else_is_left() {
+        // The board is nothing but the rocket and one cross.
+        let mut game = targeting_game(182, vec![Objective::Score(10_000)]);
+        for p in game.board.positions().collect::<Vec<_>>() {
+            if p != Pos::new(0, 0) {
+                game.board.set_gem(p, None);
+            }
+        }
+        game.board.set_gem(Pos::new(4, 4), Some(Gem { color: 3, special: Special::Cross }));
+
+        assert_eq!(
+            game.pick_targets(&[Pos::new(0, 0)]),
+            vec![(Pos::new(0, 0), Pos::new(4, 4))],
+            "with nothing plain left, the special is the target",
+        );
+    }
+
+    #[test]
+    fn a_strike_on_a_special_sets_it_off_instead_of_taking_it() {
+        // A cross under the strike should clear its row and column, which is
+        // far more than the one cell the rocket would have taken.
+        let mut game = targeting_game(183, vec![Objective::Score(10_000)]);
+        let cross = Pos::new(2, 2);
+        game.board.set_gem(cross, Some(Gem { color: 3, special: Special::Cross }));
+        let events = strike(&mut game, Pos::new(0, 0), cross);
+
+        assert!(events.iter().any(|e| e.kind == EV_ROCKET_HIT), "it still lands as a strike");
+
+        // Run on until the clear it set off has resolved.
+        let after = settle(&mut game);
+        let fired: Vec<&Event> = after
+            .iter()
+            .chain(events.iter())
+            .filter(|e| e.kind == EV_SPECIAL_FIRED && e.special == Special::Cross.code())
+            .collect();
+        assert_eq!(fired.len(), 1, "the cross should have gone off");
+    }
+
+    #[test]
+    fn a_rocket_can_pick_a_brick_out_of_the_board() {
+        let mut game = bricked_game(167);
+        for p in game.board.positions().collect::<Vec<_>>() {
+            if game.board.brick(p) == 0 {
+                game.board.set_gem(p, Some(Gem::plain((p.r + p.c) as u8 % 4)));
+            }
+        }
+        let rocket = Pos::new(0, 0);
+        let gem = game.board.gem(rocket).expect("just filled");
+        game.board.set_gem(rocket, Some(Gem { special: Special::Rocket, ..gem }));
+
+        let mut aimed_at_brick = false;
+        for _ in 0..200 {
+            for (_, to) in game.pick_targets(&[rocket]) {
+                aimed_at_brick |= game.board.brick(to) > 0;
+            }
+        }
+        assert!(aimed_at_brick, "a brick should be in the pool a rocket draws from");
+    }
+
+    #[test]
+    fn a_rocket_strike_leaves_the_bricks_around_it_alone() {
+        // A strike is not a blast: it takes the one cell it was aimed at. What
+        // is standing beside that cell is none of its business, unlike a gem
+        // going off in a match.
+        let mut game = bricked_game(168);
+        let beside = Pos::new(3, 1);
+        game.board.set_gem(beside, Some(Gem::plain(1)));
+        let events = strike(&mut game, Pos::new(0, 0), beside);
+
+        assert!(
+            events.iter().any(|e| e.kind == EV_ROCKET_HIT),
+            "the rocket should have landed on the gem",
+        );
+        assert!(
+            events.iter().all(|e| e.kind != EV_BRICK),
+            "and the brick next to it should not have felt a thing",
+        );
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "still whole");
     }
 
     #[test]

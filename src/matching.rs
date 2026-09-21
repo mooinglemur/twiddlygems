@@ -374,7 +374,7 @@ fn blast(board: &Board, p: Pos, special: Special, rainbow_color: u8, out: &mut V
 
 /// The color a rainbow gem picks when it is caught in a blast rather than
 /// swapped deliberately: whichever color is most common, so it pays off.
-pub fn most_common_color(board: &Board) -> u8 {
+pub fn most_common_color(board: &Board, rng: &mut Rng) -> u8 {
     let mut counts = [0u32; MAX_COLORS];
     for p in board.positions() {
         if let Some(color) = board.color(p) {
@@ -383,13 +383,13 @@ pub fn most_common_color(board: &Board) -> u8 {
             }
         }
     }
-    let mut best = 0;
-    for color in 1..MAX_COLORS {
-        if counts[color] > counts[best] {
-            best = color;
-        }
-    }
-    best as u8
+    // Drawn from the colors that tie rather than taking the lowest of them.
+    // Two colors level on a board is common, and always answering with the
+    // same one of them makes a rainbow feel rigged.
+    let most = counts.iter().copied().max().unwrap_or(0);
+    let tied: Vec<u8> =
+        (0..MAX_COLORS).filter(|c| counts[*c] == most).map(|c| c as u8).collect();
+    tied[rng.below(tied.len() as u32) as usize]
 }
 
 /// How long each cell of a blast waits before it pops, per cell of distance
@@ -414,6 +414,10 @@ pub struct Detonation {
     /// When each cleared cell pops, in milliseconds from the start of the
     /// clear. Parallel to `cleared`.
     pub delays: Vec<f32>,
+    /// Whether each cleared cell hits the bricks beside it. Parallel to
+    /// `cleared`. True for gems a match took and for a color a rainbow swept
+    /// up, false for whatever a beam ran over on its way across the board.
+    pub cracks: Vec<bool>,
     /// The specials that went off, in firing order.
     pub fired: Vec<(Pos, Special)>,
     /// Bricks a clearing gem's beam passed through.
@@ -430,6 +434,7 @@ struct Wave {
     cols: i32,
     cleared: Vec<Pos>,
     delays: Vec<f32>,
+    cracks: Vec<bool>,
     queue: Vec<(Pos, f32)>,
 }
 
@@ -440,13 +445,18 @@ impl Wave {
             cols: board.cols,
             cleared: Vec::new(),
             delays: Vec::new(),
+            cracks: Vec::new(),
             queue: Vec::new(),
         }
     }
 
     /// Claims a cell for the blast. The first claim wins, so a cell caught by
     /// two blasts pops on the earlier one.
-    fn push(&mut self, board: &Board, p: Pos, delay: f32) {
+    ///
+    /// `cracks` says whether this gem going away hits the bricks beside it: a
+    /// gem taken by a match or swept up by a rainbow does, a gem a beam simply
+    /// ran over does not.
+    fn push(&mut self, board: &Board, p: Pos, delay: f32, cracks: bool) {
         if !board.contains(p) || board.gem(p).is_none() {
             return;
         }
@@ -457,6 +467,7 @@ impl Wave {
         self.marked[slot] = true;
         self.cleared.push(p);
         self.delays.push(delay);
+        self.cracks.push(cracks);
         self.queue.push((p, delay));
     }
 }
@@ -505,10 +516,13 @@ pub fn detonate(
         } else {
             0.0
         };
-        wave.push(board, *seed, delay);
+        // Seeds are the cells a match took, or the color a rainbow was spent
+        // on. Both are gems going away because the player lined something up,
+        // so both hit the bricks beside them.
+        wave.push(board, *seed, delay, true);
     }
 
-    let fallback = most_common_color(board);
+    let fallback = most_common_color(board, rng);
 
     let mut head = 0;
     let mut hits: Vec<Pos> = Vec::new();
@@ -543,11 +557,16 @@ pub fn detonate(
             } else {
                 spread_delay(p, hit, special)
             };
-            wave.push(board, hit, delay + step);
+            // A rainbow takes a color wherever it is, which is a clear like
+            // any other and hits what it is next to. A beam is not: it is a
+            // line drawn across the board, and a gem it happens to run over is
+            // not a match. The beam marks the bricks it passes through itself,
+            // just above, and that is the whole of its effect on them.
+            wave.push(board, hit, delay + step, special == Special::Rainbow);
         }
     }
 
-    Detonation { cleared: wave.cleared, delays: wave.delays, fired, struck }
+    Detonation { cleared: wave.cleared, delays: wave.delays, cracks: wave.cracks, fired, struck }
 }
 
 #[cfg(test)]
