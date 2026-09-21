@@ -34,8 +34,8 @@ pub const FALL_SPEED: f32 = 0.014;
 /// instead of covering the extra ground faster. Without the cap a long shot
 /// moves so quickly it is hard to see what it did.
 pub const LAUNCH_RAMP_MS: f32 = 400.0;
-/// Top speed, in cells per millisecond: a little over three cells a second.
-pub const LAUNCH_SPEED: f32 = 0.00325;
+/// Top speed, in cells per millisecond: a little over four cells a second.
+pub const LAUNCH_SPEED: f32 = 0.004225;
 /// A beat of stillness between gems landing and the clear that lands sets off.
 ///
 /// Shorter than the rocket's hold below, because this one happens on every link
