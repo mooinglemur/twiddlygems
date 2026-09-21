@@ -64,6 +64,54 @@ export const SOUNDS = {
     ],
   },
 
+  /// A swap that came to nothing: two quick wooden knocks, high then low.
+  ///
+  /// A woodblock is a short pitched body with a click on the front, so each
+  /// knock is a triangle dropping a little in pitch as it dies, with a narrow
+  /// band of noise for the strike itself. Unlike every other sound here, the
+  /// click is wanted — this one is meant to sound like a thing being hit.
+  ///
+  /// The two land a breath apart, which is what makes it read as a rattle
+  /// rather than a single knock.
+  clack: {
+    gain: 0.34,
+    voiceCap: 3,
+    layers: [
+      {
+        source: 'triangle',
+        note: 1180,
+        sweep: { to: 880, time: 0.02 },
+        env: { attack: 0.001, decay: 0.038 },
+        gain: 0.85,
+        jitter: { frequency: 0.03, gain: 0.12 },
+      },
+      {
+        source: 'noise',
+        filters: [{ type: 'bandpass', frequency: 2500, q: 5 }],
+        env: { attack: 0.0008, decay: 0.022 },
+        gain: 0.55,
+        jitter: { frequency: 0.12 },
+      },
+      {
+        source: 'triangle',
+        note: 790,
+        sweep: { to: 600, time: 0.022 },
+        env: { attack: 0.001, decay: 0.06 },
+        delay: 0.072,
+        gain: 0.9,
+        jitter: { frequency: 0.03, gain: 0.12 },
+      },
+      {
+        source: 'noise',
+        filters: [{ type: 'bandpass', frequency: 1750, q: 5 }],
+        env: { attack: 0.0008, decay: 0.024 },
+        delay: 0.072,
+        gain: 0.55,
+        jitter: { frequency: 0.12 },
+      },
+    ],
+  },
+
   /// The shimmer left behind by a gem, ringing on long after the pop.
   ///
   /// The note underneath never changes: a sawtooth held at a low F, which has

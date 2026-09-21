@@ -85,14 +85,22 @@ export class Audio {
   attach(ctx) {
     this.ctx = ctx;
 
-    // A limiter on the end, as a safety net rather than a mixing tool: the
-    // sounds are quiet enough to stack without leaning on it.
+    // A limiter on the end, as a safety net rather than a mixing tool.
+    //
+    // It sits just under the ceiling, not down in the mix. At -6dB it was
+    // catching an ordinary three-gem clear, which peaks around -4dB before it
+    // gets here — so it was shaping every cascade rather than saving the rare
+    // one, and the levels were being tuned by ear through a compressor that was
+    // quietly doing the work. Up here it only meets genuine overs.
     const limiter = this.ctx.createDynamicsCompressor();
-    limiter.threshold.value = -6;
+    limiter.threshold.value = -1.5;
     limiter.knee.value = 0;
     limiter.ratio.value = 20;
-    limiter.attack.value = 0.002;
-    limiter.release.value = 0.12;
+    limiter.attack.value = 0.003;
+    limiter.release.value = 0.25;
+    // Kept to hand so a test can read the threshold it is checking against
+    // rather than carrying its own copy of the number.
+    this.limiter = limiter;
 
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.9;

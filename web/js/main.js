@@ -142,6 +142,8 @@ async function boot() {
         audio.play('pop', { delay: event.value / 1000, pan });
         // And the shimmer it leaves behind, ringing on after the pop.
         audio.play('sparkle', { delay: event.value / 1000, pan });
+      } else if (event.kind === EventKind.REVERT) {
+        audio.play('clack', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.ROCKET_HIT) {
         audio.play('boom', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.SPECIAL_FIRED && event.special === Special.ROCKET) {
