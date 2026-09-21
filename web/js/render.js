@@ -479,20 +479,26 @@ export class Renderer {
     // the text itself scales with it, so this one number sets the whole thing.
     // Multiplying it by the root of two doubles the area.
     const size = Math.max(20, this.cell * 0.59);
+    const across = this.engine.cols * this.cell;
     ctx.save();
     ctx.globalAlpha = fade;
-    ctx.translate(
-      this.pad + (this.engine.cols * this.cell) / 2,
-      this.pad + (this.engine.rows * this.cell) / 2,
-    );
-    ctx.scale(scale, scale);
+    ctx.translate(this.pad + across / 2, this.pad + (this.engine.rows * this.cell) / 2);
+    // Measured before scaling, because the transform scales what is drawn and
+    // not what the metrics say.
     ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    const width = ctx.measureText(this.toast.text).width;
+
+    // Never wider than the board it sits on. The size above is in cells, so it
+    // holds its proportions on any screen until the floor in it takes over, and
+    // on a board narrow enough for that the text would hang off both sides.
+    const plate = width + size * 2;
+    const fitted = Math.min(scale, across / plate);
+    ctx.scale(fitted, fitted);
 
     // On a plate, because this lands over a board full of bright gems and
     // white text alone would be unreadable across half of them.
-    const width = ctx.measureText(this.toast.text).width;
     ctx.fillStyle = 'rgba(16,13,32,0.84)';
     roundRect(ctx, -width / 2 - size, -size, width + size * 2, size * 2, size);
     ctx.fill();
