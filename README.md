@@ -122,9 +122,12 @@ What a match leaves behind:
   gem and rides out the rest of the cascade; once there is nothing left to
   clear, it flies off and takes out one other gem, picked at random for now and
   by preference later. Neither the cell it leaves nor the cell it is aimed at moves
-  until impact, so the two collapse in the same drop. A rocket takes no part in
-  matching while it waits: left matchable, a cascade could sweep it away before
-  it ever fired, quietly costing you the reward you earned. It wears no gem's
+  until impact, so the two collapse in the same drop. A rocket waiting to
+  launch is durable: it takes no part in matching, a beam crossing it goes
+  straight through and clears the far side without touching it, and a rainbow
+  sweeping up its color goes around it. Any of those would take away a reward
+  already earned, before the rocket ever fired. It can still be spent
+  deliberately, by being swapped against another special. It wears no gem's
   colors either: it belongs to no color, and tinting it like a gem would
   promise a match it will not make. The rocket is also
   the consolation prize. If the same clump earns a line gem, a cross or a

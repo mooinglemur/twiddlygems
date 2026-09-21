@@ -1034,7 +1034,12 @@ impl Game {
         let targets: Vec<Pos> = self
             .board
             .positions()
-            .filter(|p| *p != rainbow && self.board.color(*p) == Some(color))
+            // By matching color rather than raw color, so a rocket carrying
+            // this one underneath is left where it is. A rocket is an item
+            // holding its cell, not a gem in the pool of colors, and a rainbow
+            // sweeping it up would cost the player a reward already earned:
+            // the same durability a beam crossing it now respects.
+            .filter(|p| *p != rainbow && self.board.match_color(*p) == Some(color))
             .collect();
 
         // A rainbow swapped against a clearing gem hands that gem's power to
@@ -2503,6 +2508,34 @@ mod tests {
             }
         }
         seen
+    }
+
+    #[test]
+    fn a_rainbow_leaves_a_waiting_rocket_standing() {
+        // The rocket is carrying the color the rainbow is spent on. It is an
+        // item holding its cell rather than a gem in the pool of colors, so the
+        // sweep goes around it, the same as a beam crossing it does.
+        let mut game = Game::new(spec(6, 6, 6, 10), 200);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+        // (0,1) is color 1, so the swap spends the rainbow on color 1. Make one
+        // of the other 1s a rocket waiting to go.
+        let waiting = Pos::new(1, 0);
+        assert_eq!(game.board.color(waiting), Some(1), "the fixture should put a 1 here");
+        game.board.set_gem(waiting, Some(Gem { color: 1, special: Special::Rocket }));
+
+        assert!(game.try_swap(Pos::new(0, 0), Pos::new(0, 1)));
+        let cleared = first_clear(&mut game);
+
+        assert!(
+            !cleared.iter().any(|e| (e.r, e.c) == (waiting.r as u8, waiting.c as u8)),
+            "the rainbow should have swept around the rocket",
+        );
+        assert_eq!(
+            game.board.gem(waiting).map(|g| g.special),
+            Some(Special::Rocket),
+            "and left it standing",
+        );
     }
 
     #[test]

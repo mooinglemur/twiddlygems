@@ -456,8 +456,18 @@ impl Wave {
     /// `cracks` says whether this gem going away hits the bricks beside it: a
     /// gem taken by a match or swept up by a rainbow does, a gem a beam simply
     /// ran over does not.
-    fn push(&mut self, board: &Board, p: Pos, delay: f32, cracks: bool) {
+    ///
+    /// `seeded` says the cell was named by whatever started this, rather than
+    /// swept up along the way. It is what spares a rocket. A rocket is holding
+    /// its cell until it launches, and a beam crossing it would take away the
+    /// reward the player has already earned without it ever firing, which is
+    /// the same reason a rocket takes no part in matching. Named directly it
+    /// still goes, because that is somebody choosing to spend it.
+    fn push(&mut self, board: &Board, p: Pos, delay: f32, cracks: bool, seeded: bool) {
         if !board.contains(p) || board.gem(p).is_none() {
+            return;
+        }
+        if !seeded && board.gem(p).map_or(false, |gem| gem.special == Special::Rocket) {
             return;
         }
         let slot = (p.r * self.cols + p.c) as usize;
@@ -519,7 +529,7 @@ pub fn detonate(
         // Seeds are the cells a match took, or the color a rainbow was spent
         // on. Both are gems going away because the player lined something up,
         // so both hit the bricks beside them.
-        wave.push(board, *seed, delay, true);
+        wave.push(board, *seed, delay, true, true);
     }
 
     let fallback = most_common_color(board, rng);
@@ -562,7 +572,7 @@ pub fn detonate(
             // line drawn across the board, and a gem it happens to run over is
             // not a match. The beam marks the bricks it passes through itself,
             // just above, and that is the whole of its effect on them.
-            wave.push(board, hit, delay + step, special == Special::Rainbow);
+            wave.push(board, hit, delay + step, special == Special::Rainbow, false);
         }
     }
 
@@ -855,13 +865,23 @@ mod tests {
     }
 
     #[test]
-    fn a_rocket_caught_in_a_blast_does_not_go_off_early() {
+    fn a_beam_passes_a_waiting_rocket_by_without_taking_it() {
+        // A rocket is holding its cell until it launches. A beam crossing the
+        // row goes straight through it, clearing what is on the far side, and
+        // leaves the rocket standing: it neither goes off early nor is taken
+        // away before it ever fires.
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
         board.set_gem(Pos::new(1, 2), Some(Gem { color: 7, special: Special::Rocket }));
         let mut rng = Rng::new(1);
         let result = detonate(&board, &[Pos::new(1, 0)], &[], &mut rng, 0.0);
-        assert_eq!(result.cleared.len(), 4, "the row goes, and no further");
+
+        assert!(!result.cleared.contains(&Pos::new(1, 2)), "the rocket should have survived");
+        assert!(
+            result.cleared.contains(&Pos::new(1, 3)),
+            "and the beam should have carried on past it",
+        );
+        assert_eq!(result.cleared.len(), 3, "the rest of the row, and no further");
         assert_eq!(result.fired.len(), 1, "only the line gem fired");
     }
 
