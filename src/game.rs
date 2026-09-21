@@ -36,6 +36,17 @@ pub const FALL_SPEED: f32 = 0.014;
 pub const LAUNCH_RAMP_MS: f32 = 400.0;
 /// Top speed, in cells per millisecond: a little over three cells a second.
 pub const LAUNCH_SPEED: f32 = 0.00325;
+/// A beat of stillness between gems landing and the clear that lands sets off.
+///
+/// Shorter than the rocket's hold below, because this one happens on every link
+/// of a chain rather than once: long enough to separate the thump from the pop
+/// that answers it, short enough that a six-deep cascade does not drag.
+///
+/// Only spent when a clear is actually waiting. A fall that ends the chain
+/// hands the board straight back, since there is nothing to separate and a
+/// pause there is just input the player cannot give yet.
+pub const FALL_HOLD_MS: f32 = 80.0;
+
 /// A beat of stillness between the last rocket striking and the board
 /// collapsing into the holes.
 ///
@@ -632,7 +643,14 @@ impl Game {
             self.events.push(event);
         }
 
-        self.fall_ms = fall_time(furthest).max(1.0);
+        // The board has already collapsed, so whether anything is about to go
+        // off is knowable now: the same matches this fall will resolve into are
+        // sitting there. Worth asking, because the beat is only wanted when
+        // there is a clear on the other side of it.
+        let waiting = !matching::find_matches(&self.board, &self.spec.rules).is_empty();
+        let hold = if waiting { FALL_HOLD_MS } else { 0.0 };
+
+        self.fall_ms = fall_time(furthest).max(1.0) + hold;
         self.phase = Phase::Falling { elapsed: 0.0 };
     }
 
@@ -1979,6 +1997,86 @@ mod tests {
             steps,
             vec![2],
             "one match resolved after the strike, so it is step two of the chain",
+        );
+    }
+
+    #[test]
+    fn a_landing_and_the_clear_it_sets_off_are_separate_events() {
+        // Refill off, so the collapse is entirely determined. The middle column
+        // holds three alike in its middle; clearing them drops the 7 at its top
+        // down to row three, where two more 7s are already waiting.
+        //
+        //   1 7 2                 . . 2
+        //   2 5 1                 . . 1
+        //   3 5 3      ->         . . 3
+        //   7 5 7                 7 7 7   <- the clear this beat comes before
+        //   2 1 2                 2 1 2
+        //   3 4 3                 3 4 3
+        let mut game = Game::new(spec(6, 3, 8, 10), 140);
+        game.spec.rules.refill = RefillMode::None;
+        paint(&mut game, &["172", "251", "353", "757", "212", "343"]);
+
+        game.cascade = 1;
+        let resolution = game.plan_resolution(None).expect("the painted board has a match");
+        game.begin_clear(resolution);
+
+        // Walked in small steps: what is measured is the gap between two
+        // moments, not what the board looks like at the end. The first clear's
+        // own announcement is discarded by the first update, so the match seen
+        // here is the one the landing set off.
+        let step = 4.0;
+        let (mut now, mut landed, mut matched) = (0.0_f32, None, None);
+        for _ in 0..600 {
+            game.update(step);
+            now += step;
+            for event in game.events() {
+                // Raised as the fall begins, carrying how long until it lands.
+                if event.kind == EV_LAND {
+                    let at = now + event.value as f32;
+                    landed = Some(landed.map_or(at, |seen: f32| seen.max(at)));
+                }
+                if event.kind == EV_MATCH {
+                    matched = Some(now);
+                }
+            }
+            if matched.is_some() {
+                break;
+            }
+        }
+
+        let landed = landed.expect("nothing ever fell");
+        let matched = matched.expect("the drop never set anything off");
+        let beat = matched - landed;
+        // Against a floor of its own as well as the constant, because a check
+        // that only compares the two agrees just as happily with a hold of zero.
+        assert!(beat > 60.0, "only {beat:.0}ms between the landing and the clear");
+        assert!(
+            beat >= FALL_HOLD_MS - step * 2.0,
+            "the beat is {beat:.0}ms, short of the {FALL_HOLD_MS} it is set to",
+        );
+    }
+
+    #[test]
+    fn a_fall_that_ends_the_chain_hands_the_board_straight_back() {
+        // The beat is for separating a landing from the clear it causes. With
+        // no clear coming it would only be input the player cannot give yet.
+        let mut game = Game::new(spec(6, 6, 6, 10), 141);
+        paint(&mut game, &latin_board());
+        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        game.origin[1] = -1.0;
+        game.events.clear();
+        game.begin_fall();
+
+        let landing = game
+            .events()
+            .iter()
+            .find(|e| e.kind == EV_LAND)
+            .map(|e| e.value as f32)
+            .expect("the painted board should have something to drop");
+        assert!(
+            (game.fall_ms - landing).abs() <= 1.0,
+            "the fall runs {}ms for a {landing}ms drop, so it is holding on for nothing",
+            game.fall_ms,
         );
     }
 

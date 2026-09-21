@@ -212,6 +212,13 @@ per wave, carrying the moment it touches down. A row clear drops most of the
 board by a row, and that is three columns settling rather than fifteen separate
 impacts; a column emptied in two places lands twice, once for each depth.
 
+When the gems land on a match, the board holds still for a beat before it goes
+off. Without the pause the thump and the pop that answers it happen in the same
+frame and read as one event rather than as cause and effect. The beat is only
+spent when a clear is actually waiting: a fall that ends the chain hands the
+board straight back, since there is nothing to separate there and a pause would
+only be input the player cannot give yet.
+
 A rocket's flight is worked out from distance rather than given a fixed
 duration. It eases up to a top speed and then holds it, so crossing the board
 takes longer than going next door instead of covering the extra ground faster.
