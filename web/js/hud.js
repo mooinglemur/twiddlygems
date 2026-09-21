@@ -187,6 +187,8 @@ function describe(objective) {
       return `Clear ${PALETTE[objective.color % PALETTE.length].name}`;
     case ObjectiveKind.JELLY:
       return 'Clear jelly';
+    case ObjectiveKind.BRICK:
+      return 'Break the bricks';
     default:
       return 'Goal';
   }

@@ -168,7 +168,7 @@ compare(
     "objective kinds",
     rust_arms(read(ROOT / "src" / "level.rs"), "kind_code"),
     js_object(engine_source, "ObjectiveKind"),
-    [("Score", "SCORE"), ("Color", "COLOR"), ("Jelly", "JELLY")],
+    [("Score", "SCORE"), ("Color", "COLOR"), ("Jelly", "JELLY"), ("Brick", "BRICK")],
 )
 
 if problems:

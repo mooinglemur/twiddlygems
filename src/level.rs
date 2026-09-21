@@ -11,6 +11,8 @@ pub enum Objective {
     Color { color: u8, count: u32 },
     /// Peel every layer of jelly on the board.
     Jelly,
+    /// Break every brick on the board, cracked ones counting as half gone.
+    Brick,
 }
 
 impl Objective {
@@ -20,6 +22,7 @@ impl Objective {
             Objective::Score(_) => 0,
             Objective::Color { .. } => 1,
             Objective::Jelly => 2,
+            Objective::Brick => 3,
         }
     }
 
@@ -36,6 +39,7 @@ impl Objective {
             Objective::Score(target) => target,
             Objective::Color { count, .. } => count,
             Objective::Jelly => progress.jelly_total,
+            Objective::Brick => progress.brick_total,
         }
     }
 
@@ -45,6 +49,7 @@ impl Objective {
             Objective::Score(_) => progress.score.min(u32::MAX as u64) as u32,
             Objective::Color { color, .. } => progress.cleared_by_color(color),
             Objective::Jelly => progress.jelly_total - progress.jelly_left,
+            Objective::Brick => progress.brick_total - progress.brick_left,
         };
         raw.min(self.needed(progress))
     }
@@ -61,6 +66,11 @@ pub struct Progress {
     pub cleared: [u32; MAX_COLORS],
     pub jelly_total: u32,
     pub jelly_left: u32,
+    /// Counted in hits rather than in bricks, the way jelly is counted in
+    /// layers: a whole brick is two and a cracked one is one, so the bar moves
+    /// when a brick cracks instead of sitting still until it breaks.
+    pub brick_total: u32,
+    pub brick_left: u32,
 }
 
 impl Progress {
@@ -160,19 +170,25 @@ const QUARRY: &[&str] = &[
     ".........",
 ];
 
-// Half a board, cut corner to corner. Everything above and left of the
-// diagonal is solid, and the diagonal itself is in play, so this is a shade
-// over half the cells. Built to watch gravity work: every column is a
-// different depth and every one of them ends against the slope.
+// Half a board, cut corner to corner, and the half that is cut away is the
+// level: every cell of it is brick to be broken through.
+//
+// Play starts in the bottom right triangle, fed by the one cell of the top row
+// that is not brick, so the whole board fills by running down the slope. The
+// diagonal face is what can be reached to begin with, and past that it is beams
+// that do the work, since a beam goes through brick rather than stopping at it.
+//
+// The top row is whole brick and the rest is cracked. Breaking a cell of the
+// top row opens a new way in, because the top row is where gems enter.
 const SLOPE: &[&str] = &[
-    "########.",
-    "#######..",
-    "######...",
-    "#####....",
-    "####.....",
-    "###......",
-    "##.......",
-    "#........",
+    "BBBBBBBB.",
+    "bbbbbbb..",
+    "bbbbbb...",
+    "bbbbb....",
+    "bbbb.....",
+    "bbb......",
+    "bb.......",
+    "b........",
     ".........",
 ];
 
@@ -233,7 +249,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // the bricks come down, and nothing falls into those pockets until the
         // gems above spill around the ends.
         LevelSpec::new("Quarry", 34, vec![Objective::Jelly]).with_layout(QUARRY),
-        LevelSpec::new("Landslide", 40, vec![Objective::Score(9_000)]).with_layout(SLOPE),
+        LevelSpec::new("Landslide", 40, vec![Objective::Brick]).with_layout(SLOPE),
         LevelSpec::new(
             "Last Call",
             30,
@@ -248,6 +264,59 @@ pub fn levels() -> Vec<LevelSpec> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_brick_objective_counts_hits_and_is_met_when_the_board_is_clear() {
+        let objective = Objective::Brick;
+        // Two whole bricks and one cracked: five hits between them.
+        let mut progress = Progress { brick_total: 5, brick_left: 5, ..Progress::default() };
+        assert!(!objective.is_met(&progress));
+        assert_eq!(objective.reached(&progress), 0);
+
+        // Cracking one moves the bar, rather than it sitting still until a
+        // whole brick finally goes.
+        progress.brick_left = 4;
+        assert_eq!(objective.reached(&progress), 1);
+        assert!(!objective.is_met(&progress));
+
+        progress.brick_left = 0;
+        assert!(objective.is_met(&progress));
+        assert_eq!(objective.reached(&progress), 5);
+    }
+
+    #[test]
+    fn every_brick_can_be_got_at() {
+        // A brick is broken by something clearing beside it or by a beam going
+        // through it, and a beam runs the length of a row or a column. So a
+        // brick is reachable if a gem can ever stand next to it, or anywhere
+        // along its row or its column. One walled off from all three could
+        // never be broken, and a brick objective would be unwinnable.
+        for level in levels() {
+            let Some(layout) = level.layout else { continue };
+            if !level.objectives.contains(&Objective::Brick) {
+                continue;
+            }
+            let rows = layout.len();
+            let cols = level.rules.cols as usize;
+            let at = |r: usize, c: usize| layout[r].chars().nth(c).unwrap_or('.');
+            let playable = |r: usize, c: usize| !matches!(at(r, c), '#' | 'b' | 'B');
+
+            for r in 0..rows {
+                for c in 0..cols {
+                    if !matches!(at(r, c), 'b' | 'B') {
+                        continue;
+                    }
+                    let along_row = (0..cols).any(|x| playable(r, x));
+                    let along_col = (0..rows).any(|y| playable(y, c));
+                    assert!(
+                        along_row || along_col,
+                        "{}: nothing could ever break the brick at ({r},{c})",
+                        level.name,
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn every_jelly_cell_can_be_reached() {

@@ -199,7 +199,10 @@ tiers would mean nothing. A rainbow set off this way has no color to answer to,
 so it takes the most populous one, drawn at random between colors that tie.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
-score, clear a number of gems of one color, or peel every layer of jelly. A
+score, clear a number of gems of one color, peel every layer of jelly, or break
+every brick. Bricks are counted in hits rather than in bricks, the way jelly is
+counted in layers, so the bar moves when one cracks instead of sitting still
+until it finally goes. A
 board with no legal move left reshuffles itself rather than ending the level,
 and says so as it does: a line of text swells and fades over the board, with a
 riffle to go with it. The same pop-over announces a short move budget, once,
@@ -289,6 +292,15 @@ slope and everything else filling by running down it.
 
 This is also why a cell can now be empty and stay empty. A pocket under a brick
 shelf fills only from the sides, and if nothing can reach it, it stays a hole.
+
+*Landslide* is the board built to show all of this at once. It is cut corner to
+corner, and the half that is cut away is the level: every cell of it is brick.
+Play starts in the bottom right triangle, fed by the one cell of the top row
+that is not brick, so the whole board fills by running down the slope. The
+diagonal face is all that can be reached to begin with; past that it is beams
+that do the work, since a beam goes through brick rather than stopping at it.
+The top row is whole brick and the rest cracked, so breaking into the top row
+opens a new way in, that being where gems enter.
 
 That makes a constraint for anyone drawing a level: a cell is only ever fed from
 the three cells above it, so a solid block of wall three wide leaves the middle

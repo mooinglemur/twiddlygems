@@ -105,7 +105,11 @@ fn inflate(spec: &LevelSpec) -> LevelSpec {
             Objective::Color { color, count } => {
                 Objective::Color { color: *color, count: count.saturating_mul(5) }
             }
+            // Jelly and brick are all or nothing, so there is nothing to
+            // inflate: the useful number for those is how many moves clearing
+            // the board actually took.
             Objective::Jelly => Objective::Jelly,
+            Objective::Brick => Objective::Brick,
         })
         .collect();
     probe
@@ -414,5 +418,6 @@ fn label(objective: &Objective) -> &'static str {
         Objective::Score(_) => "score",
         Objective::Color { .. } => "color",
         Objective::Jelly => "jelly",
+        Objective::Brick => "brick",
     }
 }

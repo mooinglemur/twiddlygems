@@ -318,6 +318,8 @@ impl Game {
         self.progress = Progress::default();
         self.progress.jelly_total = self.board.jelly_remaining();
         self.progress.jelly_left = self.progress.jelly_total;
+        self.progress.brick_total = self.board.bricks_remaining();
+        self.progress.brick_left = self.progress.brick_total;
         self.moves_left = self.spec.moves;
         self.phase = Phase::Idle;
         self.status = Status::Playing;
@@ -610,6 +612,7 @@ impl Game {
                     cascade,
                 ));
                 self.progress.score += (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
+                self.progress.brick_left = self.board.bricks_remaining();
                 continue;
             }
 
@@ -757,6 +760,7 @@ impl Game {
                 self.events.push(event);
             }
         }
+        self.progress.brick_left = self.board.bricks_remaining();
     }
 
     /// Runs the next stage of a settle and puts the board into the fall that

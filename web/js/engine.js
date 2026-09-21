@@ -48,7 +48,7 @@ export const EventKind = {
   BRICK: 14,
 };
 
-export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2 };
+export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3 };
 
 export const EMPTY_CELL = 255;
 
