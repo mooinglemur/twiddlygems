@@ -160,6 +160,22 @@ const QUARRY: &[&str] = &[
     ".........",
 ];
 
+// Half a board, cut corner to corner. Everything above and left of the
+// diagonal is solid, and the diagonal itself is in play, so this is a shade
+// over half the cells. Built to watch gravity work: every column is a
+// different depth and every one of them ends against the slope.
+const SLOPE: &[&str] = &[
+    "########.",
+    "#######..",
+    "######...",
+    "#####....",
+    "####.....",
+    "###......",
+    "##.......",
+    "#........",
+    ".........",
+];
+
 const PILLARS: &[&str] = &[
     "..o###o..",
     "..o###o..",
@@ -208,6 +224,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // the bricks come down, and nothing falls into those pockets until the
         // gems above spill around the ends.
         LevelSpec::new("Quarry", 34, vec![Objective::Jelly]).with_layout(QUARRY),
+        LevelSpec::new("Landslide", 40, vec![Objective::Score(9_000)]).with_layout(SLOPE),
         LevelSpec::new(
             "Last Call",
             30,

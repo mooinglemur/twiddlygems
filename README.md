@@ -247,6 +247,15 @@ work, and looked right for a while. The cell over a gap in the middle of a brick
 shelf is itself an ordinary empty cell, so that test says the column is still
 coming when the bricks two rows up mean nothing is, and the pocket never fills.
 
+Fresh gems come from off the top of the board and nowhere else. A column with a
+wall over it is not fed at all: whatever is under an overhang gets there by
+spilling in from the side, one gem per stage. Before gems could spill, each run
+of open cells in a column was fed from its own ceiling, because otherwise a
+walled-in column stayed empty forever; that also meant gems appearing out of the
+underside of a wall, which spilling makes unnecessary. It is what lets a board
+be cut corner to corner and still work, with one mouth at the high end of the
+slope and everything else filling by running down it.
+
 This is also why a cell can now be empty and stay empty. A pocket under a brick
 shelf fills only from the sides, and if nothing can reach it, it stays a hole.
 Holes cannot be swapped with, which falls out of the swap rule already requiring

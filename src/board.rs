@@ -397,24 +397,21 @@ impl Board {
             .find(|side| self.is_free(*side))
     }
 
-    /// The cells fresh gems enter through: the top of each run of open cells in
-    /// a column.
+    /// The cells fresh gems enter through: the open cells of the top row, and
+    /// nowhere else.
     ///
-    /// A column split by walls is several tubes, and a tube with a wall over it
-    /// cannot be fed from off the board, so each one is fed from its own
-    /// ceiling. Gems can now also spill into a tube from the side, but a tube
-    /// with no neighbor to spill from would otherwise never fill at all.
+    /// Gems come from off the top of the board. A column with a wall over it is
+    /// not fed at all; whatever is under an overhang gets there by spilling in
+    /// from the side, one gem at a time, which is what spilling is for. A board
+    /// cut corner to corner has exactly one mouth, at the high end of the
+    /// slope, and everything else fills by running down it.
+    ///
+    /// Feeding every run of open cells from its own ceiling was how this worked
+    /// before gems could spill, because otherwise a walled-in column stayed
+    /// empty forever. It also meant gems appearing out of the underside of a
+    /// wall, which spilling makes unnecessary.
     fn refill_mouths(&self) -> Vec<Pos> {
-        let mut mouths = Vec::new();
-        for c in 0..self.cols {
-            for r in 0..self.rows {
-                let here = Pos::new(r, c);
-                if self.is_open(here) && !self.is_open(Pos::new(r - 1, c)) {
-                    mouths.push(here);
-                }
-            }
-        }
-        mouths
+        (0..self.cols).map(|c| Pos::new(0, c)).filter(|p| self.is_open(*p)).collect()
     }
 
     /// Every open cell currently holding a gem.
@@ -570,24 +567,27 @@ mod tests {
     }
 
     #[test]
-    fn walls_split_a_column_into_independent_tubes() {
+    fn a_column_walled_off_from_the_sky_is_not_fed() {
+        // One column, split by a wall, with nothing either side to spill in
+        // from. Gems come from off the top of the board and nowhere else, so
+        // the stretch under the wall stays as empty as it was left.
         let mut board = Board::from_layout(&[".", ".", "#", "."]);
         for p in board.positions().collect::<Vec<_>>() {
             if board.is_open(p) {
                 board.set_gem(p, Some(Gem::plain(0)));
             }
         }
-        // Empty the cell directly under the wall.
         board.set_gem(Pos::new(3, 0), None);
 
         let rules = Rules { rows: 4, cols: 1, ..Rules::default() };
-        let mut rng = Rng::new(2);
-        let origin = settle_all(&mut board, &rules, &mut rng);
+        let origin = settle_all(&mut board, &rules, &mut Rng::new(2));
 
-        assert!(board.gem(Pos::new(3, 0)).is_some(), "the lower tube refills itself");
-        assert_eq!(origin[3], (2.0, 0.0), "its gem entered from just above its own ceiling");
+        assert!(
+            board.gem(Pos::new(3, 0)).is_none(),
+            "nothing should have appeared out of the underside of the wall",
+        );
         assert!(board.gem(Pos::new(2, 0)).is_none(), "the wall stays empty");
-        assert_eq!(origin[0], (0.0, 0.0), "the upper tube was already packed");
+        assert_eq!(origin[0], (0.0, 0.0), "and the tube above it was already packed");
     }
 
     #[test]
