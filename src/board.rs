@@ -163,13 +163,16 @@ impl Board {
 
     /// The color a match may be built from.
     ///
-    /// A rocket is waiting to launch rather than sitting in the pool of
-    /// colors, so it takes no part in matching. Left matchable it could be
-    /// cleared by a cascade before it ever fires, quietly costing the player
-    /// the reward they earned.
+    /// Rockets and rainbows are items sitting on the board rather than gems in
+    /// the pool of colors, and neither takes part in matching. A rocket is
+    /// waiting to launch, and left matchable a cascade could clear it before it
+    /// ever fires, quietly costing the player the reward they earned. A rainbow
+    /// answers to any color, which is exactly why it belongs to none.
     pub fn match_color(&self, p: Pos) -> Option<u8> {
         match self.gem(p) {
-            Some(gem) if gem.special != Special::Rocket => Some(gem.color),
+            Some(gem) if gem.special != Special::Rocket && gem.special != Special::Rainbow => {
+                Some(gem.color)
+            }
             _ => None,
         }
     }

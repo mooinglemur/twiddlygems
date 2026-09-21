@@ -146,7 +146,10 @@ two gems facing the *same* way, which would otherwise clear the same line twice
 — there, the gem the player actually moved turns and clears across its own
 grain, so the pair still takes a row and a column.
 
-The rainbow answers to anything, because it has no match of its own to wait for:
+The rainbow answers to anything, because it has no match of its own to wait for.
+Like a rocket, it is an item sitting on the board rather than a gem in the pool
+of colors: it lines up with nothing, wears no gem's colors, and cannot be swept
+up by a match. A swap is its way out, or another special catching it.
 
 - against an ordinary gem it clears that whole color, setting off any clearing
   gems standing in it;

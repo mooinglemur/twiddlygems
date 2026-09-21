@@ -134,6 +134,16 @@ pub enum Tap {
     Swapped,
 }
 
+/// One rocket on its way somewhere.
+#[derive(Clone, Copy, Debug)]
+struct Launch {
+    from: Pos,
+    to: Pos,
+    /// How long this one is in the air, which depends on how far it is going.
+    flight_ms: f32,
+    landed: bool,
+}
+
 /// A clear that is about to happen: what sets it off, and what it leaves behind.
 struct Resolution {
     seeds: Vec<Pos>,
@@ -164,8 +174,8 @@ pub struct Game {
     fall_ms: f32,
     /// Specials to drop in once the clear finishes.
     pending: Vec<(Pos, Gem)>,
-    /// Rockets in flight, as (the cell launched from, the cell aimed at).
-    launches: Vec<(Pos, Pos)>,
+    /// Rockets in flight. Each keeps its own flight time and lands on it.
+    launches: Vec<Launch>,
     /// Per-cell row a gem started falling from; see [`Board::collapse`].
     origin: Vec<f32>,
     cascade: u32,
@@ -336,6 +346,9 @@ impl Game {
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
             };
             let advanced = elapsed + remaining;
+            if let Phase::Launching { .. } = self.phase {
+                self.land_arrivals(advanced);
+            }
             if advanced < duration {
                 self.set_elapsed(advanced);
                 break;
@@ -425,7 +438,16 @@ impl Game {
     /// are in the air, so the cells they leave and the cells they hit collapse
     /// in the same drop.
     fn begin_launch(&mut self, rockets: &[Pos]) -> bool {
-        self.launches = self.pick_targets(rockets);
+        self.launches = self
+            .pick_targets(rockets)
+            .into_iter()
+            .map(|(from, to)| Launch {
+                from,
+                to,
+                flight_ms: flight_time(cells_between(from, to)),
+                landed: false,
+            })
+            .collect();
         if self.launches.is_empty() {
             // Nowhere worth aiming: drop them rather than stall the board.
             for p in rockets {
@@ -434,53 +456,69 @@ impl Game {
             return false;
         }
 
-        self.launch_ms = self
-            .launches
-            .iter()
-            .map(|(from, to)| flight_time(cells_between(*from, *to)))
-            .fold(0.0_f32, f32::max);
+        // The phase runs until the last one lands; each lands on its own clock.
+        self.launch_ms = self.launches.iter().map(|l| l.flight_ms).fold(0.0_f32, f32::max);
 
-        for (from, to) in self.launches.clone() {
-            let mut event =
-                Event::at(EV_SPECIAL_FIRED, from, 255, Special::Rocket, self.cascade.max(1));
+        for launch in self.launches.clone() {
+            let mut event = Event::at(
+                EV_SPECIAL_FIRED,
+                launch.from,
+                255,
+                Special::Rocket,
+                self.cascade.max(1),
+            );
             // How long this one is in the air, so the front end can make its
             // whistle last exactly as far as it flies.
-            event.value = flight_time(cells_between(from, to)).clamp(0.0, 65_535.0) as u16;
+            event.value = launch.flight_ms.clamp(0.0, 65_535.0) as u16;
             self.events.push(event);
         }
         self.phase = Phase::Launching { elapsed: 0.0 };
         true
     }
 
-    /// The rockets land together, taking one gem each, and only then does the
-    /// board collapse.
-    fn finish_launch(&mut self) {
-        let launches = std::mem::take(&mut self.launches);
+    /// Lands every rocket whose flight has run out by `elapsed`.
+    ///
+    /// They arrive independently: a rocket going next door is gone long before
+    /// one crossing the board, and should not hover on its target waiting for
+    /// it. Gravity still holds off until the last one is down, so that nothing
+    /// shifts under a rocket still in the air.
+    fn land_arrivals(&mut self, elapsed: f32) {
         let cascade = self.cascade.max(1);
-        let mut gems_hit = 0u64;
+        for index in 0..self.launches.len() {
+            let launch = self.launches[index];
+            if launch.landed || elapsed < launch.flight_ms {
+                continue;
+            }
+            self.launches[index].landed = true;
+            self.board.set_gem(launch.from, None);
 
-        for (from, _) in &launches {
-            self.board.set_gem(*from, None);
-        }
-        for (_, target) in &launches {
-            let gem = match self.board.gem(*target) {
+            let gem = match self.board.gem(launch.to) {
                 Some(gem) => gem,
                 None => continue,
             };
             if (gem.color as usize) < MAX_COLORS {
                 self.progress.cleared[gem.color as usize] += 1;
             }
-            self.board.peel_jelly(*target);
-            self.events.push(Event::at(EV_CLEAR, *target, gem.color, gem.special, cascade));
-            self.events.push(Event::at(EV_ROCKET_HIT, *target, gem.color, Special::Rocket, cascade));
-            self.board.set_gem(*target, None);
-            gems_hit += 1;
+            self.board.peel_jelly(launch.to);
+            self.events.push(Event::at(EV_CLEAR, launch.to, gem.color, gem.special, cascade));
+            self.events.push(Event::at(
+                EV_ROCKET_HIT,
+                launch.to,
+                gem.color,
+                Special::Rocket,
+                cascade,
+            ));
+            self.board.set_gem(launch.to, None);
+            self.progress.score +=
+                (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
         }
-
-        self.progress.score +=
-            (gems_hit * SCORE_PER_GEM + launches.len() as u64 * SCORE_PER_SPECIAL_FIRED)
-                * cascade as u64;
         self.progress.jelly_left = self.board.jelly_remaining();
+    }
+
+    /// The last rocket is down, so the board may finally settle.
+    fn finish_launch(&mut self) {
+        self.land_arrivals(f32::INFINITY);
+        self.launches.clear();
         self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
         self.begin_fall();
     }
@@ -962,7 +1000,11 @@ impl Game {
                 }
             }
             Phase::Launching { elapsed } => {
-                for (from, to) in self.launches.clone() {
+                for launch in self.launches.clone() {
+                    if launch.landed {
+                        continue;
+                    }
+                    let (from, to) = (launch.from, launch.to);
                     let distance = cells_between(from, to).max(0.001);
                     let flown = (flown_cells(elapsed) / distance).clamp(0.0, 1.0);
                     self.set_offset(
@@ -970,13 +1012,12 @@ impl Game {
                         (to.c - from.c) as f32 * flown,
                         (to.r - from.r) as f32 * flown,
                     );
-                    // The target only flinches once the rocket is nearly on it.
-                    let impact = ((flown - 0.8) / 0.2).clamp(0.0, 1.0);
-                    let i = (to.r * self.board.cols + to.c) as usize;
-                    if i * 3 + 2 < self.offs_buf.len() {
-                        self.offs_buf[i * 3 + 2] = 1.0 - impact;
-                        self.cells_buf[i * 4 + 3] |= Self::FLAG_CLEARING;
-                    }
+                    // The target is left entirely alone. It used to start
+                    // shrinking once the rocket was most of the way there,
+                    // which on a long flight meant it was visibly cringing for
+                    // half a second before anything reached it — and told the
+                    // player where the rocket was going before it arrived.
+                    // Nothing happens to it until it is hit.
                 }
             }
             Phase::Falling { elapsed } => {
@@ -1332,7 +1373,8 @@ mod tests {
             }
             game.update(16.0);
         }
-        let (from, to) = *game.launches.first().expect("a rocket should be in the air");
+        let launch = *game.launches.first().expect("a rocket should be in the air");
+        let (from, to) = (launch.from, launch.to);
         let target_before = game.board.gem(to);
         assert!(target_before.is_some());
 
@@ -1394,7 +1436,7 @@ mod tests {
         let mut target = None;
         for _ in 0..400 {
             if let Phase::Launching { .. } = game.phase() {
-                target = game.launches.first().map(|(_, to)| *to);
+                target = game.launches.first().map(|launch| launch.to);
                 break;
             }
             game.update(16.0);
@@ -1531,6 +1573,21 @@ mod tests {
     }
 
     #[test]
+    fn a_rainbow_is_not_swept_up_by_a_match_either() {
+        // It answers to every color, so it belongs to none and lines up with
+        // nothing. Its own way out is a swap, or another special catching it.
+        let mut game = Game::new(spec(4, 4, 6, 113), 113);
+        paint(&mut game, &["1112", "2345", "3456", "4567"]);
+        assert_eq!(matching::find_matches(&game.board, game.rules()).len(), 1);
+
+        game.board.set_gem(Pos::new(0, 1), Some(Gem { color: 1, special: Special::Rainbow }));
+        assert!(
+            matching::find_matches(&game.board, game.rules()).is_empty(),
+            "a rainbow in the middle of them breaks the run"
+        );
+    }
+
+    #[test]
     fn a_rainbow_scatters_its_clears_in_time() {
         let mut game = Game::new(spec(6, 6, 6, 10), 102);
         paint(&mut game, &latin_board());
@@ -1547,6 +1604,109 @@ mod tests {
         assert!(
             delays.iter().all(|d| (*d as f32) < matching::RAINBOW_SPREAD_MS),
             "and all within its window"
+        );
+    }
+
+    #[test]
+    fn the_target_is_untouched_until_the_rocket_arrives() {
+        // Nothing may happen to the gem being aimed at until it is actually
+        // hit — not a shrink, not a flag. On a long flight an early flinch is
+        // both wrong to look at and a giveaway of where the rocket is headed.
+        let mut game = Game::new(spec(8, 8, 6, 10), 114);
+        let from = Pos::new(0, 0);
+        let to = Pos::new(7, 7);
+        let gem = game.board.gem(from).expect("the board is full");
+        game.board.set_gem(from, Some(Gem { special: Special::Rocket, ..gem }));
+
+        let launch = Launch {
+            from,
+            to,
+            flight_ms: flight_time(cells_between(from, to)),
+            landed: false,
+        };
+        game.launches = vec![launch];
+        game.launch_ms = launch.flight_ms;
+        game.phase = Phase::Launching { elapsed: 0.0 };
+
+        let slot = (to.r * game.board.cols + to.c) as usize;
+        let mut frames = 0;
+        while matches!(game.phase(), Phase::Launching { .. }) && frames < 400 {
+            game.update(16.0);
+            frames += 1;
+            if !matches!(game.phase(), Phase::Launching { .. }) {
+                break;
+            }
+            assert_eq!(
+                game.offsets()[slot * 3 + 2],
+                1.0,
+                "the target shrank at frame {frames}, with the rocket still in the air"
+            );
+            assert_eq!(
+                game.cells_bytes()[slot * 4 + 3] & Game::FLAG_CLEARING,
+                0,
+                "the target was marked as clearing before it was hit"
+            );
+        }
+        assert!(frames > 20, "a flight across the board should last many frames");
+    }
+
+    #[test]
+    fn rockets_arrive_and_go_off_independently() {
+        // A rocket going next door should be gone long before one crossing the
+        // board, not hovering on its target waiting for it.
+        let mut game = Game::new(spec(8, 8, 6, 10), 112);
+        let near = Launch {
+            from: Pos::new(0, 0),
+            to: Pos::new(0, 1),
+            flight_ms: flight_time(1.0),
+            landed: false,
+        };
+        let far = Launch {
+            from: Pos::new(7, 0),
+            to: Pos::new(7, 7),
+            flight_ms: flight_time(7.0),
+            landed: false,
+        };
+        assert!(far.flight_ms > near.flight_ms * 2.0, "the flights should differ plainly");
+
+        for p in [near.from, far.from] {
+            let gem = game.board.gem(p).expect("the board is full");
+            game.board.set_gem(p, Some(Gem { special: Special::Rocket, ..gem }));
+        }
+        game.launches = vec![near, far];
+        game.launch_ms = far.flight_ms;
+        game.phase = Phase::Launching { elapsed: 0.0 };
+
+        // Run the clock to just past the short flight.
+        let mut hits = 0;
+        for _ in 0..(((near.flight_ms + 40.0) / 16.0).ceil() as usize) {
+            game.update(16.0);
+            hits += game.events().iter().filter(|e| e.kind == EV_ROCKET_HIT).count();
+        }
+
+        assert_eq!(hits, 1, "only the near rocket should have gone off");
+        assert!(game.launches[0].landed, "the short flight should be down");
+        assert!(!game.launches[1].landed, "the long one should still be in the air");
+        assert!(game.board.gem(near.to).is_none(), "its target should have gone");
+        assert!(game.board.gem(far.to).is_some(), "the far target is not hit yet");
+        assert!(
+            matches!(game.phase(), Phase::Launching { .. }),
+            "and the board should still be waiting on the second"
+        );
+
+        for _ in 0..400 {
+            if !matches!(game.phase(), Phase::Launching { .. }) {
+                break;
+            }
+            game.update(16.0);
+            hits += game.events().iter().filter(|e| e.kind == EV_ROCKET_HIT).count();
+        }
+        assert_eq!(hits, 2, "both should have gone off by the end");
+
+        let _ = settle(&mut game);
+        assert!(
+            game.board.positions().all(|p| !game.board.is_open(p) || game.board.gem(p).is_some()),
+            "and the board fills in once they are all down"
         );
     }
 

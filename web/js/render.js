@@ -243,8 +243,9 @@ export class Renderer {
   /// blitting 64 bitmaps does not. Rainbows and rockets are cached in their
   /// resting orientation and turned as they are blitted.
   sprite(color, special) {
-    // Every rocket is identical, so they all share one entry.
-    const key = (special === Special.ROCKET ? 0 : color) * 8 + special;
+    // Rockets and rainbows wear no gem colors, so each needs only one entry.
+    const colorless = special === Special.ROCKET || special === Special.RAINBOW;
+    const key = (colorless ? 0 : color) * 8 + special;
     const cached = this.sprites.get(key);
     if (cached) {
       return cached;
@@ -320,17 +321,29 @@ export class Renderer {
     this.updateParticles(timeMs);
 
     // A board at rest is worth nothing to redraw, and redrawing it is most of
-    // what a phone was being asked to do.
+    // what a phone was being asked to do. But "at rest" has to account for
+    // anything that animates on its own: a rainbow spins whether or not the
+    // board is doing something, and skipping its frames freezes it.
     let selected = false;
-    for (let i = 0; i < cells.length / 4 && !selected; i += 1) {
-      selected = (cells[i * 4 + 3] & Flag.SELECTED) !== 0;
+    let spinning = false;
+    for (let i = 0; i < cells.length / 4; i += 1) {
+      if (cells[i * 4 + 3] & Flag.SELECTED) {
+        selected = true;
+      }
+      if (cells[i * 4 + 1] === Special.RAINBOW) {
+        spinning = true;
+      }
+      if (selected && spinning) {
+        break;
+      }
     }
     const busy =
       this.engine.phase !== Phase.IDLE ||
       this.particles.length > 0 ||
       this.pendingBursts.length > 0 ||
       this.hint !== null ||
-      selected;
+      selected ||
+      spinning;
     if (!busy && !this.dirty) {
       return;
     }
@@ -420,7 +433,7 @@ export class Renderer {
     this.ctx.drawImage(sprite.canvas, x - size / 2, y - size / 2, size, size);
   }
 
-  /// The same, for the two gems that are drawn at an angle.
+  /// The same, for the two items that are drawn at an angle.
   blitTurned(x, y, scale, color, special, angle) {
     const { ctx } = this;
     const sprite = this.sprite(color, special);
@@ -464,6 +477,11 @@ function paintGem(ctx, x, y, radius, colorIndex, special) {
     drawRocketBody(ctx, x, y, radius);
     return;
   }
+  if (special === Special.RAINBOW) {
+    // Nor is a rainbow. It answers to every color, so it wears none of them.
+    drawRainbowBody(ctx, x, y, radius);
+    return;
+  }
 
   ctx.save();
   shapePath(ctx, gem.shape, x, y, radius);
@@ -481,7 +499,44 @@ function paintGem(ctx, x, y, radius, colorIndex, special) {
   ctx.fill();
   ctx.restore();
 
-  drawSpecial(ctx, x, y, radius, special, gem);
+  drawSpecial(ctx, x, y, radius, special);
+}
+
+/// The line and cross markings. Rockets and rainbows are whole gems of their
+/// own and never reach here.
+function drawSpecial(ctx, x, y, radius, special) {
+  if (special === Special.NONE) {
+    return;
+  }
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+  ctx.lineWidth = Math.max(2, radius * 0.16);
+
+  if (special === Special.LINE_H || special === Special.LINE_V) {
+    const horizontal = special === Special.LINE_H;
+    for (const offset of [-radius * 0.34, radius * 0.34]) {
+      ctx.beginPath();
+      if (horizontal) {
+        ctx.moveTo(x - radius * 0.8, y + offset);
+        ctx.lineTo(x + radius * 0.8, y + offset);
+      } else {
+        ctx.moveTo(x + offset, y - radius * 0.8);
+        ctx.lineTo(x + offset, y + radius * 0.8);
+      }
+      ctx.stroke();
+    }
+  } else if (special === Special.CROSS) {
+    // Bars both ways, since it takes a row and a column together.
+    ctx.beginPath();
+    ctx.moveTo(x - radius * 0.8, y);
+    ctx.lineTo(x + radius * 0.8, y);
+    ctx.moveTo(x, y - radius * 0.8);
+    ctx.lineTo(x, y + radius * 0.8);
+    ctx.stroke();
+  }
+
+  ctx.restore();
 }
 
 /// The flame behind a rocket in flight, which cannot be cached because it only
@@ -503,56 +558,29 @@ function drawExhaust(ctx, x, y, r, angle) {
   ctx.restore();
 }
 
-function drawSpecial(ctx, x, y, radius, special, gem) {
-  if (special === Special.NONE) {
-    return;
-  }
-  ctx.save();
-  ctx.lineCap = 'round';
-
-  if (special === Special.LINE_H || special === Special.LINE_V) {
-    const horizontal = special === Special.LINE_H;
-    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-    ctx.lineWidth = Math.max(2, radius * 0.16);
-    for (const offset of [-radius * 0.34, radius * 0.34]) {
-      ctx.beginPath();
-      if (horizontal) {
-        ctx.moveTo(x - radius * 0.8, y + offset);
-        ctx.lineTo(x + radius * 0.8, y + offset);
-      } else {
-        ctx.moveTo(x + offset, y - radius * 0.8);
-        ctx.lineTo(x + offset, y + radius * 0.8);
-      }
-      ctx.stroke();
-    }
-  } else if (special === Special.CROSS) {
-    // Bars both ways, since it takes a row and a column together.
-    ctx.strokeStyle = 'rgba(255,255,255,0.92)';
-    ctx.lineWidth = Math.max(2, radius * 0.16);
+/// A rainbow at rest: wedges of every color, spun as it is blitted.
+function drawRainbowBody(ctx, x, y, r) {
+  for (let i = 0; i < PALETTE.length; i += 1) {
     ctx.beginPath();
-    ctx.moveTo(x - radius * 0.8, y);
-    ctx.lineTo(x + radius * 0.8, y);
-    ctx.moveTo(x, y - radius * 0.8);
-    ctx.lineTo(x, y + radius * 0.8);
-    ctx.stroke();
-  } else if (special === Special.RAINBOW) {
-    // Wedges of every color, so it reads as the wildcard at a glance. The
-    // sprite is painted at rest and spun as it is blitted.
-    for (let i = 0; i < PALETTE.length; i += 1) {
-      ctx.beginPath();
-      ctx.moveTo(x, y);
-      ctx.arc(x, y, radius * 0.66, (i * TAU) / PALETTE.length, ((i + 1) * TAU) / PALETTE.length);
-      ctx.closePath();
-      ctx.fillStyle = PALETTE[i].fill;
-      ctx.fill();
-    }
-    ctx.fillStyle = 'rgba(255,255,255,0.92)';
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 0.2, 0, TAU);
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, r, (i * TAU) / PALETTE.length, ((i + 1) * TAU) / PALETTE.length);
+    ctx.closePath();
+    ctx.fillStyle = PALETTE[i].fill;
     ctx.fill();
   }
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, TAU);
+  ctx.strokeStyle = 'rgba(28,24,48,0.85)';
+  ctx.lineWidth = Math.max(1.5, r * 0.12);
+  ctx.stroke();
 
-  ctx.restore();
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.26, 0, TAU);
+  ctx.fillStyle = 'rgba(255,255,255,0.94)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(28,24,48,0.5)';
+  ctx.lineWidth = Math.max(1, r * 0.06);
+  ctx.stroke();
 }
 
 /// A rocket at rest, nose up. It is turned toward its target as it is blitted.
