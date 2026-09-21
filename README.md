@@ -159,7 +159,13 @@ up by a match. A swap is its way out, or another special catching it.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
 score, clear a number of gems of one color, or peel every layer of jelly. A
-board with no legal move left reshuffles itself rather than ending the level.
+board with no legal move left reshuffles itself rather than ending the level,
+and says so as it does: a line of text swells and fades over the board, with a
+riffle to go with it. The same pop-over announces a short move budget, once,
+when the count first reaches five or fewer. A level that *opens* there says so
+before the first move, since with three moves to spend that is the puzzle
+rather than a warning about it. It re-arms if the budget climbs back over the
+line, which is what receiving moves as an Archipelago item will look like.
 Gems differ in shape as well as color, so the board is readable without relying
 on color alone: a blue teardrop, a yellow circle, a red triangle, an orange
 headstone, a green star and a purple diamond. Every outline has its corners
@@ -373,8 +379,18 @@ means its filter sweep has stopped working and it has quietly become a click
 again. If the boom drifts far from the half second it is meant to run,
 or sinks so low that a phone cannot reproduce it. If the thud is not clearly
 lower than a pop, since it fires while the pops that caused it are still
-ringing and has to sit underneath them rather than beside them. And if the waver
+ringing and has to sit underneath them rather than beside them. If the low-moves
+bell stops being two notes, or stops falling. And if the waver
 stops wavering, or a rocket's whistle stops tracking its flight time.
+
+The shuffle's riffle gets a control rather than a count. Its strikes overlap
+and are jittered per play, so the strike counter that checks the bell's two
+notes reads anywhere from five to ten for the real thing and five for a version
+with every strike piled onto one instant: it cannot tell them apart, so it is
+not asked to. Instead those same strikes are rendered twice, as they ship and
+all at once, and the check is that spreading them out lengthens the sound
+several times over. That is what makes a riffle a riffle, and it is the only
+difference between the two renders.
 
 What none of this can tell you is whether a sound is any good. Levels,
 durations and brightness are measurable; character is not. Listen, then edit

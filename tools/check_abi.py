@@ -117,6 +117,7 @@ compare(
         ("ROCKET_HIT", "ROCKET_HIT"),
         ("MATCH", "MATCH"),
         ("LAND", "LAND"),
+        ("LOW_MOVES", "LOW_MOVES"),
     ],
 )
 

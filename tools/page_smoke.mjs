@@ -30,7 +30,7 @@ function stubContext() {
   const methods = [
     'setTransform', 'clearRect', 'save', 'restore', 'beginPath', 'closePath', 'moveTo',
     'lineTo', 'arc', 'arcTo', 'ellipse', 'quadraticCurveTo', 'fill', 'stroke', 'clip',
-    'fillRect', 'strokeRect', 'translate', 'scale', 'rotate', 'drawImage',
+    'fillRect', 'strokeRect', 'translate', 'scale', 'rotate', 'drawImage', 'fillText',
   ];
   for (const name of methods) {
     ctx[name] = () => {
@@ -39,6 +39,12 @@ function stubContext() {
   }
   ctx.createLinearGradient = () => ({ addColorStop() {} });
   ctx.createRadialGradient = () => ({ addColorStop() {} });
+  // Enough for the pop-over to size its plate. The number is nonsense; what is
+  // being checked is that the call exists and the drawing runs.
+  ctx.measureText = (text) => {
+    calls.measureText = (calls.measureText ?? 0) + 1;
+    return { width: String(text).length * 8 };
+  };
   return ctx;
 }
 
@@ -107,7 +113,10 @@ globalThis.document = {
 const store = new Map();
 globalThis.window = {
   devicePixelRatio: 2,
-  location: { search: '', href: 'http://localhost/index.html' },
+  // ?debug only hands the engine and renderer to window.twiddlygems; nothing
+  // else about the page changes. It is on here so this can reach past the DOM
+  // to the things that draw.
+  location: { search: '?debug', href: 'http://localhost/index.html?debug' },
   localStorage: {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => store.set(key, value),
@@ -240,6 +249,33 @@ assert.notEqual(
 );
 assert.ok(store.has('twiddlygems.sound.v1'), 'the sound setting was not saved');
 dispatch('sound-button', 'click', {});
+
+// The pop-over that announces a shuffle or a short move budget.
+//
+// Worth reaching for deliberately: it is the only thing on the canvas that
+// draws text, so it is the only thing that would find fillText or measureText
+// missing, and it fires on a board state an ordinary smoke run never reaches.
+{
+  const { EventKind } = await import(path.resolve('web/js/engine.js'));
+  const { renderer } = window.twiddlygems;
+  const before = calls.fillText ?? 0;
+  const now = performance.now();
+  renderer.addEvents([{ kind: EventKind.SHUFFLE, r: 255, c: 255, value: 0 }], now);
+  assert.ok(renderer.toast, 'a shuffle raised no pop-over');
+  renderer.dirty = true;
+  renderer.draw(now + 200);
+  assert.ok((calls.fillText ?? 0) > before, 'the pop-over drew no text');
+
+  renderer.addEvents([{ kind: EventKind.LOW_MOVES, r: 255, c: 255, value: 1 }], now);
+  assert.equal(renderer.toast.text, '1 move left', 'the last move should read as singular');
+  renderer.addEvents([{ kind: EventKind.LOW_MOVES, r: 255, c: 255, value: 5 }], now);
+  assert.equal(renderer.toast.text, '5 moves left');
+
+  // And it clears itself once it has run its course, rather than pinning the
+  // frame loop awake forever.
+  renderer.draw(now + 60_000);
+  assert.equal(renderer.toast, null, 'the pop-over outlived its fade');
+}
 
 // The level picker builds one chip per level, with the locked ones disabled.
 dispatch('levels-button', 'click', {});

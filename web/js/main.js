@@ -150,6 +150,11 @@ async function boot() {
           delay: event.value / 1000,
           pan: ((event.c / spread) * 2 - 1) * 0.5,
         });
+      } else if (event.kind === EventKind.SHUFFLE) {
+        // Centered: this one is the whole board, not a place on it.
+        audio.play('shuffle');
+      } else if (event.kind === EventKind.LOW_MOVES) {
+        audio.play('ding');
       } else if (event.kind === EventKind.REVERT) {
         audio.play('clack', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.ROCKET_HIT) {

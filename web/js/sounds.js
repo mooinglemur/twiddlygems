@@ -43,6 +43,31 @@
 // Keep levels low. These stack: a rainbow clear can fire twenty at once, and
 // the limiter should be a safety net rather than something the game leans on.
 
+/// The rattle inside the shuffle, as (start in seconds, band center in hertz,
+/// level). A riffle is one gesture made of a dozen tiny strikes, so this is a
+/// table rather than a dozen near-identical layers written out: the numbers are
+/// the whole design and this way they can be read down a column.
+///
+/// The gaps tighten to the middle and open out again, which is a shuffle
+/// gathering speed and then settling. The centers drift downward over the same
+/// stretch, so the rattle darkens as it runs out.
+export const RIFFLE = [
+  [0.0, 2900, 0.5],
+  [0.034, 2400, 0.62],
+  [0.064, 3050, 0.7],
+  [0.09, 2200, 0.78],
+  [0.112, 2750, 0.82],
+  [0.132, 2050, 0.8],
+  [0.15, 2600, 0.76],
+  [0.17, 1900, 0.7],
+  [0.194, 2350, 0.62],
+  [0.222, 1750, 0.55],
+  [0.256, 2100, 0.48],
+  [0.298, 1600, 0.4],
+  [0.348, 1850, 0.32],
+  [0.408, 1450, 0.24],
+];
+
 export const SOUNDS = {
   /// A gem going away: a soft "tff", like a hi-hat brushed rather than struck.
   /// Deliberately quiet and very short so a cascade reads as a texture.
@@ -156,6 +181,110 @@ export const SOUNDS = {
     ],
   },
 
+  /// The board rearranging itself when nothing can be matched: a riffle.
+  ///
+  /// Shuffling a deck is the sound everyone already knows for this, and it is
+  /// a good fit: a burr of small strikes that speeds up, then spreads out and
+  /// stops. Underneath runs a soft sweep down, which is the movement itself
+  /// rather than any one gem, and a low tock closes it as the board lands.
+  ///
+  /// Nothing else is playing while this happens, so it can afford to be the
+  /// only thing in the mix.
+  shuffle: {
+    gain: 0.42,
+    voiceCap: 2,
+    layers: [
+      {
+        // The gesture under the strikes, darkening as the board settles.
+        source: 'noise',
+        filters: [
+          { type: 'bandpass', frequency: 900, q: 1.1, sweep: { to: 380, time: 0.5 } },
+        ],
+        env: { attack: 0.06, hold: 0.16, decay: 0.3 },
+        gain: 0.3,
+        jitter: { frequency: 0.12, gain: 0.15 },
+      },
+      ...RIFFLE.map(([delay, frequency, gain]) => ({
+        source: 'noise',
+        filters: [{ type: 'bandpass', frequency, q: 5 }],
+        env: { attack: 0.0006, decay: 0.022 },
+        delay,
+        gain,
+        // Enough per play that two shuffles in a row are not the same sound
+        // twice, which a fixed table would otherwise guarantee.
+        jitter: { frequency: 0.14, gain: 0.22 },
+      })),
+      {
+        // The board coming to rest, a beat after the rattle runs out.
+        source: 'triangle',
+        note: 232,
+        sweep: { to: 158, time: 0.05 },
+        env: { attack: 0.003, decay: 0.12 },
+        delay: 0.46,
+        gain: 0.42,
+        jitter: { frequency: 0.06, gain: 0.15 },
+      },
+    ],
+  },
+
+  /// The move budget running short: like a doorbell,
+  ///
+  ding: {
+    gain: 0.5,
+    voiceCap: 2,
+    layers: [
+      {
+        source: 'triangle',
+        note: 'F#6',
+        filters: [{ type: 'lowpass', frequency: 4600, q: 0.8, sweep: { to: 1500, time: 0.36 } }],
+        env: { attack: 0.004, decay: 0.48 },
+        gain: 0.9,
+        jitter: { frequency: 0.015, gain: 0.08 },
+      },
+      {
+        source: 'sine',
+        note: 'B5',
+        env: { attack: 0.004, decay: 0.2 },
+        gain: 0.2,
+        jitter: { gain: 0.1 },
+      },
+      {
+        source: 'triangle',
+        note: 'G6',
+        filters: [{ type: 'lowpass', frequency: 4600, q: 0.8, sweep: { to: 1500, time: 0.36 } }],
+        env: { attack: 0.004, decay: 1.48 },
+        delay: 0.05,
+        gain: 0.9,
+        jitter: { frequency: 0.015, gain: 0.08 },
+      },
+      {
+        source: 'sine',
+        note: 'C6',
+        env: { attack: 0.004, decay: 1.2 },
+        delay: 0.05,
+        gain: 0.2,
+        jitter: { gain: 0.1 },
+      },
+      {
+        source: 'triangle',
+        note: 'C6',
+        filters: [{ type: 'lowpass', frequency: 4200, q: 0.8, sweep: { to: 1300, time: 0.5 } }],
+        env: { attack: 0.004, decay: 1.72 },
+        delay: 0.5,
+        gain: 0.95,
+        jitter: { frequency: 0.015, gain: 0.08 },
+      },
+      {
+        source: 'sine',
+        note: 'G5',
+        env: { attack: 0.004, decay: 1.28 },
+        delay: 0.5,
+        gain: 0.2,
+        jitter: { gain: 0.1 },
+      },
+    ],
+  },
+
   /// The shimmer left behind by a gem, ringing on long after the pop.
   ///
   /// The note underneath never changes: a sawtooth held at a low F, which has
@@ -256,8 +385,8 @@ export const SOUNDS = {
       ['C4', 'E4', 'G4'],
       ['C4', 'F4', 'A4'],
       ['D4', 'F4', 'Bb4'],
-      ['F4', 'A4', 'C5'],
-      ['G4', 'Bb4', 'D5'],
+      ['F4', 'G4', 'C5'],
+      ['Bb4', 'C5', 'D5'],
       ['Bb4', 'C5', 'E5'],
       ['A4', 'C5', 'F5'],
       ['C5', 'E5', 'G5'],

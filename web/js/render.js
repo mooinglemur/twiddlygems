@@ -46,6 +46,13 @@ const PUFFS_PER_GEM = 4;
 const SHARDS_PER_IMPACT = 28;
 const PUFFS_PER_IMPACT = 12;
 
+/// How long a pop-over line of text lives, and the share of that spent fading
+/// in and fading out. It outlasts the shuffle it announces, because a message
+/// that has gone by the time the board settles is one nobody read.
+const TOAST_MS = 1800;
+const TOAST_IN = 0.18;
+const TOAST_OUT = 0.4;
+
 export class Renderer {
   constructor(canvas, engine) {
     this.canvas = canvas;
@@ -58,6 +65,8 @@ export class Renderer {
     /// debris is held back until the clear actually reaches it.
     this.pendingBursts = [];
     this.particles = [];
+    /// A line of text swelling and fading over the board, or null.
+    this.toast = null;
     this.lastFrame = null;
     this.layout();
   }
@@ -70,6 +79,13 @@ export class Renderer {
         this.pendingBursts.push({ at: now + event.value, r: event.r, c: event.c, color: event.color });
       } else if (event.kind === EventKind.ROCKET_HIT) {
         this.pendingBursts.push({ at: now, r: event.r, c: event.c, color: event.color, impact: true });
+      } else if (event.kind === EventKind.SHUFFLE) {
+        // The board is about to rearrange itself. Without a word about it the
+        // player looks away and looks back at a different board.
+        this.toast = { text: 'No moves, shuffling', at: now };
+      } else if (event.kind === EventKind.LOW_MOVES) {
+        const left = event.value;
+        this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };
       }
     }
   }
@@ -78,6 +94,7 @@ export class Renderer {
   reset() {
     this.pendingBursts.length = 0;
     this.particles.length = 0;
+    this.toast = null;
     this.lastFrame = null;
     this.backdrop = null;
     this.dirty = true;
@@ -350,6 +367,7 @@ export class Renderer {
       this.particles.length > 0 ||
       this.pendingBursts.length > 0 ||
       this.hint !== null ||
+      this.toast !== null ||
       selected ||
       spinning;
     if (!busy && !this.dirty) {
@@ -432,6 +450,59 @@ export class Renderer {
     if (this.hint) {
       this.drawHint(timeMs);
     }
+    if (this.toast) {
+      this.drawToast(timeMs);
+    }
+  }
+
+  /// A line of text that swells and fades over the middle of the board.
+  ///
+  /// It keeps growing the whole way through, fade-out included, which is what
+  /// makes it read as something the board did rather than a label being shown
+  /// and taken away. Drawn on the canvas rather than as an element over it, so
+  /// it is sized in cells and lands in the same place on every screen.
+  drawToast(timeMs) {
+    const age = timeMs - this.toast.at;
+    if (age >= TOAST_MS) {
+      this.toast = null;
+      return;
+    }
+
+    const t = age / TOAST_MS;
+    // In, hold, out, as a trapezoid rather than a curve: the swell carries the
+    // motion, and a fade that eases as well reads as sluggish.
+    const fade = Math.max(0, Math.min(1, t / TOAST_IN, (1 - t) / TOAST_OUT));
+    const scale = 0.84 + t * 0.3;
+
+    const ctx = this.ctx;
+    // The plate's padding and height are both in units of the text size, and
+    // the text itself scales with it, so this one number sets the whole thing.
+    // Multiplying it by the root of two doubles the area.
+    const size = Math.max(20, this.cell * 0.59);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(
+      this.pad + (this.engine.cols * this.cell) / 2,
+      this.pad + (this.engine.rows * this.cell) / 2,
+    );
+    ctx.scale(scale, scale);
+    ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // On a plate, because this lands over a board full of bright gems and
+    // white text alone would be unreadable across half of them.
+    const width = ctx.measureText(this.toast.text).width;
+    ctx.fillStyle = 'rgba(16,13,32,0.84)';
+    roundRect(ctx, -width / 2 - size, -size, width + size * 2, size * 2, size);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(190,175,255,0.35)';
+    ctx.lineWidth = Math.max(1, size * 0.05);
+    ctx.stroke();
+
+    ctx.fillStyle = '#f3effd';
+    ctx.fillText(this.toast.text, 0, 0);
+    ctx.restore();
   }
 
   /// Stamps a cached gem, centered.

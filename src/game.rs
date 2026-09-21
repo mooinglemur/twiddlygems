@@ -77,6 +77,18 @@ pub const EV_MATCH: u8 = 11;
 /// single thump. A row clear drops most of the board by one row, and that is
 /// three columns settling, not fifteen separate impacts.
 pub const EV_LAND: u8 = 12;
+/// The move budget running short, carrying how many are left.
+///
+/// Raised once, when the count first reaches [`LOW_MOVES`], and again only if
+/// the count climbs back above the line and falls to it a second time. Under
+/// Archipelago that will happen for real: moves are an item, and a level can
+/// be handed more of them part way through.
+pub const EV_LOW_MOVES: u8 = 13;
+
+/// Where "running short" begins. A level that starts at or under this says so
+/// before the player has touched anything, because with three moves to spend
+/// the fact is part of the puzzle rather than a warning about it.
+pub const LOW_MOVES: u32 = 5;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -231,6 +243,9 @@ pub struct Game {
     cascade: u32,
     swap: Option<(Pos, Pos)>,
     selected: Option<Pos>,
+    /// Whether the short-on-moves warning has already gone out for this stretch
+    /// of the level; see [`EV_LOW_MOVES`].
+    warned_low_moves: bool,
     events: Vec<Event>,
     cells_buf: Vec<u8>,
     offs_buf: Vec<f32>,
@@ -256,6 +271,7 @@ impl Game {
             cascade: 0,
             swap: None,
             selected: None,
+            warned_low_moves: false,
             events: Vec::new(),
             cells_buf: Vec::new(),
             offs_buf: Vec::new(),
@@ -287,6 +303,7 @@ impl Game {
         self.cascade = 0;
         self.swap = None;
         self.selected = None;
+        self.warned_low_moves = false;
         self.events.clear();
         self.deal();
         self.origin = self.board.positions().map(|p| p.r as f32).collect();
@@ -382,6 +399,9 @@ impl Game {
     /// covers. Events from this step are readable afterwards via [`Game::events`].
     pub fn update(&mut self, dt_ms: f32) {
         self.events.clear();
+        // Before the phase loop, because an idle board runs none of it and a
+        // level that opens on its last few moves has to say so anyway.
+        self.announce_low_moves();
         let mut remaining = if dt_ms.is_finite() { dt_ms.clamp(0.0, 250.0) } else { 0.0 };
 
         // A long frame may span several phases; the cap stops a pathological
@@ -926,6 +946,28 @@ impl Game {
 
     pub fn objectives(&self) -> &[Objective] {
         &self.spec.objectives
+    }
+
+    /// Says so, once, when the move budget gets short.
+    ///
+    /// Re-arms whenever the count climbs back over the line, so a level that is
+    /// handed more moves part way through can warn again when it runs down a
+    /// second time. A level with no move limit at all never warns, and neither
+    /// does the last move running out, which ends the level and says that
+    /// instead.
+    fn announce_low_moves(&mut self) {
+        if self.spec.moves == 0 || self.status != Status::Playing {
+            return;
+        }
+        if self.moves_left > LOW_MOVES {
+            self.warned_low_moves = false;
+            return;
+        }
+        if self.warned_low_moves || self.moves_left == 0 {
+            return;
+        }
+        self.warned_low_moves = true;
+        self.events.push(Event::plain(EV_LOW_MOVES, self.moves_left.min(65_535) as u16));
     }
 
     fn spend_move(&mut self) {
@@ -2294,6 +2336,67 @@ mod tests {
         game.try_swap(Pos::new(2, 0), Pos::new(2, 1));
         let _ = settle(&mut game);
         assert!(game.progress.jelly_left < 16, "the cleared cells should have lost a layer");
+    }
+
+    #[test]
+    fn a_level_that_opens_short_of_moves_says_so_straight_away() {
+        // Three moves is the puzzle, not a warning about it, and the player
+        // should know before spending the first one. Archipelago makes this the
+        // ordinary case: moves are an item, so an early level is a handful.
+        let mut game = Game::new(spec(6, 6, 6, 3), 90);
+        game.update(16.0);
+        let warnings: Vec<&Event> =
+            game.events().iter().filter(|e| e.kind == EV_LOW_MOVES).collect();
+        assert_eq!(warnings.len(), 1, "it should say so on the first frame");
+        assert_eq!(warnings[0].value, 3, "and say how many there actually are");
+
+        // Once, though, not on every frame from here on.
+        for _ in 0..20 {
+            game.update(16.0);
+            assert!(game.events().iter().all(|e| e.kind != EV_LOW_MOVES), "it repeated itself");
+        }
+    }
+
+    #[test]
+    fn a_comfortable_level_warns_only_once_it_runs_down() {
+        let mut game = Game::new(spec(6, 6, 6, 20), 91);
+        for _ in 0..10 {
+            game.update(16.0);
+            assert!(game.events().iter().all(|e| e.kind != EV_LOW_MOVES), "warned far too early");
+        }
+
+        // Straight to the edge of the budget rather than playing twenty moves
+        // out: what is under test is the threshold, not the route to it.
+        game.moves_left = LOW_MOVES + 1;
+        game.update(16.0);
+        assert!(game.events().iter().all(|e| e.kind != EV_LOW_MOVES), "one above the line is fine");
+
+        game.moves_left = LOW_MOVES;
+        game.update(16.0);
+        let warnings: Vec<&Event> =
+            game.events().iter().filter(|e| e.kind == EV_LOW_MOVES).collect();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].value, LOW_MOVES as u16);
+    }
+
+    #[test]
+    fn being_handed_more_moves_re_arms_the_warning() {
+        // Which is what receiving a moves item mid-level will look like.
+        let mut game = Game::new(spec(6, 6, 6, 20), 92);
+        game.moves_left = 2;
+        game.update(16.0);
+        assert!(game.events().iter().any(|e| e.kind == EV_LOW_MOVES));
+
+        game.moves_left = 12;
+        game.update(16.0);
+        assert!(game.events().iter().all(|e| e.kind != EV_LOW_MOVES), "nothing to warn about yet");
+
+        game.moves_left = 4;
+        game.update(16.0);
+        let warnings: Vec<&Event> =
+            game.events().iter().filter(|e| e.kind == EV_LOW_MOVES).collect();
+        assert_eq!(warnings.len(), 1, "running short a second time is worth saying again");
+        assert_eq!(warnings[0].value, 4);
     }
 
     #[test]

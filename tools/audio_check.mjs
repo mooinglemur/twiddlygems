@@ -87,7 +87,7 @@ const { result } = await send('Runtime.evaluate', {
   expression: `
   (async () => {
     const { Audio } = await import('./js/audio.js');
-    const { SOUNDS } = await import('./js/sounds.js');
+    const { SOUNDS, RIFFLE } = await import('./js/sounds.js');
     const RATE = 48000;
 
     // Renders \`count\` copies of a sound fired at once, through the real chain.
@@ -298,6 +298,21 @@ const { result } = await send('Runtime.evaluate', {
     const thudFull = await render('thud', 1, 0.6, false, {}, thudBank);
     const thudThin = await render('thud', 1, 0.6, true, {}, thudBank);
 
+    // A control for the shuffle's rattle: its own strikes, taken from the
+    // shipped sound, rendered as they ship and again all piled onto the same
+    // instant. Only the spreading differs, so the difference is the riffle.
+    // The jitter comes off both so the two are comparable.
+    const rattle = (spread) => ({
+      rattle: {
+        gain: SOUNDS.shuffle.gain,
+        layers: SOUNDS.shuffle.layers
+          .filter((layer) => RIFFLE.some(([delay]) => layer.delay === delay))
+          .map(({ jitter, ...layer }) => ({ ...layer, delay: spread ? layer.delay : 0 })),
+      },
+    });
+    const rattleSpread = await render('rattle', 1, 1, false, {}, rattle(true));
+    const rattleStacked = await render('rattle', 1, 1, false, {}, rattle(false));
+
     // A control for the wobble measurement: the same falling glide with and
     // without the waver, so the number means something.
     const glide = (waver) => ({
@@ -345,6 +360,10 @@ const { result } = await send('Runtime.evaluate', {
       rocketShort: await render('rocket', 1, 2, false, { duration: 0.4 }),
       rocketLong: await render('rocket', 1, 2.5, false, { duration: 1.4 }),
       clack: await render('clack', 1, 0.6),
+      shuffle: await render('shuffle', 1, 1.2),
+      ding: await render('ding', 1, 1.6),
+      rattleSpread,
+      rattleStacked,
       thud: await render('thud', 1, 0.6),
       // Ordinary play: a row of three clears and those three columns settle.
       thudThree: await render('thud', 3, 0.6),
@@ -408,6 +427,10 @@ for (const [label, key] of [
   ['rocket .4s', 'rocketShort'],
   ['rocket 1.4s', 'rocketLong'],
   ['clack', 'clack'],
+  ['shuffle', 'shuffle'],
+  ['ding', 'ding'],
+  ['rattle out', 'rattleSpread'],
+  ['rattle piled', 'rattleStacked'],
   ['thud', 'thud'],
   ['thud x3', 'thudThree'],
   ['thud x9', 'thudBoard'],
@@ -581,6 +604,54 @@ if (stats.clack.hits !== 2) {
   stop();
   process.exit(1);
 }
+// The low-moves bell is two notes, high then low. The strike counter is a fair
+// ruler here, where it is not for the shuffle below: these two are far enough
+// apart and even enough in level that it reads 2 every time.
+if (stats.ding.hits !== 2) {
+  console.error(
+    `\nFAIL: the low-moves bell has ${stats.ding.hits} note(s), not two.\n` +
+      `  envelope (3ms per step, relative): ${stats.ding.envelope.join(' ')}`,
+  );
+  stop();
+  process.exit(1);
+}
+if (stats.ding.early <= stats.ding.late) {
+  console.error(
+    `\nFAIL: the low-moves bell runs low to high (${stats.ding.early} then ` +
+      `${stats.ding.late}); a doorbell falls.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// A riffle is many small strikes spread through time, not one wash of noise.
+//
+// Not counted with the strike counter that checks the clack's two knocks: the
+// strikes here overlap and are jittered per play, so that counter reads
+// anywhere from 5 to 10 for the real thing and 5 for a version with every
+// strike stacked on one instant. It cannot tell them apart, so it is not asked
+// to. Instead the same strikes are rendered twice, as they ship and all piled
+// onto the same moment, and what separates a riffle from a thump is exactly
+// the difference between those two.
+if (stats.rattleSpread.ms < stats.rattleStacked.ms * 4) {
+  console.error(
+    `\nFAIL: spreading the shuffle's strikes out barely lengthens it ` +
+      `(${stats.rattleSpread.ms}ms against ${stats.rattleStacked.ms}ms stacked). ` +
+      `The rattle is landing as one thump.`,
+  );
+  stop();
+  process.exit(1);
+}
+// And it darkens as it settles, like the rattle running out of energy.
+if (stats.shuffle.early <= stats.shuffle.late) {
+  console.error(
+    `\nFAIL: the shuffle ends brighter than it starts (${stats.shuffle.early} then ` +
+      `${stats.shuffle.late}); it should darken as the board settles.`,
+  );
+  stop();
+  process.exit(1);
+}
+
 if (stats.clack.early <= stats.clack.late) {
   console.error(
     `\nFAIL: the rejected-swap sound runs low to high (${stats.clack.early} then ` +
