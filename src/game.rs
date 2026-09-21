@@ -172,9 +172,35 @@ struct Launch {
 struct Resolution {
     seeds: Vec<Pos>,
     creations: Vec<(Pos, Gem)>,
+    /// Specials the swap has already cashed in; see [`Activation::spent`].
+    spent: Vec<Pos>,
     /// Scatters the starting cells in time. A rainbow wants this; an ordinary
     /// match does not.
     jitter_ms: f32,
+}
+
+/// What swapping two specials together sets off.
+struct Activation {
+    seeds: Vec<Pos>,
+    /// Rainbows this swap has already spent.
+    ///
+    /// A rainbow swapped deliberately has its power accounted for by the swap
+    /// itself, and firing it again when the wave reaches it would take a
+    /// second color as well. It stays a rainbow on the board, though, because
+    /// it is about to pop in front of the player and popping as the gem it
+    /// used to be is not what they did.
+    spent: Vec<Pos>,
+    jitter_ms: f32,
+}
+
+impl Activation {
+    fn none() -> Self {
+        Activation { seeds: Vec::new(), spent: Vec::new(), jitter_ms: 0.0 }
+    }
+
+    fn of(seeds: Vec<Pos>) -> Self {
+        Activation { seeds, spent: Vec::new(), jitter_ms: 0.0 }
+    }
 }
 
 #[derive(Clone)]
@@ -669,16 +695,18 @@ impl Game {
             seeds.extend_from_slice(&group.cells);
         }
 
+        let mut spent: Vec<Pos> = Vec::new();
         if let Some((a, b)) = swap {
-            let (extra, jitter) = self.swap_activation(a, b);
-            seeds.extend(extra);
-            jitter_ms = jitter_ms.max(jitter);
+            let activation = self.swap_activation(a, b);
+            seeds.extend(activation.seeds);
+            spent.extend(activation.spent);
+            jitter_ms = jitter_ms.max(activation.jitter_ms);
         }
 
         if seeds.is_empty() {
             None
         } else {
-            Some(Resolution { seeds, creations, jitter_ms })
+            Some(Resolution { seeds, creations, spent, jitter_ms })
         }
     }
 
@@ -729,32 +757,37 @@ impl Game {
     /// the *same* orientation would clear the same line twice, so the gem the
     /// player actually moved turns the other way and clears across its own
     /// grain instead.
-    fn swap_activation(&mut self, a: Pos, b: Pos) -> (Vec<Pos>, f32) {
+    fn swap_activation(&mut self, a: Pos, b: Pos) -> Activation {
         let (ga, gb) = match (self.board.gem(a), self.board.gem(b)) {
             (Some(ga), Some(gb)) => (ga, gb),
-            _ => return (Vec::new(), 0.0),
+            _ => return Activation::none(),
         };
 
         let (rainbow, partner) = match (ga.special, gb.special) {
             (Special::Rainbow, Special::Rainbow) => {
-                // Spend both, so neither fires a second time on its own color.
-                self.spend_rainbow(a);
-                self.spend_rainbow(b);
-                return (self.board.occupied(), matching::RAINBOW_SPREAD_MS);
+                // Both are spent, so neither fires again on its own color.
+                return Activation {
+                    seeds: self.board.occupied(),
+                    spent: vec![a, b],
+                    jitter_ms: matching::RAINBOW_SPREAD_MS,
+                };
             }
             (Special::Rainbow, _) => (a, gb),
             (_, Special::Rainbow) => (b, ga),
             (resting, moved) if resting.is_special() && moved.is_special() => {
-                return (self.pair_activation(a, b, resting, gb), 0.0);
+                return Activation::of(self.pair_activation(a, b, resting, gb));
             }
-            _ => return (Vec::new(), 0.0),
+            _ => return Activation::none(),
         };
 
+        // The rainbow itself is not one of the color's gems, whatever color it
+        // is carrying underneath: it is the thing doing the taking, and it is
+        // seeded separately below.
         let color = partner.color;
         let targets: Vec<Pos> = self
             .board
             .positions()
-            .filter(|p| self.board.color(*p) == Some(color))
+            .filter(|p| *p != rainbow && self.board.color(*p) == Some(color))
             .collect();
 
         // A rainbow swapped against a clearing gem hands that gem's power to
@@ -767,15 +800,13 @@ impl Game {
             }
         }
 
-        // The rainbow is spent on the color the player chose. Left as it is, it
+        // The rainbow is spent on the color the player chose. Left unmarked, it
         // would be swept up as an unfired special and go off a second time
         // against whatever color happened to be commonest.
-        self.spend_rainbow(rainbow);
-
         let mut seeds = vec![rainbow];
         seeds.extend(targets);
         seeds.retain(|p| self.board.gem(*p).is_some());
-        (seeds, matching::RAINBOW_SPREAD_MS)
+        Activation { seeds, spent: vec![rainbow], jitter_ms: matching::RAINBOW_SPREAD_MS }
     }
 
     /// Two ordinary specials, set off against each other.
@@ -795,15 +826,6 @@ impl Game {
         vec![a, b]
     }
 
-    /// Turns a rainbow back into an ordinary gem, its power already accounted
-    /// for by the caller.
-    fn spend_rainbow(&mut self, p: Pos) {
-        if let Some(gem) = self.board.gem(p) {
-            if gem.special == Special::Rainbow {
-                self.board.set_gem(p, Some(Gem { special: Special::None, ..gem }));
-            }
-        }
-    }
 
     /// Fires the clear: scores it, tallies it against the objectives, and puts
     /// the board into its popping animation.
@@ -811,6 +833,7 @@ impl Game {
         let blast = matching::detonate(
             &self.board,
             &resolution.seeds,
+            &resolution.spent,
             &mut self.rng,
             resolution.jitter_ms,
         );
@@ -1558,6 +1581,39 @@ mod tests {
     }
 
     #[test]
+    fn a_spent_rainbow_still_pops_as_a_rainbow() {
+        // Spending it used to mean turning it back into the gem underneath,
+        // which is correct for the rules and wrong for the eye: it is about to
+        // go off in front of the player, and for the length of the animation
+        // they would watch a plain gem that was never there.
+        let mut game = Game::new(spec(6, 6, 6, 10), 83);
+        paint(&mut game, &latin_board());
+        game.board.set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+
+        assert!(game.try_swap(Pos::new(0, 0), Pos::new(0, 1)));
+        // The swap carries it across, and it clears from there.
+        let slot = (0 * game.board.cols + 1) as usize;
+
+        let mut frames = 0;
+        for _ in 0..400 {
+            game.update(16.0);
+            if !matches!(game.phase(), Phase::Clearing { .. }) {
+                if frames > 0 {
+                    break;
+                }
+                continue;
+            }
+            frames += 1;
+            assert_eq!(
+                game.cells_bytes()[slot * 4 + 1],
+                Special::Rainbow.code(),
+                "at frame {frames} it was showing as a plain gem while it popped"
+            );
+        }
+        assert!(frames > 3, "the clear should have lasted several frames");
+    }
+
+    #[test]
     fn a_rainbow_sets_off_clearing_gems_it_sweeps_up() {
         let mut game = Game::new(spec(6, 6, 6, 10), 82);
         paint(&mut game, &latin_board());
@@ -1619,7 +1675,7 @@ mod tests {
         game.board.set_gem(Pos::new(3, 7), Some(Gem { color: 1, special: Special::LineV }));
         game.board.set_gem(Pos::new(7, 7), Some(Gem { color: 2, special: Special::LineH }));
 
-        let blast = matching::detonate(&game.board, &[Pos::new(3, 0)], &mut game.rng, 0.0);
+        let blast = matching::detonate(&game.board, &[Pos::new(3, 0)], &[], &mut game.rng, 0.0);
         let step = matching::SPREAD_STEP_MS;
 
         let delay_at = |p: Pos| {

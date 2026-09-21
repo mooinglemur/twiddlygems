@@ -480,7 +480,15 @@ fn spread_delay(origin: Pos, cell: Pos, special: Special) -> f32 {
 /// `seed_jitter_ms` scatters the starting cells in time rather than popping
 /// them together, which is what a rainbow wants; an ordinary match passes 0 so
 /// its three gems go as one.
-pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng, seed_jitter_ms: f32) -> Detonation {
+/// Cells in `spent` still pop, and still pop as whatever they are, but do not
+/// fire: they are specials whose power the caller has already accounted for.
+pub fn detonate(
+    board: &Board,
+    seeds: &[Pos],
+    spent: &[Pos],
+    rng: &mut Rng,
+    seed_jitter_ms: f32,
+) -> Detonation {
     let mut wave = Wave::new(board);
     let mut fired: Vec<(Pos, Special)> = Vec::new();
 
@@ -505,6 +513,9 @@ pub fn detonate(board: &Board, seeds: &[Pos], rng: &mut Rng, seed_jitter_ms: f32
             None => continue,
         };
         if !special.is_special() || special == Special::Rocket {
+            continue;
+        }
+        if spent.contains(&p) {
             continue;
         }
         fired.push((p, special));
@@ -764,7 +775,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 1)], &[], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 4);
         assert!(result.cleared.iter().all(|p| p.r == 1));
         assert_eq!(result.fired.len(), 1);
@@ -775,7 +786,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 0)], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 0)], &[], &mut rng, 0.0);
 
         for (cell, delay) in result.cleared.iter().zip(result.delays.iter()) {
             let expected = (cell.c - 1 + 1) as f32 * SPREAD_STEP_MS;
@@ -794,7 +805,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::Cross }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 1)], &[], &mut rng, 0.0);
         // Four across plus four down, sharing the middle.
         assert_eq!(result.cleared.len(), 7);
     }
@@ -805,7 +816,7 @@ mod tests {
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         board.set_gem(Pos::new(1, 3), Some(Gem { color: 8, special: Special::LineV }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 1)], &[], &mut rng, 0.0);
         assert_eq!(result.fired.len(), 2);
         assert!(result.cleared.contains(&Pos::new(0, 3)));
         assert!(result.cleared.contains(&Pos::new(3, 3)));
@@ -817,7 +828,7 @@ mod tests {
         board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
         board.set_gem(Pos::new(1, 2), Some(Gem { color: 7, special: Special::Rocket }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 0)], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 0)], &[], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 4, "the row goes, and no further");
         assert_eq!(result.fired.len(), 1, "only the line gem fired");
     }
@@ -827,7 +838,7 @@ mod tests {
         let mut board = board_of(&["1111", "1111", "1123", "4567"]);
         board.set_gem(Pos::new(3, 0), Some(Gem { color: 4, special: Special::Rainbow }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(3, 0)], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(3, 0)], &[], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 11);
     }
 }
