@@ -94,7 +94,13 @@ compare(
     "cell flags",
     rust_flags,
     js_object(engine_source, "Flag"),
-    [("WALL", "WALL"), ("CLEARING", "CLEARING"), ("SELECTED", "SELECTED")],
+    [
+        ("WALL", "WALL"),
+        ("CLEARING", "CLEARING"),
+        ("SELECTED", "SELECTED"),
+        ("BRICK", "BRICK"),
+        ("CRACKED", "CRACKED"),
+    ],
 )
 
 rust_events = {
@@ -118,6 +124,7 @@ compare(
         ("MATCH", "MATCH"),
         ("LAND", "LAND"),
         ("LOW_MOVES", "LOW_MOVES"),
+        ("BRICK", "BRICK"),
     ],
 )
 

@@ -150,6 +150,13 @@ async function boot() {
           delay: event.value / 1000,
           pan: ((event.c / spread) * 2 - 1) * 0.5,
         });
+      } else if (event.kind === EventKind.BRICK) {
+        // Louder when the hit was the one that broke it than when it only
+        // cracked, which is the whole difference between the two states.
+        audio.play('crack', {
+          gain: event.value === 0 ? 1 : 0.6,
+          pan: ((event.c / spread) * 2 - 1) * 0.45,
+        });
       } else if (event.kind === EventKind.SHUFFLE) {
         // Centered: this one is the whole board, not a place on it.
         audio.play('shuffle');

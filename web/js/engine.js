@@ -29,7 +29,7 @@ export const Special = {
   ROCKET: 5,
 };
 
-export const Flag = { WALL: 1, CLEARING: 2, SELECTED: 4 };
+export const Flag = { WALL: 1, CLEARING: 2, SELECTED: 4, BRICK: 8, CRACKED: 16 };
 
 export const EventKind = {
   CLEAR: 1,
@@ -45,6 +45,7 @@ export const EventKind = {
   MATCH: 11,
   LAND: 12,
   LOW_MOVES: 13,
+  BRICK: 14,
 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2 };

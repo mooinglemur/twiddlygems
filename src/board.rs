@@ -81,10 +81,17 @@ pub struct Cell {
     pub gem: Option<Gem>,
     /// Layers of jelly under the gem; clearing a gem here peels one layer.
     pub jelly: u8,
+    /// How much brick is in the way: 0 none, 1 cracked, 2 whole.
+    ///
+    /// A brick is not a gem and not a wall. It holds a cell the way a wall
+    /// does, so nothing swaps with it and nothing falls through it, but it can
+    /// be broken: twice over, whole to cracked to gone. It has no color, takes
+    /// no part in matching, and is never swapped or moved.
+    pub brick: u8,
 }
 
 impl Cell {
-    const OPEN: Cell = Cell { terrain: Terrain::Open, gem: None, jelly: 0 };
+    const OPEN: Cell = Cell { terrain: Terrain::Open, gem: None, jelly: 0, brick: 0 };
 }
 
 #[derive(Clone, Debug)]
@@ -100,7 +107,11 @@ impl Board {
     }
 
     /// Builds a board from an ASCII sketch, one string per row:
-    /// `.` open, `#` wall, `o` one layer of jelly, `O` two layers.
+    /// `.` open, `#` wall, `o` one layer of jelly, `O` two layers,
+    /// `b` a cracked brick, `B` a whole one.
+    ///
+    /// Lower case is the lesser of the pair in both cases, the way `o` is one
+    /// layer of jelly where `O` is two.
     ///
     /// Rows shorter than `cols` are padded with open cells, so ragged art
     /// still yields a rectangle.
@@ -116,6 +127,8 @@ impl Board {
                     '#' => cell.terrain = Terrain::Wall,
                     'o' => cell.jelly = 1,
                     'O' => cell.jelly = 2,
+                    'b' => cell.brick = 1,
+                    'B' => cell.brick = 2,
                     _ => {}
                 }
             }
@@ -214,80 +227,199 @@ impl Board {
         (0..self.rows * self.cols).map(move |i| Pos::new(i / cols, i % cols))
     }
 
+    /// True when a gem could come to rest here: on the board, not a wall, and
+    /// nothing in the way.
+    ///
+    /// The one question gravity, dealing and swapping all really ask. Note that
+    /// an open cell is not always fillable: a board can leave holes nothing can
+    /// reach, under a shelf of bricks.
+    pub fn is_free(&self, p: Pos) -> bool {
+        self.is_open(p) && self.gem(p).is_none() && self.brick(p) == 0
+    }
+
+    /// How much brick is in this cell: 0 none, 1 cracked, 2 whole.
+    pub fn brick(&self, p: Pos) -> u8 {
+        self.cell(p).map_or(0, |cell| cell.brick)
+    }
+
+    /// Knocks one hit off the brick here, reporting what is left of it.
+    ///
+    /// `None` when there was no brick to hit, `Some(0)` when that hit was the
+    /// one that broke it.
+    pub fn damage_brick(&mut self, p: Pos) -> Option<u8> {
+        match self.cell_mut(p) {
+            Some(cell) if cell.brick > 0 => {
+                cell.brick -= 1;
+                Some(cell.brick)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn bricks_remaining(&self) -> u32 {
+        self.cells.iter().map(|cell| cell.brick as u32).sum()
+    }
+
     /// Settles the board after a clear: gems fall into the holes below them and
     /// fresh gems enter from above.
     ///
-    /// Returns, for every cell, the row its current gem started at: the same
-    /// row when it did not move, a negative row for a gem that just spawned.
-    /// The renderer turns that into a fall animation; the board itself is
-    /// already in its final state.
-    pub fn collapse(&mut self, rules: &Rules, rng: &mut Rng) -> Vec<f32> {
-        let mut origin: Vec<f32> = self
-            .positions()
-            .map(|p| p.r as f32)
-            .collect();
+    /// Gravity is not column by column. A gem with something under it will
+    /// spill sideways into a gap rather than sit on a ledge: down and to the
+    /// left first, then down and to the right. That is what lets a board with
+    /// obstacles in it fill back up instead of stranding columns, and it is why
+    /// this runs as repeated passes over the whole board rather than as one
+    /// walk up each column.
+    ///
+    /// Returns, for every cell, the row and column its current gem started at:
+    /// its own position when it did not move, and a negative row for a gem that
+    /// has just entered from off the top. The renderer turns that into a fall;
+    /// the board itself is already in its final state.
+    pub fn settle_stage(&mut self, rules: &Rules, rng: &mut Rng) -> Option<Vec<(f32, f32)>> {
+        let mut origin: Vec<(f32, f32)> =
+            self.positions().map(|p| (p.r as f32, p.c as f32)).collect();
+        // How many gems each refill point has already let in this stage, so
+        // they queue above the board instead of arriving stacked on each other.
+        let mut spawned = vec![0_i32; (self.rows * self.cols) as usize];
+        let mut moved = false;
 
-        for c in 0..self.cols {
-            // A column of walls is several independent tubes; each one packs
-            // down onto its own floor and refills from its own ceiling.
-            let mut r = self.rows - 1;
-            while r >= 0 {
-                if !self.is_open(Pos::new(r, c)) {
-                    r -= 1;
+        // Every move puts a gem one row further down, so this cannot cycle; the
+        // bound is only here so a mistake shows up as a wrong board rather than
+        // as a hang.
+        for _ in 0..(self.rows + self.cols) * 2 + 8 {
+            let mut resting = true;
+            // Bottom row first: a gem that moves out of the way this pass is
+            // what lets the one above it move next pass, which is the stepping
+            // that makes a fall read as a fall.
+            for r in (0..self.rows).rev() {
+                for c in 0..self.cols {
+                    let from = Pos::new(r, c);
+                    let below = Pos::new(r + 1, c);
+                    if self.gem(from).is_none() || !self.is_free(below) {
+                        continue;
+                    }
+                    self.shift(from, below, &mut origin);
+                    resting = false;
+                }
+            }
+
+            if rules.refill == RefillMode::TopSpawn {
+                for mouth in self.refill_mouths() {
+                    if !self.is_free(mouth) {
+                        continue;
+                    }
+                    let i = self.index(mouth);
+                    self.set_gem(mouth, Some(Gem::plain(rng.below(rules.colors as u32) as u8)));
+                    origin[i] = ((mouth.r - 1 - spawned[i]) as f32, mouth.c as f32);
+                    spawned[i] += 1;
+                    resting = false;
+                }
+            }
+
+            moved |= !resting;
+            if resting {
+                break;
+            }
+        }
+
+        if moved {
+            return Some(origin);
+        }
+
+        // Nothing can fall any further, so this is where whatever is perched on
+        // a shelf slides off it. One step only: what it slides onto is usually
+        // a drop, and that is the next stage rather than part of this one.
+        for r in (0..self.rows).rev() {
+            for c in 0..self.cols {
+                let from = Pos::new(r, c);
+                if self.gem(from).is_none() {
                     continue;
                 }
-                let bottom = r;
-                let mut top = r;
-                while top - 1 >= 0 && self.is_open(Pos::new(top - 1, c)) {
-                    top -= 1;
+                if let Some(to) = self.spill_for(from) {
+                    self.shift(from, to, &mut origin);
+                    moved = true;
                 }
-                self.collapse_segment(c, top, bottom, rules, rng, &mut origin);
-                r = top - 1;
             }
         }
 
-        origin
+        moved.then_some(origin)
     }
 
-    fn collapse_segment(
-        &mut self,
-        c: i32,
-        top: i32,
-        bottom: i32,
-        rules: &Rules,
-        rng: &mut Rng,
-        origin: &mut [f32],
-    ) {
-        // Walk upward, pulling each surviving gem down to the next free slot.
-        let mut write = bottom;
-        let mut read = bottom;
-        while read >= top {
-            let from = Pos::new(read, c);
-            if let Some(gem) = self.gem(from) {
-                let to = Pos::new(write, c);
-                if write != read {
-                    self.set_gem(to, Some(gem));
-                    self.set_gem(from, None);
+    /// True when another call to [`Board::settle_stage`] would do something.
+    ///
+    /// Asked before a stage commits to its timing, so that the beat separating
+    /// a landing from the clear it causes is spent once at the end rather than
+    /// between every stage of the same settle.
+    pub fn will_move(&self, rules: &Rules) -> bool {
+        if rules.refill == RefillMode::TopSpawn
+            && self.refill_mouths().iter().any(|p| self.is_free(*p))
+        {
+            return true;
+        }
+        self.positions().any(|p| {
+            self.gem(p).is_some()
+                && (self.is_free(Pos::new(p.r + 1, p.c)) || self.spill_for(p).is_some())
+        })
+    }
+
+    fn shift(&mut self, from: Pos, to: Pos, origin: &mut [(f32, f32)]) {
+        let gem = self.gem(from);
+        self.set_gem(to, gem);
+        self.set_gem(from, None);
+        let (i, j) = (self.index(from), self.index(to));
+        origin[j] = origin[i];
+        origin[i] = (from.r as f32, from.c as f32);
+    }
+
+    /// True when nothing can ever arrive in this cell from directly above it:
+    /// it is off the board, a wall, or a brick.
+    ///
+    /// What sits under an overhang, in other words. A cell that is merely empty
+    /// is not a shelf, because the column above it is still feeding it. A brick
+    /// is, until something breaks it.
+    fn is_shelf(&self, p: Pos) -> bool {
+        !self.is_open(p) || self.brick(p) > 0
+    }
+
+    /// Where the gem at `p` slides off to, if it slides at all.
+    ///
+    /// Only ever for a gem that cannot fall: down and to the left for
+    /// preference, then down and to the right.
+    ///
+    /// It only slides into a gap that nothing else is going to fill, which
+    /// means the cell directly over that gap has to be a shelf. Without that
+    /// condition a gem standing beside an ordinary hole would dive into it
+    /// sideways instead of letting the column above the hole come down, and
+    /// that would change how every board already built behaves. With it,
+    /// spilling happens only where something is in the way, which is the case
+    /// it exists for.
+    fn spill_for(&self, p: Pos) -> Option<Pos> {
+        if self.is_free(Pos::new(p.r + 1, p.c)) {
+            return None;
+        }
+        [p.c - 1, p.c + 1].into_iter().find_map(|c| {
+            let side = Pos::new(p.r + 1, c);
+            (self.is_free(side) && self.is_shelf(Pos::new(p.r, c))).then_some(side)
+        })
+    }
+
+    /// The cells fresh gems enter through: the top of each run of open cells in
+    /// a column.
+    ///
+    /// A column split by walls is several tubes, and a tube with a wall over it
+    /// cannot be fed from off the board, so each one is fed from its own
+    /// ceiling. Gems can now also spill into a tube from the side, but a tube
+    /// with no neighbor to spill from would otherwise never fill at all.
+    fn refill_mouths(&self) -> Vec<Pos> {
+        let mut mouths = Vec::new();
+        for c in 0..self.cols {
+            for r in 0..self.rows {
+                let here = Pos::new(r, c);
+                if self.is_open(here) && !self.is_open(Pos::new(r - 1, c)) {
+                    mouths.push(here);
                 }
-                origin[self.index(to)] = read as f32;
-                write -= 1;
             }
-            read -= 1;
         }
-
-        if rules.refill == RefillMode::None {
-            return;
-        }
-
-        // Everything left above the write head is new, entering from off-board.
-        let mut spawned = 0;
-        while write >= top {
-            let to = Pos::new(write, c);
-            self.set_gem(to, Some(Gem::plain(rng.below(rules.colors as u32) as u8)));
-            origin[self.index(to)] = (top - 1 - spawned) as f32;
-            write -= 1;
-            spawned += 1;
-        }
+        mouths
     }
 
     /// Every open cell currently holding a gem.
@@ -307,6 +439,98 @@ mod tests {
             board.set_gem(p, Some(Gem::plain(color)));
         }
         board
+    }
+
+    /// Settles a board the whole way, which the game does across as many
+    /// animated stages as it takes. Hands back the origins of the last stage
+    /// that actually moved something.
+    fn settle_all(board: &mut Board, rules: &Rules, rng: &mut Rng) -> Vec<(f32, f32)> {
+        let mut last: Vec<(f32, f32)> =
+            board.positions().map(|p| (p.r as f32, p.c as f32)).collect();
+        while let Some(origin) = board.settle_stage(rules, rng) {
+            last = origin;
+        }
+        last
+    }
+
+    /// Gravity the old way: every column packed down onto its own floor,
+    /// each one on its own. Wherever nothing is in the way this is the answer
+    /// spilling has to agree with, since it is how every board built so far
+    /// behaves.
+    fn packed_by_column(board: &Board) -> Vec<Option<u8>> {
+        let mut out = vec![None; (board.rows * board.cols) as usize];
+        for c in 0..board.cols {
+            let mut write = board.rows - 1;
+            for r in (0..board.rows).rev() {
+                if let Some(gem) = board.gem(Pos::new(r, c)) {
+                    out[(write * board.cols + c) as usize] = Some(gem.color);
+                    write -= 1;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_board_with_nothing_in_the_way_settles_exactly_as_columns_would() {
+        // Spilling is for boards with something to spill around. On a plain
+        // rectangle it has to change nothing at all, because a plain rectangle
+        // is what every level built so far is.
+        let rules = Rules { rows: 8, cols: 6, refill: RefillMode::None, ..Rules::default() };
+        for seed in 0..60 {
+            let mut rng = Rng::new(seed);
+            let mut board = Board::new(8, 6);
+            for p in board.positions().collect::<Vec<_>>() {
+                // Roughly a third of the board punched out, which is a far
+                // rougher shape than any real clear leaves.
+                if rng.below(3) > 0 {
+                    board.set_gem(p, Some(Gem::plain(rng.below(5) as u8)));
+                }
+            }
+            let expected = packed_by_column(&board);
+
+            let mut settled = board.clone();
+            settle_all(&mut settled, &rules, &mut Rng::new(seed));
+            let actual: Vec<Option<u8>> =
+                settled.positions().map(|p| settled.gem(p).map(|g| g.color)).collect();
+            assert_eq!(actual, expected, "seed {seed} settled differently");
+        }
+    }
+
+    #[test]
+    fn a_gem_spills_off_a_shelf_into_the_gap_beside_it() {
+        // (1,0) is resting on (2,0) and cannot go down. (2,1) is free, and a
+        // wall sits over it, so nothing is coming down that column to fill it.
+        let mut board = Board::from_layout(&["...", ".#.", "..."]);
+        board.set_gem(Pos::new(1, 0), Some(Gem::plain(1)));
+        board.set_gem(Pos::new(2, 0), Some(Gem::plain(2)));
+
+        let rules = Rules { rows: 3, cols: 3, refill: RefillMode::None, ..Rules::default() };
+        let origin = settle_all(&mut board, &rules, &mut Rng::new(1));
+
+        assert!(board.gem(Pos::new(1, 0)).is_none(), "it should not still be on the shelf");
+        assert_eq!(board.gem(Pos::new(2, 1)).map(|g| g.color), Some(1), "it spilled right");
+        assert_eq!(
+            origin[(2 * 3 + 1) as usize],
+            (1.0, 0.0),
+            "and it should be animated from where it actually came from",
+        );
+    }
+
+    #[test]
+    fn a_gem_stays_put_when_the_gap_beside_it_is_still_being_fed() {
+        // The same board with the wall taken out. Now the column above the gap
+        // can fill it, and the column has priority: diving in sideways would
+        // change how every board without an overhang behaves.
+        let mut board = Board::from_layout(&["...", "...", "..."]);
+        board.set_gem(Pos::new(1, 0), Some(Gem::plain(1)));
+        board.set_gem(Pos::new(2, 0), Some(Gem::plain(2)));
+
+        let rules = Rules { rows: 3, cols: 3, refill: RefillMode::None, ..Rules::default() };
+        settle_all(&mut board, &rules, &mut Rng::new(1));
+
+        assert_eq!(board.gem(Pos::new(1, 0)).map(|g| g.color), Some(1), "it should have stayed");
+        assert!(board.gem(Pos::new(2, 1)).is_none(), "and left the gap for the column above");
     }
 
     #[test]
@@ -329,15 +553,15 @@ mod tests {
         board.set_gem(Pos::new(2, 0), None);
 
         let mut rng = Rng::new(1);
-        let origin = board.collapse(&rules, &mut rng);
+        let origin = settle_all(&mut board, &rules, &mut rng);
 
         assert!(board.positions().all(|p| board.gem(p).is_some()), "column is full again");
         // The survivors from rows 0 and 1 are now at the bottom.
-        assert_eq!(origin[3], 1.0);
-        assert_eq!(origin[2], 0.0);
+        assert_eq!(origin[3], (1.0, 0.0));
+        assert_eq!(origin[2], (0.0, 0.0));
         // The two newcomers came from off the top of the board.
-        assert_eq!(origin[1], -1.0);
-        assert_eq!(origin[0], -2.0);
+        assert_eq!(origin[1], (-1.0, 0.0));
+        assert_eq!(origin[0], (-2.0, 0.0));
     }
 
     #[test]
@@ -353,12 +577,12 @@ mod tests {
 
         let rules = Rules { rows: 4, cols: 1, ..Rules::default() };
         let mut rng = Rng::new(2);
-        let origin = board.collapse(&rules, &mut rng);
+        let origin = settle_all(&mut board, &rules, &mut rng);
 
         assert!(board.gem(Pos::new(3, 0)).is_some(), "the lower tube refills itself");
-        assert_eq!(origin[3], 2.0, "its gem entered from just above its own ceiling");
+        assert_eq!(origin[3], (2.0, 0.0), "its gem entered from just above its own ceiling");
         assert!(board.gem(Pos::new(2, 0)).is_none(), "the wall stays empty");
-        assert_eq!(origin[0], 0.0, "the upper tube was already packed");
+        assert_eq!(origin[0], (0.0, 0.0), "the upper tube was already packed");
     }
 
     #[test]
@@ -373,7 +597,7 @@ mod tests {
         board.set_gem(Pos::new(2, 0), None);
 
         let mut rng = Rng::new(3);
-        board.collapse(&rules, &mut rng);
+        settle_all(&mut board, &rules, &mut rng);
 
         assert!(board.gem(Pos::new(0, 0)).is_none(), "nothing entered from above");
         assert!(board.gem(Pos::new(2, 0)).is_some(), "the survivors still fell");

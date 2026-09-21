@@ -144,7 +144,9 @@ for (const [name, metrics] of [
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
   await sleep(600);
   await evaluate(
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 10, level: ${LEVEL} }))`,
+    // Unlocked past the end of the ladder, so any level can be photographed
+    // without playing up to it.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL} }))`,
   );
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
   await sleep(2200);

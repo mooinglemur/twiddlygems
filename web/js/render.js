@@ -46,6 +46,14 @@ const PUFFS_PER_GEM = 4;
 const SHARDS_PER_IMPACT = 28;
 const PUFFS_PER_IMPACT = 12;
 
+/// Brick, which is masonry rather than ground or gem and is colored like
+/// neither: warm where the board is cold, so it reads as a thing put there
+/// rather than as part of the frame.
+const BRICK_FACE = '#9c5240';
+const BRICK_CRACKED_FACE = '#7c4438';
+const BRICK_MORTAR = 'rgba(32,18,14,0.55)';
+const BRICK_DEBRIS = '#b96a4f';
+
 /// How long a pop-over line of text lives, and the share of that spent fading
 /// in and fading out. It outlasts the shuffle it announces, because a message
 /// that has gone by the time the board settles is one nobody read.
@@ -79,6 +87,16 @@ export class Renderer {
         this.pendingBursts.push({ at: now + event.value, r: event.r, c: event.c, color: event.color });
       } else if (event.kind === EventKind.ROCKET_HIT) {
         this.pendingBursts.push({ at: now, r: event.r, c: event.c, color: event.color, impact: true });
+      } else if (event.kind === EventKind.BRICK) {
+        // Chips when it cracks, a proper shower when it goes.
+        this.pendingBursts.push({
+          at: now,
+          r: event.r,
+          c: event.c,
+          color: 0,
+          impact: event.value === 0,
+          tint: BRICK_DEBRIS,
+        });
       } else if (event.kind === EventKind.SHUFFLE) {
         // The board is about to rearrange itself. Without a word about it the
         // player looks away and looks back at a different board.
@@ -134,14 +152,16 @@ export class Renderer {
 
   /// One cell's worth of debris: shards of the gem, and a puff of smoke. A
   /// rocket strike throws the same thing much harder, with a blast ring.
-  burst({ r, c, color, impact = false }) {
+  burst({ r, c, color, impact = false, tint = null }) {
     if (this.particles.length > MAX_PARTICLES) {
       return;
     }
     const { cell, pad } = this;
     const x = pad + (c + 0.5) * cell;
     const y = pad + (r + 0.5) * cell;
-    const gem = PALETTE[color % PALETTE.length];
+    // A tint for debris that is not a gem and so has no palette entry of its
+    // own, which so far means brick.
+    const gem = { fill: tint ?? PALETTE[color % PALETTE.length].fill };
     const shards = impact ? SHARDS_PER_IMPACT : SHARDS_PER_GEM;
     const puffs = impact ? PUFFS_PER_IMPACT : PUFFS_PER_GEM;
     const force = impact ? 2.6 : 1;
@@ -305,11 +325,36 @@ export class Renderer {
     const { cells } = this.engine.snapshot();
     const cols = this.engine.cols;
     for (let i = 0; i < cells.length / 4; i += 1) {
-      if (cells[i * 4 + 3] & Flag.WALL) {
-        continue;
-      }
       const r = Math.floor(i / cols);
       const c = i % cols;
+
+      if (cells[i * 4 + 3] & Flag.WALL) {
+        // Ground, drawn as something solid rather than left as bare panel.
+        // A cell can now legitimately be empty, so "nothing here" is a state
+        // the player has to be able to tell from "nothing fits here", and two
+        // shades of dark will not do it. Lit along the top and shadowed at the
+        // foot, so it reads as a block with a thickness to it.
+        const edge = Math.round(cell * 0.02);
+        const x = pad + c * cell + edge;
+        const y = pad + r * cell + edge;
+        const side = cell - edge * 2;
+        ctx.save();
+        roundRect(ctx, x, y, side, side, cell * 0.14);
+        ctx.clip();
+        ctx.fillStyle = '#3c3560';
+        ctx.fillRect(x, y, side, side);
+        ctx.fillStyle = 'rgba(255,255,255,0.13)';
+        ctx.fillRect(x, y, side, side * 0.36);
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(x, y + side * 0.74, side, side * 0.26);
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(10,8,22,0.55)';
+        ctx.lineWidth = Math.max(1, cell * 0.035);
+        roundRect(ctx, x, y, side, side, cell * 0.14);
+        ctx.stroke();
+        continue;
+      }
+
       const inset = Math.round(cell * 0.04);
       ctx.fillStyle = (r + c) % 2 === 0 ? 'rgba(255,255,255,0.035)' : 'rgba(255,255,255,0.015)';
       roundRect(
@@ -394,6 +439,23 @@ export class Renderer {
       ctx.strokeStyle = 'rgba(200,245,255,0.45)';
       ctx.lineWidth = Math.max(1, cell * 0.03);
       ctx.stroke();
+    }
+
+    // Bricks stand in the board rather than on it, and they change as they are
+    // hit, so they cannot live in the backdrop with the walls.
+    for (let i = 0; i < cells.length / 4; i += 1) {
+      const flags = cells[i * 4 + 3];
+      if (!(flags & Flag.BRICK)) {
+        continue;
+      }
+      const inset = Math.round(cell * 0.03);
+      drawBrick(
+        ctx,
+        pad + (i % cols) * cell + inset,
+        pad + Math.floor(i / cols) * cell + inset,
+        cell - inset * 2,
+        (flags & Flag.CRACKED) !== 0,
+      );
     }
 
     // Rockets fly over the board, so they are held back and blitted last.
@@ -627,6 +689,62 @@ function drawSpecial(ctx, x, y, radius, special) {
   }
 
   ctx.restore();
+}
+
+/**
+ * A brick: masonry sitting in a cell, in the way of everything.
+ *
+ * Painted every frame rather than baked into the backdrop with the walls,
+ * because unlike a wall it changes: it cracks, and then it goes. Two courses
+ * of blocks with the joints staggered, lit from above like the walls so the
+ * whole board agrees where the light comes from.
+ */
+function drawBrick(ctx, x, y, size, cracked) {
+  const radius = size * 0.14;
+  ctx.save();
+  roundRect(ctx, x, y, size, size, radius);
+  ctx.clip();
+
+  ctx.fillStyle = cracked ? BRICK_CRACKED_FACE : BRICK_FACE;
+  ctx.fillRect(x, y, size, size);
+  ctx.fillStyle = 'rgba(255,255,255,0.11)';
+  ctx.fillRect(x, y, size, size * 0.3);
+  ctx.fillStyle = 'rgba(0,0,0,0.24)';
+  ctx.fillRect(x, y + size * 0.78, size, size * 0.22);
+
+  // The joints, staggered course to course the way a wall is actually laid.
+  ctx.strokeStyle = BRICK_MORTAR;
+  ctx.lineWidth = Math.max(1, size * 0.055);
+  ctx.beginPath();
+  ctx.moveTo(x, y + size / 2);
+  ctx.lineTo(x + size, y + size / 2);
+  ctx.moveTo(x + size / 2, y);
+  ctx.lineTo(x + size / 2, y + size / 2);
+  ctx.moveTo(x + size * 0.25, y + size / 2);
+  ctx.lineTo(x + size * 0.25, y + size);
+  ctx.moveTo(x + size * 0.75, y + size / 2);
+  ctx.lineTo(x + size * 0.75, y + size);
+  ctx.stroke();
+
+  if (cracked) {
+    // One hit left. The fracture runs right across it rather than chipping a
+    // corner, so that "this one goes next" is readable at a glance.
+    ctx.strokeStyle = 'rgba(18,9,7,0.92)';
+    ctx.lineWidth = Math.max(1, size * 0.075);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x + size * 0.16, y);
+    ctx.lineTo(x + size * 0.44, y + size * 0.34);
+    ctx.lineTo(x + size * 0.28, y + size * 0.6);
+    ctx.lineTo(x + size * 0.64, y + size);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = 'rgba(18,9,7,0.5)';
+  ctx.lineWidth = Math.max(1, size * 0.04);
+  roundRect(ctx, x, y, size, size, radius);
+  ctx.stroke();
 }
 
 /// The flame behind a rocket in flight, which cannot be cached because it only

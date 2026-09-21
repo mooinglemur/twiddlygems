@@ -145,6 +145,21 @@ const HOURGLASS: &[&str] = &[
     "ooooooooo",
 ];
 
+// Bricks, which nothing falls through and nothing swaps with, so the gems
+// above them have to spill around the ends. The shelf is deliberately wide
+// enough that the pocket under it can only fill from the sides.
+const QUARRY: &[&str] = &[
+    ".........",
+    ".........",
+    ".........",
+    "..BBBBB..",
+    "..o...o..",
+    ".........",
+    "..bbbbb..",
+    "..o...o..",
+    ".........",
+];
+
 const PILLARS: &[&str] = &[
     "..o###o..",
     "..o###o..",
@@ -189,6 +204,10 @@ pub fn levels() -> Vec<LevelSpec> {
             .with_layout(CROSS),
         LevelSpec::new("Pillars", 32, vec![Objective::Jelly]).with_layout(PILLARS),
         LevelSpec::new("Hourglass", 40, vec![Objective::Jelly]).with_layout(HOURGLASS),
+        // The jelly is under the brick shelves, so it cannot be reached until
+        // the bricks come down, and nothing falls into those pockets until the
+        // gems above spill around the ends.
+        LevelSpec::new("Quarry", 34, vec![Objective::Jelly]).with_layout(QUARRY),
         LevelSpec::new(
             "Last Call",
             30,

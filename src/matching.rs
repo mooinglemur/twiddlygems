@@ -416,6 +416,12 @@ pub struct Detonation {
     pub delays: Vec<f32>,
     /// The specials that went off, in firing order.
     pub fired: Vec<(Pos, Special)>,
+    /// Bricks a clearing gem's beam passed through.
+    ///
+    /// A beam does not stop at a brick, it goes through it and marks it on the
+    /// way. Brick cells hold no gem, so they are not in `cleared` and would
+    /// otherwise be invisible to the caller.
+    pub struck: Vec<Pos>,
 }
 
 /// Accumulates a blast: which cells it takes, and when each one goes.
@@ -491,6 +497,7 @@ pub fn detonate(
 ) -> Detonation {
     let mut wave = Wave::new(board);
     let mut fired: Vec<(Pos, Special)> = Vec::new();
+    let mut struck: Vec<Pos> = Vec::new();
 
     for seed in seeds {
         let delay = if seed_jitter_ms > 0.0 {
@@ -522,6 +529,12 @@ pub fn detonate(
         hits.clear();
         blast(board, p, special, fallback, &mut hits);
         for hit in std::mem::take(&mut hits) {
+            // A beam goes through a brick rather than stopping at it, marking
+            // it in passing. A rainbow has no beam, only a list of cells of one
+            // color, so it never strikes a brick this way.
+            if special != Special::Rainbow && board.brick(hit) > 0 && !struck.contains(&hit) {
+                struck.push(hit);
+            }
             // A blast starts when the gem that carried it pops, and spreads
             // outward from there, except a rainbow, whose cells are scattered
             // and so go off in no particular order.
@@ -534,7 +547,7 @@ pub fn detonate(
         }
     }
 
-    Detonation { cleared: wave.cleared, delays: wave.delays, fired }
+    Detonation { cleared: wave.cleared, delays: wave.delays, fired, struck }
 }
 
 #[cfg(test)]

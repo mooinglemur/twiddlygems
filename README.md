@@ -157,6 +157,16 @@ up by a match. A swap is its way out, or another special catching it.
   they all fire at once;
 - against another rainbow, the board goes.
 
+**Bricks** are the board fighting back. A brick is not a gem and not a wall: it
+holds its cell the way a wall does, so nothing swaps with it and nothing falls
+through it, but it can be broken. It comes whole and goes cracked, then goes.
+Two things hit it: something clearing in one of the four cells around it, or a
+line or cross gem's beam passing through it, which does not stop at the brick
+but marks it on the way. It takes one hit per clear however many gems went off
+beside it, since taking one per neighbor would mean a single ordinary match
+wiped it out. Being nothing but an obstacle it has no color, matches nothing,
+and never moves.
+
 Each level gives a fixed number of moves and one or more objectives: reach a
 score, clear a number of gems of one color, or peel every layer of jelly. A
 board with no legal move left reshuffles itself rather than ending the level,
@@ -211,6 +221,32 @@ the same instant, so the engine gathers those and raises one landing per column
 per wave, carrying the moment it touches down. A row clear drops most of the
 board by a row, and that is three columns settling rather than fifteen separate
 impacts; a column emptied in two places lands twice, once for each depth.
+
+A settle is not one movement, because gravity is not only downward. Gems drop
+straight down as far as they can, which is one stage and animates as one fall.
+Only once nothing can drop any further does anything **spill**: a gem resting on
+something slides one step down and sideways into a gap beside it, left for
+preference and then right, and that is a stage of its own with its own landings
+and its own thuds. Whatever slid has usually opened a drop for something else,
+so the two alternate until the board stops moving, and nothing is matched until
+it has. A board part way through settling is not a board anybody has finished
+looking at.
+
+A gem only spills into a gap that nothing else is going to fill, which means the
+cell directly over that gap has to be a wall or a brick. The column above has
+priority. Without that condition a gem standing beside an ordinary hole would
+dive into it sideways instead of letting the column come down, which would
+change how every board built before obstacles existed behaves; a property test
+settles sixty randomly punched boards and checks they come out exactly as
+packing each column on its own would.
+
+This is also why a cell can now be empty and stay empty. A pocket under a brick
+shelf fills only from the sides, and if nothing can reach it, it stays a hole.
+Holes cannot be swapped with, which falls out of the swap rule already requiring
+a gem in both cells, and is the same reason bricks cannot. It is also why walls
+are drawn as solid blocks rather than as bare panel: "nothing here" and "nothing
+fits here" are now different states, and two shades of dark will not tell them
+apart.
 
 When the gems land on a match, the board holds still for a beat before it goes
 off. Without the pause the thump and the pop that answers it happen in the same
@@ -377,18 +413,21 @@ bodies of the boom and the landing thud are deliberately kept near 190Hz and
 172Hz respectively, and both are checked for what gets through.
 
 It fails the build on several counts. If the stacks ordinary play actually asks
-for (three pops, twenty sparkles, two booms, every column of the board landing
-at once) reach the limiter threshold, because the limiter is a safety
-net rather than part of the mix. (Twenty pops is a rainbow taking a color and
-four booms at once may well engage it; those rows are printed, not asserted.)
+for (three pops, twenty sparkles, two booms, three columns landing) reach the
+limiter threshold, because the limiter is a safety
+net rather than part of the mix. (Twenty pops is a rainbow taking a color, four
+booms at once is already unusual, and every column of the board landing on the
+same instant wants a full-width clear; those rows are printed, not asserted.)
 If a sound is no darker at its end than at its start, because that
 means its filter sweep has stopped working and it has quietly become a click
 again. If the boom drifts far from the half second it is meant to run,
 or sinks so low that a phone cannot reproduce it. If the thud is not clearly
 lower than a pop, since it fires while the pops that caused it are still
 ringing and has to sit underneath them rather than beside them. If the low-moves
-bell stops being two notes, or stops falling. And if the waver
-stops wavering, or a rocket's whistle stops tracking its flight time.
+bell stops being a figure and becomes a single beep, though how many notes it
+has and whether they rise or fall is left alone, because that is set by ear. And
+if the waver stops wavering, or a rocket's whistle stops tracking its flight
+time.
 
 The shuffle's riffle gets a control rather than a count. Its strikes overlap
 and are jittered per play, so the strike counter that checks the bell's two

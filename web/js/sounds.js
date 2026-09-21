@@ -285,6 +285,48 @@ export const SOUNDS = {
     ],
   },
 
+  /// A brick taking a hit: a dry stony crack with grit falling after it.
+  ///
+  /// Nothing else on the board is made of stone, so this leans on the one thing
+  /// gems never do: a hard, toneless snap with no pitch to hang on to, and a
+  /// short rattle of debris behind it. Played harder when the brick actually
+  /// breaks, which the caller does with `gain`.
+  crack: {
+    gain: 0.4,
+    voiceCap: 4,
+    layers: [
+      {
+        // The snap. Band-limited noise rather than a tone: stone has no note.
+        source: 'noise',
+        filters: [
+          { type: 'highpass', frequency: 700, q: 0.7 },
+          { type: 'bandpass', frequency: 1900, q: 1.6, sweep: { to: 900, time: 0.05 } },
+        ],
+        env: { attack: 0.0008, decay: 0.07 },
+        gain: 1,
+        jitter: { frequency: 0.2, gain: 0.2 },
+      },
+      {
+        // The weight behind it, so it lands as masonry and not as a twig.
+        source: 'triangle',
+        note: 210,
+        sweep: { to: 120, time: 0.05 },
+        env: { attack: 0.002, decay: 0.1 },
+        gain: 0.5,
+        jitter: { frequency: 0.12, gain: 0.2 },
+      },
+      {
+        // Grit, arriving just behind the break rather than with it.
+        source: 'noise',
+        filters: [{ type: 'bandpass', frequency: 3200, q: 1.1, sweep: { to: 1500, time: 0.18 } }],
+        env: { attack: 0.004, decay: 0.2 },
+        delay: 0.035,
+        gain: 0.3,
+        jitter: { frequency: 0.18, gain: 0.25 },
+      },
+    ],
+  },
+
   /// The shimmer left behind by a gem, ringing on long after the pop.
   ///
   /// The note underneath never changes: a sawtooth held at a low F, which has

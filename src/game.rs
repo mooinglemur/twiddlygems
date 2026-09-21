@@ -101,6 +101,13 @@ pub const EV_LOW_MOVES: u8 = 13;
 /// the fact is part of the puzzle rather than a warning about it.
 pub const LOW_MOVES: u32 = 5;
 
+/// A brick taking a hit, carrying what is left of it: 1 cracked, 0 broken.
+///
+/// A brick takes at most one hit per clear, however many gems went off beside
+/// it. Taking one per neighbor would mean a single ordinary match wiped a whole
+/// brick out, which is not much of an obstacle.
+pub const EV_BRICK: u8 = 14;
+
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
 #[derive(Clone, Copy, Debug)]
@@ -249,8 +256,9 @@ pub struct Game {
     pending: Vec<(Pos, Gem)>,
     /// Rockets in flight. Each keeps its own flight time and lands on it.
     launches: Vec<Launch>,
-    /// Per-cell row a gem started falling from; see [`Board::collapse`].
-    origin: Vec<f32>,
+    /// Per-cell row and column a gem started falling from, which is not always
+    /// its own column: see [`Board::collapse`].
+    origin: Vec<(f32, f32)>,
     cascade: u32,
     swap: Option<(Pos, Pos)>,
     selected: Option<Pos>,
@@ -317,7 +325,7 @@ impl Game {
         self.warned_low_moves = false;
         self.events.clear();
         self.deal();
-        self.origin = self.board.positions().map(|p| p.r as f32).collect();
+        self.origin = self.settled_origin();
         self.refresh_snapshot();
     }
 
@@ -511,8 +519,10 @@ impl Game {
 
         // A rocket falls like anything else and takes no part in the matches
         // going on around it. It flies once the cascade has run itself out.
-        self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
-        self.begin_fall();
+        if !self.begin_settle_stage() {
+            self.origin = self.settled_origin();
+            self.begin_fall();
+        }
     }
 
     /// Sends every rocket on the board at a target. Nothing falls while they
@@ -603,8 +613,10 @@ impl Game {
     fn finish_launch(&mut self) {
         self.land_arrivals(f32::INFINITY);
         self.launches.clear();
-        self.origin = self.board.collapse(&self.spec.rules, &mut self.rng);
-        self.begin_fall();
+        if !self.begin_settle_stage() {
+            self.origin = self.settled_origin();
+            self.begin_fall();
+        }
     }
 
     /// Starts a fall, lasting as long as the gem with furthest to travel needs,
@@ -620,8 +632,8 @@ impl Game {
 
         for p in self.board.positions() {
             let i = (p.r * self.board.cols + p.c) as usize;
-            let from = self.origin.get(i).copied().unwrap_or(p.r as f32);
-            let drop = p.r as f32 - from;
+            let from = self.origin.get(i).copied().unwrap_or((p.r as f32, p.c as f32));
+            let drop = p.r as f32 - from.0;
             if drop <= 0.0 {
                 continue;
             }
@@ -643,15 +655,62 @@ impl Game {
             self.events.push(event);
         }
 
-        // The board has already collapsed, so whether anything is about to go
-        // off is knowable now: the same matches this fall will resolve into are
-        // sitting there. Worth asking, because the beat is only wanted when
-        // there is a clear on the other side of it.
-        let waiting = !matching::find_matches(&self.board, &self.spec.rules).is_empty();
+        // The beat belongs at the end of the whole settle, not between its
+        // stages: a gem that is about to slide off a shelf has not landed on
+        // anything yet. So it is spent only on a stage with nothing following
+        // it, and then only when a clear is waiting on the other side.
+        let last = !self.board.will_move(&self.spec.rules);
+        let waiting =
+            last && !matching::find_matches(&self.board, &self.spec.rules).is_empty();
         let hold = if waiting { FALL_HOLD_MS } else { 0.0 };
 
         self.fall_ms = fall_time(furthest).max(1.0) + hold;
         self.phase = Phase::Falling { elapsed: 0.0 };
+    }
+
+    /// Knocks a hit off every brick this clear reached.
+    ///
+    /// A brick is reached two ways: a beam went through it, or something
+    /// cleared in one of the four cells around it. Either way it takes exactly
+    /// one hit per clear, so the same brick beside three gems of one match is
+    /// cracked rather than demolished.
+    fn strike_bricks(&mut self, blast: &matching::Detonation, cascade: u32) {
+        let mut hit = blast.struck.clone();
+        for p in &blast.cleared {
+            for side in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let neighbor = Pos::new(p.r + side.0, p.c + side.1);
+                if self.board.brick(neighbor) > 0 && !hit.contains(&neighbor) {
+                    hit.push(neighbor);
+                }
+            }
+        }
+
+        for p in hit {
+            if let Some(left) = self.board.damage_brick(p) {
+                let mut event = Event::at(EV_BRICK, p, 255, Special::None, cascade);
+                event.value = left as u16;
+                self.events.push(event);
+            }
+        }
+    }
+
+    /// Runs the next stage of a settle and puts the board into the fall that
+    /// animates it, reporting whether there was a stage to run.
+    fn begin_settle_stage(&mut self) -> bool {
+        match self.board.settle_stage(&self.spec.rules, &mut self.rng) {
+            Some(origin) => {
+                self.origin = origin;
+                self.begin_fall();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Origins for a board that is already where it belongs: every gem starts
+    /// from its own cell, so nothing animates.
+    fn settled_origin(&self) -> Vec<(f32, f32)> {
+        self.board.positions().map(|p| (p.r as f32, p.c as f32)).collect()
     }
 
     fn rockets_on_board(&self) -> Vec<Pos> {
@@ -687,6 +746,14 @@ impl Game {
     }
 
     fn finish_fall(&mut self) {
+        // A settle can take several stages: gems drop, then whatever is left
+        // perched slides off, then what slid drops again. Nothing is matched
+        // until all of that is over, because a board part way through settling
+        // is not a board anybody has finished looking at.
+        if self.begin_settle_stage() {
+            return;
+        }
+
         // Counted per match resolved, not per fall. A fall that turns up
         // nothing is not a step of the chain: rockets fire from exactly that
         // fall, so counting it would spend a step on the rocket and land the
@@ -707,7 +774,7 @@ impl Game {
 
     fn finish_shuffle(&mut self) {
         self.shuffle_board();
-        self.origin = self.board.positions().map(|p| p.r as f32).collect();
+        self.origin = self.settled_origin();
         self.settle();
     }
 
@@ -771,7 +838,7 @@ impl Game {
                     let fell = self
                         .origin
                         .get(i)
-                        .map_or(0.0, |from| cell.r as f32 - from);
+                        .map_or(0.0, |from| cell.r as f32 - from.0);
                     ((fell * 64.0) as i32, cell.r, cell.c)
                 })
                 .unwrap_or(group.pivot);
@@ -904,6 +971,7 @@ impl Game {
             self.events.push(event);
         }
         self.progress.jelly_left = self.board.jelly_remaining();
+        self.strike_bricks(&blast, cascade);
 
         for (p, special) in &blast.fired {
             self.events.push(Event::at(EV_SPECIAL_FIRED, *p, 255, *special, cascade));
@@ -1001,7 +1069,10 @@ impl Game {
     fn deal(&mut self) {
         let colors = self.spec.rules.colors.max(1) as u32;
         for _ in 0..64 {
-            let cells: Vec<Pos> = self.board.positions().filter(|p| self.board.is_open(*p)).collect();
+            // Brick cells are open ground with something already standing on
+            // it, so they are dealt around rather than into.
+            let cells: Vec<Pos> =
+                self.board.positions().filter(|p| self.board.brick(*p) == 0 && self.board.is_open(*p)).collect();
             for p in cells {
                 let mut color = 0;
                 // A handful of tries is enough to dodge a starting match; if
@@ -1081,6 +1152,10 @@ impl Game {
     pub const FLAG_WALL: u8 = 1;
     pub const FLAG_CLEARING: u8 = 2;
     pub const FLAG_SELECTED: u8 = 4;
+    /// A brick stands here. With [`Game::FLAG_CRACKED`] as well, it is the
+    /// cracked one, which the next hit breaks.
+    pub const FLAG_BRICK: u8 = 8;
+    pub const FLAG_CRACKED: u8 = 16;
 
     fn refresh_snapshot(&mut self) {
         let count = (self.board.rows * self.board.cols) as usize;
@@ -1102,6 +1177,12 @@ impl Game {
             }
             if self.selected == Some(p) {
                 flags |= Self::FLAG_SELECTED;
+            }
+            if cell.brick > 0 {
+                flags |= Self::FLAG_BRICK;
+                if cell.brick == 1 {
+                    flags |= Self::FLAG_CRACKED;
+                }
             }
             self.cells_buf[i * 4] = color;
             self.cells_buf[i * 4 + 1] = special;
@@ -1164,13 +1245,21 @@ impl Game {
                 let fallen = fallen_cells(elapsed);
                 for p in self.board.positions() {
                     let i = (p.r * self.board.cols + p.c) as usize;
-                    let from = self.origin.get(i).copied().unwrap_or(p.r as f32);
-                    let drop = p.r as f32 - from;
+                    let from = self.origin.get(i).copied().unwrap_or((p.r as f32, p.c as f32));
+                    let drop = p.r as f32 - from.0;
                     if drop <= 0.0 {
                         continue;
                     }
                     // Still above its cell by whatever it has left to fall.
-                    self.offs_buf[i * 3 + 1] = -(drop - fallen).max(0.0);
+                    let left = (drop - fallen).max(0.0);
+                    self.offs_buf[i * 3 + 1] = -left;
+                    // A gem that spilled sideways slides across as it drops,
+                    // in step with the fall rather than on a clock of its own,
+                    // so the two read as one movement.
+                    let across = from.1 - p.c as f32;
+                    if across != 0.0 {
+                        self.offs_buf[i * 3] = across * (left / drop);
+                    }
                 }
             }
             Phase::Shuffling { elapsed } => {
@@ -1487,7 +1576,7 @@ mod tests {
         game.board.set_gem(Pos::new(3, 0), None);
 
         let rules = *game.rules();
-        game.board.collapse(&rules, &mut game.rng);
+        while game.board.settle_stage(&rules, &mut game.rng).is_some() {}
 
         assert_eq!(
             game.board.gem(Pos::new(3, 0)).map(|g| g.special),
@@ -1969,7 +2058,7 @@ mod tests {
         // As though one match has already resolved and left this rocket
         // behind: the board is mid-chain at step one, falling.
         game.cascade = 1;
-        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        game.origin = game.settled_origin();
         game.phase = Phase::Falling { elapsed: 0.0 };
 
         // Run the fall out through the real path: the board finds no match and
@@ -2056,14 +2145,187 @@ mod tests {
         );
     }
 
+    /// A board with a brick in the middle of the bottom row and a match lined
+    /// up beside it.
+    fn bricked_game(seed: u64) -> Game {
+        let mut game = Game::new(spec(4, 5, 8, 10), seed);
+        game.spec.rules.refill = RefillMode::None;
+        game.board = Board::from_layout(&[".....", ".....", ".....", "..B.."]);
+        game.cascade = 1;
+        game
+    }
+
+    #[test]
+    fn a_brick_cracks_before_it_breaks() {
+        let mut game = bricked_game(160);
+        // Three alike immediately left of the brick at (3,2).
+        for c in 0..3 {
+            game.board.set_gem(Pos::new(2, c), Some(Gem::plain(1)));
+        }
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "it starts whole");
+
+        let resolution = game.plan_resolution(None).expect("the row should match");
+        game.begin_clear(resolution);
+        let broke: Vec<&Event> = game.events().iter().filter(|e| e.kind == EV_BRICK).collect();
+
+        // One hit, not three, though three gems went off around it.
+        assert_eq!(broke.len(), 1, "a brick takes one hit per clear");
+        assert_eq!(broke[0].value, 1, "and is left cracked, not gone");
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 1);
+    }
+
+    #[test]
+    fn a_cracked_brick_is_cleared_away_by_the_next_hit() {
+        let mut game = bricked_game(161);
+        game.board.damage_brick(Pos::new(3, 2));
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 1, "starting from cracked");
+
+        for c in 0..3 {
+            game.board.set_gem(Pos::new(2, c), Some(Gem::plain(1)));
+        }
+        let resolution = game.plan_resolution(None).expect("the row should match");
+        game.begin_clear(resolution);
+
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 0, "the second hit takes it");
+        let broke: Vec<&Event> = game.events().iter().filter(|e| e.kind == EV_BRICK).collect();
+        assert_eq!(broke[0].value, 0, "and it says so");
+    }
+
+    #[test]
+    fn a_brick_nobody_clears_beside_is_left_alone() {
+        let mut game = bricked_game(162);
+        // The match is two rows up, with nothing of it touching the brick.
+        for c in 0..3 {
+            game.board.set_gem(Pos::new(1, c), Some(Gem::plain(1)));
+        }
+        let resolution = game.plan_resolution(None).expect("the row should match");
+        game.begin_clear(resolution);
+
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "nothing went off beside it");
+        assert!(game.events().iter().all(|e| e.kind != EV_BRICK));
+    }
+
+    #[test]
+    fn a_beam_goes_through_a_brick_rather_than_stopping_at_it() {
+        let mut game = bricked_game(163);
+        // A row clearer on the brick's own row, with the brick between it and
+        // the far side. Nothing is adjacent to the brick but the beam.
+        game.board.set_gem(Pos::new(3, 0), Some(Gem { color: 1, special: Special::LineH }));
+        game.board.set_gem(Pos::new(3, 4), Some(Gem::plain(2)));
+
+        let blast = matching::detonate(
+            &game.board,
+            &[Pos::new(3, 0)],
+            &[],
+            &mut game.rng,
+            0.0,
+        );
+        assert!(blast.struck.contains(&Pos::new(3, 2)), "the beam should have marked the brick");
+        assert!(
+            blast.cleared.contains(&Pos::new(3, 4)),
+            "and carried on past it to the far side",
+        );
+    }
+
+    #[test]
+    fn a_brick_cannot_be_swapped_with() {
+        let mut game = bricked_game(164);
+        for p in game.board.positions().collect::<Vec<_>>() {
+            if game.board.brick(p) == 0 {
+                game.board.set_gem(p, Some(Gem::plain((p.r + p.c) as u8 % 4)));
+            }
+        }
+        game.phase = Phase::Idle;
+
+        // Its neighbor is an ordinary gem, so the refusal is about the brick.
+        assert!(game.board.gem(Pos::new(3, 1)).is_some());
+        assert!(!game.try_swap(Pos::new(3, 1), Pos::new(3, 2)), "a brick does not move");
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "and is still there");
+    }
+
+    #[test]
+    fn a_brick_holds_its_cell_against_gravity() {
+        let mut game = bricked_game(165);
+        game.board.set_gem(Pos::new(0, 2), Some(Gem::plain(1)));
+        game.origin = game.settled_origin();
+
+        while game.board.settle_stage(&game.spec.rules, &mut game.rng).is_some() {}
+
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "the brick stayed put");
+        assert!(
+            game.board.gem(Pos::new(3, 2)).is_none(),
+            "and nothing fell into the cell it is holding",
+        );
+        // The gem came to rest on top of it rather than passing through.
+        assert_eq!(game.board.gem(Pos::new(2, 2)).map(|g| g.color), Some(1));
+    }
+
+    #[test]
+    fn a_spill_is_its_own_fall_with_its_own_landing() {
+        // The board: a wall at (1,1) with a gap under it, and a gem perched at
+        // (1,0) on top of another. Nothing can drop, so the only thing left to
+        // do is slide, and that slide is a stage of its own rather than part of
+        // the fall that came before it.
+        let mut game = Game::new(spec(3, 3, 6, 10), 150);
+        game.spec.rules.refill = RefillMode::None;
+        game.board = Board::from_layout(&["...", ".#.", "..."]);
+        game.board.set_gem(Pos::new(1, 0), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(2, 0), Some(Gem::plain(2)));
+        game.origin = game.settled_origin();
+        game.events.clear();
+
+        assert!(game.begin_settle_stage(), "the perched gem should have somewhere to go");
+        assert!(matches!(game.phase(), Phase::Falling { .. }), "and it should animate getting there");
+        let landings: Vec<&Event> = game.events().iter().filter(|e| e.kind == EV_LAND).collect();
+        assert_eq!(landings.len(), 1, "a slide lands, so it thuds like any other landing");
+        assert_eq!((landings[0].r, landings[0].c), (2, 1), "where it came to rest");
+
+        // And it really was a separate stage: the board it left is the board
+        // the fall before it ended on.
+        assert_eq!(game.board.gem(Pos::new(2, 1)).map(|g| g.color), Some(1));
+        assert!(game.board.gem(Pos::new(1, 0)).is_none());
+    }
+
+    #[test]
+    fn nothing_is_matched_until_the_spilling_has_finished() {
+        // Three alike only line up once a gem has slid off a shelf. A board
+        // checked for matches before the slide finds nothing and hands the turn
+        // back mid-settle, which is the thing being ruled out.
+        //
+        //   . # . .        . # . .
+        //   1 # . .   ->   . # . .
+        //   1 . 1 3        1 1 1 3
+        let mut game = Game::new(spec(3, 4, 6, 10), 151);
+        game.spec.rules.refill = RefillMode::None;
+        game.board = Board::from_layout(&[".#..", ".#..", "...."]);
+        game.board.set_gem(Pos::new(1, 0), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(2, 0), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(2, 2), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(2, 3), Some(Gem::plain(3)));
+        game.cascade = 1;
+
+        // Nothing matches yet: the three 1s are not in a line.
+        assert!(matching::find_matches(&game.board, game.rules()).is_empty());
+
+        game.origin = game.settled_origin();
+        game.phase = Phase::Falling { elapsed: 0.0 };
+        game.fall_ms = 1.0;
+        let events = settle(&mut game);
+
+        assert!(
+            events.iter().any(|e| e.kind == EV_MATCH),
+            "the slide should have completed a row and set it off",
+        );
+    }
+
     #[test]
     fn a_fall_that_ends_the_chain_hands_the_board_straight_back() {
         // The beat is for separating a landing from the clear it causes. With
         // no clear coming it would only be input the player cannot give yet.
         let mut game = Game::new(spec(6, 6, 6, 10), 141);
         paint(&mut game, &latin_board());
-        game.origin = game.board.positions().map(|p| p.r as f32).collect();
-        game.origin[1] = -1.0;
+        game.origin = game.settled_origin();
+        game.origin[1] = (-1.0, 1.0);
         game.events.clear();
         game.begin_fall();
 
@@ -2261,9 +2523,9 @@ mod tests {
         // Straight at begin_fall, because a column that empties in two places
         // at once is fiddly to paint: into column 2 come one gem from a row up
         // and three from two rows up, which is what two holes leave behind.
-        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        game.origin = game.settled_origin();
         for (r, from) in [(4usize, 3.0), (3, 2.0), (2, 0.0), (1, -1.0), (0, -2.0)] {
-            game.origin[r * 5 + 2] = from;
+            game.origin[r * 5 + 2] = (from, 2.0);
         }
         game.events.clear();
         game.begin_fall();
@@ -2280,7 +2542,7 @@ mod tests {
     #[test]
     fn a_board_that_does_not_move_makes_no_sound() {
         let mut game = Game::new(spec(5, 5, 6, 10), 23);
-        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        game.origin = game.settled_origin();
         game.events.clear();
         game.begin_fall();
         assert!(game.events.iter().all(|e| e.kind != EV_LAND), "nothing fell, nothing landed");
@@ -2568,18 +2830,28 @@ mod tests {
 
                 if game.phase() == Phase::Idle {
                     for p in game.board.positions() {
-                        if game.board.is_open(p) {
-                            assert!(
-                                game.board.gem(p).is_some(),
-                                "level {index} idled with a hole at {p:?}"
-                            );
-                        } else {
+                        if !game.board.is_open(p) {
                             assert!(
                                 game.board.gem(p).is_none(),
                                 "level {index} put a gem inside a wall at {p:?}"
                             );
                         }
+                        if game.board.brick(p) > 0 {
+                            assert!(
+                                game.board.gem(p).is_none(),
+                                "level {index} put a gem inside a brick at {p:?}"
+                            );
+                        }
                     }
+                    // A hole is legal now: a pocket under a brick shelf can be
+                    // out of everything's reach. What is not legal is a hole
+                    // something could still fall into, which is what asking the
+                    // board whether it would move catches, and it catches a gem
+                    // left hanging in the air besides.
+                    assert!(
+                        !game.board.will_move(game.rules()),
+                        "level {index} idled with the board still able to move"
+                    );
                     assert!(
                         matching::find_matches(&game.board, game.rules()).is_empty(),
                         "level {index} idled with an unresolved match"
