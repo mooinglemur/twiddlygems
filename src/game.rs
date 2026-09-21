@@ -61,6 +61,13 @@ pub const EV_ROCKET_HIT: u8 = 10;
 /// chord, say. Gems also go away for reasons that are not a step in a chain: a
 /// rocket takes one when it lands, and that is not a beat of the music.
 pub const EV_MATCH: u8 = 11;
+/// Gems touching down after a fall, carrying the milliseconds until they do.
+///
+/// One per column per wave rather than one per gem: everything in a column
+/// that drops the same distance arrives at the same instant and lands as a
+/// single thump. A row clear drops most of the board by one row, and that is
+/// three columns settling, not fifteen separate impacts.
+pub const EV_LAND: u8 = 12;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -530,17 +537,42 @@ impl Game {
         self.begin_fall();
     }
 
-    /// Starts a fall, lasting as long as the gem with furthest to travel needs.
+    /// Starts a fall, lasting as long as the gem with furthest to travel needs,
+    /// and announces when each column touches down.
+    ///
+    /// Gems fall on one shared clock, so two that drop the same distance land
+    /// together however far apart they are. Gathering them by column and by
+    /// distance turns a collapse into a handful of landings — see [`EV_LAND`].
     fn begin_fall(&mut self) {
-        let furthest = self
-            .board
-            .positions()
-            .map(|p| {
-                let i = (p.r * self.board.cols + p.c) as usize;
-                let from = self.origin.get(i).copied().unwrap_or(p.r as f32);
-                (p.r as f32 - from).max(0.0)
-            })
-            .fold(0.0_f32, f32::max);
+        let mut furthest = 0.0_f32;
+        // (column, rows dropped, where that group touches down).
+        let mut landings: Vec<(i32, i32, Pos)> = Vec::new();
+
+        for p in self.board.positions() {
+            let i = (p.r * self.board.cols + p.c) as usize;
+            let from = self.origin.get(i).copied().unwrap_or(p.r as f32);
+            let drop = p.r as f32 - from;
+            if drop <= 0.0 {
+                continue;
+            }
+            furthest = furthest.max(drop);
+
+            let rows = drop.round() as i32;
+            match landings.iter_mut().find(|(c, d, _)| *c == p.c && *d == rows) {
+                // Positions run down the board, so a later one is lower: the
+                // gem of the group that actually meets what it is landing on.
+                Some(entry) => entry.2 = p,
+                None => landings.push((p.c, rows, p)),
+            }
+        }
+
+        for (_, rows, p) in &landings {
+            let color = self.board.gem(*p).map_or(255, |gem| gem.color);
+            let mut event = Event::at(EV_LAND, *p, color, Special::None, self.cascade);
+            event.value = fall_time(*rows as f32).min(65_535.0) as u16;
+            self.events.push(event);
+        }
+
         self.fall_ms = fall_time(furthest).max(1.0);
         self.phase = Phase::Falling { elapsed: 0.0 };
     }
@@ -1162,6 +1194,20 @@ mod tests {
             }
         }
         panic!("nothing ever cleared");
+    }
+
+    /// The same for the first fall, so a test weighs one collapse settling
+    /// rather than every landing the cascade went on to make.
+    fn first_landing(game: &mut Game) -> Vec<Event> {
+        for _ in 0..400 {
+            game.update(16.0);
+            let batch: Vec<Event> =
+                game.events().iter().filter(|e| e.kind == EV_LAND).copied().collect();
+            if !batch.is_empty() {
+                return batch;
+            }
+        }
+        panic!("nothing ever landed");
     }
 
     fn paint(game: &mut Game, rows: &[&str]) {
@@ -1875,6 +1921,59 @@ mod tests {
         // terminal velocity.
         let extra = fall_time(6.0) - fall_time(5.0);
         assert!((extra - 1.0 / FALL_SPEED).abs() < 1e-3, "terminal velocity is not capped");
+    }
+
+    #[test]
+    fn a_column_settling_lands_once_however_many_gems_fall() {
+        let mut game = Game::new(spec(5, 5, 6, 10), 21);
+        // Lifting the 2 at (3,2) into the gap completes three across at row 2.
+        paint(&mut game, &["01234", "13402", "22301", "30240", "41023"]);
+        assert!(matching::find_matches(&game.board, game.rules()).is_empty());
+
+        assert!(game.try_swap(Pos::new(3, 2), Pos::new(2, 2)));
+        let lands = first_landing(&mut game);
+
+        // Three gems come down each of those columns — two survivors and a
+        // newcomer — but they arrive together and are heard once.
+        assert_eq!(lands.len(), 3, "three columns emptied, three landings");
+        let mut cols: Vec<u8> = lands.iter().map(|e| e.c).collect();
+        cols.sort();
+        assert_eq!(cols, vec![0, 1, 2]);
+        for land in &lands {
+            assert_eq!(land.r, 2, "a column lands where its hole was");
+            assert_eq!(land.value, fall_time(1.0) as u16, "one row's worth of falling");
+        }
+    }
+
+    #[test]
+    fn a_column_landing_in_two_waves_is_heard_twice() {
+        let mut game = Game::new(spec(5, 5, 6, 10), 22);
+        // Straight at begin_fall, because a column that empties in two places
+        // at once is fiddly to paint: into column 2 come one gem from a row up
+        // and three from two rows up, which is what two holes leave behind.
+        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        for (r, from) in [(4usize, 3.0), (3, 2.0), (2, 0.0), (1, -1.0), (0, -2.0)] {
+            game.origin[r * 5 + 2] = from;
+        }
+        game.events.clear();
+        game.begin_fall();
+
+        let lands: Vec<&Event> = game.events.iter().filter(|e| e.kind == EV_LAND).collect();
+        assert_eq!(lands.len(), 2, "two distances, two landings");
+        let near = lands.iter().find(|e| e.r == 4).expect("the lower wave lands at row 4");
+        let far = lands.iter().find(|e| e.r == 2).expect("the upper wave lands at row 2");
+        assert_eq!(near.value, fall_time(1.0) as u16);
+        assert_eq!(far.value, fall_time(2.0) as u16);
+        assert!(far.value > near.value, "the deeper drop is heard later");
+    }
+
+    #[test]
+    fn a_board_that_does_not_move_makes_no_sound() {
+        let mut game = Game::new(spec(5, 5, 6, 10), 23);
+        game.origin = game.board.positions().map(|p| p.r as f32).collect();
+        game.events.clear();
+        game.begin_fall();
+        assert!(game.events.iter().all(|e| e.kind != EV_LAND), "nothing fell, nothing landed");
     }
 
     #[test]

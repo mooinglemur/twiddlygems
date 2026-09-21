@@ -43,6 +43,7 @@ export const EventKind = {
   LOST: 9,
   ROCKET_HIT: 10,
   MATCH: 11,
+  LAND: 12,
 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2 };

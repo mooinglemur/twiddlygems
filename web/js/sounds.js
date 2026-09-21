@@ -112,6 +112,45 @@ export const SOUNDS = {
     ],
   },
 
+  /// A column of gems touching down after gravity: a soft, low thud.
+  ///
+  /// A handful of these land within a fraction of a second of each other every
+  /// time the board collapses, so it is quiet and short — it is meant to give
+  /// the fall a floor to hit, not to be an event in itself.
+  ///
+  /// The body falls in pitch rather than holding one, because an impact
+  /// decelerates and a fixed tone reads as a note. Most of what a phone will
+  /// actually reproduce is the knock above it: the body's tail ends up under
+  /// what a small speaker can move, the same trade the boom makes.
+  thud: {
+    gain: 0.26,
+    // A whole board settling is eight columns landing at once, and thinning
+    // that to five would drop thuds that the player can hear are missing.
+    voiceCap: 8,
+    layers: [
+      {
+        source: 'sine',
+        note: 120,
+        sweep: { to: 64, time: 0.055 },
+        env: { attack: 0.004, decay: 0.13 },
+        gain: 1,
+        jitter: { frequency: 0.12, gain: 0.2 },
+      },
+      {
+        // The contact itself, dull and gone almost at once. Rolled off below
+        // the body so the two do not pile up in the same octave.
+        source: 'noise',
+        filters: [
+          { type: 'lowpass', frequency: 900, q: 0.7, sweep: { to: 260, time: 0.05 } },
+          { type: 'highpass', frequency: 150, q: 0.5 },
+        ],
+        env: { attack: 0.002, decay: 0.055 },
+        gain: 0.4,
+        jitter: { frequency: 0.2, gain: 0.25 },
+      },
+    ],
+  },
+
   /// The shimmer left behind by a gem, ringing on long after the pop.
   ///
   /// The note underneath never changes: a sawtooth held at a low F, which has

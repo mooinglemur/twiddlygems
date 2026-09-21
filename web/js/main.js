@@ -142,6 +142,14 @@ async function boot() {
         audio.play('pop', { delay: event.value / 1000, pan });
         // And the shimmer it leaves behind, ringing on after the pop.
         audio.play('sparkle', { delay: event.value / 1000, pan });
+      } else if (event.kind === EventKind.LAND) {
+        // The engine works out when each column touches down, so the thud is
+        // scheduled for the moment the gems actually stop rather than for the
+        // moment they set off.
+        audio.play('thud', {
+          delay: event.value / 1000,
+          pan: ((event.c / spread) * 2 - 1) * 0.5,
+        });
       } else if (event.kind === EventKind.REVERT) {
         audio.play('clack', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.ROCKET_HIT) {

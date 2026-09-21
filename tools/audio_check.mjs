@@ -264,6 +264,14 @@ const { result } = await send('Runtime.evaluate', {
     const full = await render('boom', 1, 1.2, false, {}, plain);
     const thin = await render('boom', 1, 1.2, true, {}, plain);
 
+    // The thud asks the same question as the boom does: it is pitched low
+    // enough that a phone could be handed most of it and play none of it.
+    const steadyThud = JSON.parse(JSON.stringify(SOUNDS.thud));
+    for (const layer of steadyThud.layers) delete layer.jitter;
+    const thudBank = { thud: steadyThud };
+    const thudFull = await render('thud', 1, 0.6, false, {}, thudBank);
+    const thudThin = await render('thud', 1, 0.6, true, {}, thudBank);
+
     // A control for the wobble measurement: the same falling glide with and
     // without the waver, so the number means something.
     const glide = (waver) => ({
@@ -311,6 +319,12 @@ const { result } = await send('Runtime.evaluate', {
       rocketShort: await render('rocket', 1, 2, false, { duration: 0.4 }),
       rocketLong: await render('rocket', 1, 2.5, false, { duration: 1.4 }),
       clack: await render('clack', 1, 0.6),
+      thud: await render('thud', 1, 0.6),
+      // Ordinary play: a row of three clears and those three columns settle.
+      thudThree: await render('thud', 3, 0.6),
+      // A board-wide collapse settles every column at once, which is the most
+      // of these that can ever land together.
+      thudEight: await render('thud', 8, 0.6),
       sparkle: await render('sparkle', 1, 2.6),
       sparkleTwenty: await render('sparkle', 20, 2.6),
       // Several separate plays, to see whether the overtone really is redrawn.
@@ -336,6 +350,9 @@ const { result } = await send('Runtime.evaluate', {
       sparkleScatterMs: (SOUNDS.sparkle.scatter ?? 0) * 1000,
       // How much of the boom survives a speaker that cannot do bass.
       boomThroughPhone: Number((thin.rmsBuffer / Math.max(1e-9, full.rmsBuffer)).toFixed(3)),
+      thudThroughPhone: Number(
+        (thudThin.rmsBuffer / Math.max(1e-9, thudFull.rmsBuffer)).toFixed(3),
+      ),
       steadyTone,
       waveryTone,
       wildTone,
@@ -365,6 +382,9 @@ for (const [label, key] of [
   ['rocket .4s', 'rocketShort'],
   ['rocket 1.4s', 'rocketLong'],
   ['clack', 'clack'],
+  ['thud', 'thud'],
+  ['thud x3', 'thudThree'],
+  ['thud x8', 'thudEight'],
   ['sparkle', 'sparkle'],
   ['sparkle x20', 'sparkleTwenty'],
   ['chime 1/12', 'chimeFirst'],
@@ -439,12 +459,49 @@ if (declaredScatter > 0 && onsetRange < declaredScatter * 0.3) {
 // whole playthroughs: three is the median and four the ninetieth percentile.
 // Twenty is a rainbow taking a whole color, and letting that one meet the
 // limiter is what the limiter is for — its row is printed, not asserted.
-const loudest = Math.max(stats.three.peak, stats.boomTwo.peak, stats.sparkleTwenty.peak);
+// Every column landing at once is asserted rather than printed, unlike the
+// extremes above: eight is not a worst case a rare move reaches but what any
+// board-wide collapse does, so the thud has to be quiet enough for all of it.
+const loudest = Math.max(
+  stats.three.peak,
+  stats.boomTwo.peak,
+  stats.sparkleTwenty.peak,
+  stats.thudEight.peak,
+);
 if (loudest >= LIMITER_THRESHOLD) {
   console.error(
     `\nFAIL: ordinary play is reaching the limiter — three pops peak ${stats.three.peak}, ` +
-      `twenty sparkles ${stats.sparkleTwenty.peak} and two booms ${stats.boomTwo.peak}, ` +
-      `against ${LIMITER_THRESHOLD}.`,
+      `twenty sparkles ${stats.sparkleTwenty.peak}, two booms ${stats.boomTwo.peak} and ` +
+      `eight thuds ${stats.thudEight.peak}, against ${LIMITER_THRESHOLD}.`,
+  );
+  stop();
+  process.exit(1);
+}
+// The thud has to stay underneath the gems rather than beside them: it fires
+// while the pops of the clear that caused it are still ringing, and anything
+// with the pop's brightness there would be heard as another gem going away.
+if (stats.thud.early >= stats.one.early / 2) {
+  console.error(
+    `\nFAIL: the thud starts at ${stats.thud.early} against the pop's ${stats.one.early}; ` +
+      `it is not low enough to read as a landing rather than another clear.`,
+  );
+  stop();
+  process.exit(1);
+}
+if (stats.thud.ms > 250) {
+  console.error(
+    `\nFAIL: the thud runs ${stats.thud.ms}ms. Eight of these land together, so it has to be ` +
+      `over before the next wave arrives.`,
+  );
+  stop();
+  process.exit(1);
+}
+// Pitched this low, a thud can be sent to a phone and arrive as nothing at
+// all. This is the same check the boom gets, for the same reason.
+if (stats.thudThroughPhone < 0.25) {
+  console.error(
+    `\nFAIL: only ${(stats.thudThroughPhone * 100).toFixed(0)}% of the thud survives a 200Hz ` +
+      `highpass. On a phone speaker the board would settle in silence.`,
   );
   stop();
   process.exit(1);
@@ -559,7 +616,8 @@ if (stats.boomThroughPhone < 0.25) {
 console.log(
   `\naudio ok: loudest stack peaks ${loudest.toFixed(3)} (limiter at ${LIMITER_THRESHOLD}); ` +
     `the pop darkens ${stats.one.early} -> ${stats.one.late}; ` +
-    `${(stats.boomThroughPhone * 100).toFixed(0)}% of the boom survives a phone speaker; ` +
+    `${(stats.boomThroughPhone * 100).toFixed(0)}% of the boom and ` +
+    `${(stats.thudThroughPhone * 100).toFixed(0)}% of the thud survive a phone speaker; ` +
     `the waver works (${stats.steadyTone.wobble} plain, ${stats.wildTone.wobble} at 40% depth) ` +
     `and is not a vibrato (${stats.waveryTone.wobble} as shipped)`,
 );

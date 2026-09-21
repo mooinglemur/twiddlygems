@@ -194,6 +194,13 @@ row, and the fall lasts as long as the gem with furthest to go needs. Filling a
 hole in constant time regardless of depth is the tell-tale sign of a board that
 does not have gravity so much as a scheduled animation.
 
+The landings are announced too, so the fall has a floor to hit. Gems fall on one
+shared clock, so everything in a column that drops the same distance arrives at
+the same instant — the engine gathers those and raises one landing per column
+per wave, carrying the moment it touches down. A row clear drops most of the
+board by a row, and that is three columns settling rather than fifteen separate
+impacts; a column emptied in two places lands twice, once for each depth.
+
 A rocket's flight is worked out from distance rather than given a fixed
 duration. It eases up to a top speed and then holds it, so crossing the board
 takes longer than going next door instead of covering the extra ground faster —
@@ -312,15 +319,17 @@ the column they came from.
 graph the game plays, but exact and repeatable — and measures them:
 
 ```
-pop x1       peak 0.104  tail   61ms  bright 4731 -> 2954
-pop x20      peak 0.290  tail   72ms  bright 3628 -> 2787
-boom         peak 0.330  tail  505ms  bright  291 ->  149
-boom x2      peak 0.325  tail  518ms
-rocket .5s   peak 0.221  tail  437ms  bright 4636 -> 1612
-rocket 1.4s  peak 0.214  tail 1393ms  bright 4186 -> 1658
-glide plain  peak 0.493  tail  888ms                      wobble 0.016
-glide waver  peak 0.493  tail  888ms                      wobble 0.016
-glide wild   peak 0.493  tail  888ms                      wobble 0.212
+pop x1       peak 0.265  tail   52ms  bright 6800 -> 2817
+pop x20      peak 0.858  tail   52ms  bright 6473 -> 2857
+boom         peak 0.464  tail  402ms  bright  508 ->  149
+boom x2      peak 0.594  tail  395ms
+thud         peak 0.173  tail   96ms  bright  314 ->  220
+thud x8      peak 0.581  tail  105ms
+rocket .4s   peak 0.280  tail  618ms  bright 4651 -> 4330
+rocket 1.4s  peak 0.228  tail 1378ms  bright 4463 -> 1842
+glide plain  peak 0.332  tail  873ms                      wobble 0.016
+glide waver  peak 0.332  tail  873ms                      wobble 0.013
+glide wild   peak 0.333  tail  873ms                      wobble 0.158
 ```
 
 The last three are a control: the same falling glide plain, with the waver the
@@ -335,17 +344,21 @@ once.
 It also reports how much of a sound survives a 200Hz high-pass, which is
 roughly what a phone speaker throws away. A boom pitched down at 40Hz measures
 loud here and arrives as silence on the device most people will play on, so the
-body of that one is deliberately kept near 190Hz falling to 72Hz — 89% of it
-gets through.
+bodies of the boom and the landing thud are deliberately kept near 190Hz and
+172Hz respectively, and both are checked for what gets through.
 
-It fails the build on several counts. If the sounds designed to pile up — twenty
-pops, two booms — reach the limiter threshold, because the limiter is a safety
-net rather than part of the mix. (Four booms at once may well engage it, and
-that is what it is for.) If a sound is no darker at its end than at its start, because that
+It fails the build on several counts. If the stacks ordinary play actually asks
+for — three pops, twenty sparkles, two booms, a whole board's eight columns
+landing at once — reach the limiter threshold, because the limiter is a safety
+net rather than part of the mix. (Twenty pops is a rainbow taking a color and
+four booms at once may well engage it; those rows are printed, not asserted.)
+If a sound is no darker at its end than at its start, because that
 means its filter sweep has stopped working and it has quietly become a click
 again. If the boom drifts far from the half second it is meant to run,
-or sinks so low that a phone cannot reproduce it. And if the waver stops
-wavering, or a rocket's whistle stops tracking its flight time.
+or sinks so low that a phone cannot reproduce it. If the thud is not clearly
+lower than a pop, since it fires while the pops that caused it are still
+ringing and has to sit underneath them rather than beside them. And if the waver
+stops wavering, or a rocket's whistle stops tracking its flight time.
 
 What none of this can tell you is whether a sound is any good. Levels,
 durations and brightness are measurable; character is not. Listen, then edit
