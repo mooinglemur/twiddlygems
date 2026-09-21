@@ -6,15 +6,23 @@
 
 import { EMPTY_CELL, EventKind, Flag, Phase, Special } from './engine.js';
 
+/// The first `rules.colors` of these are what gets dealt, so the order is the
+/// game's gem set and not just a list. Six are in play today.
+///
+/// Every shape is drawn with its corners rounded off. Nothing here comes to a
+/// point: a board of sharp silhouettes reads as spiky rather than as gems, and
+/// the rounding is what keeps six different outlines looking like one set.
 export const PALETTE = [
-  { name: 'Ruby', fill: '#e5484d', edge: '#7e1f25', shape: 'diamond' },
-  { name: 'Sapphire', fill: '#3f8cff', edge: '#1b3f8c', shape: 'circle' },
-  { name: 'Emerald', fill: '#3fbf6f', edge: '#166534', shape: 'hex' },
-  { name: 'Topaz', fill: '#f5c542', edge: '#87660b', shape: 'square' },
-  { name: 'Amethyst', fill: '#a56bff', edge: '#4c2a8a', shape: 'triangle' },
-  { name: 'Aqua', fill: '#2dd4c8', edge: '#0e6f68', shape: 'star' },
+  { name: 'Ruby', fill: '#e5484d', edge: '#7e1f25', shape: 'triangle' },
+  { name: 'Sapphire', fill: '#3f8cff', edge: '#1b3f8c', shape: 'drop' },
+  { name: 'Emerald', fill: '#3fbf6f', edge: '#166534', shape: 'star' },
+  { name: 'Topaz', fill: '#f5d742', edge: '#87720b', shape: 'circle' },
+  { name: 'Amethyst', fill: '#a56bff', edge: '#4c2a8a', shape: 'diamond' },
+  { name: 'Amber', fill: '#f0863c', edge: '#8f430f', shape: 'tomb' },
+  // Past the six in play. They keep shapes of their own so that raising
+  // `colors` deals something distinguishable rather than a repeat.
   { name: 'Rose', fill: '#ff8ac0', edge: '#a13a70', shape: 'pentagon' },
-  { name: 'Amber', fill: '#f0863c', edge: '#8f430f', shape: 'drop' },
+  { name: 'Aqua', fill: '#2dd4c8', edge: '#0e6f68', shape: 'hex' },
 ];
 
 const TAU = Math.PI * 2;
@@ -491,15 +499,20 @@ function paintGem(ctx, x, y, radius, colorIndex, special) {
   ctx.lineWidth = Math.max(1, radius * 0.12);
   ctx.stroke();
 
-  // A soft highlight up and to the left reads as a facet.
+  // Everything from here is inside the gem: the facet highlight, and the
+  // marking, which is sized for a circle and would otherwise hang off the side
+  // of a triangle or a star. Clipping is only affordable because this is a
+  // sprite painted once, not a gem painted every frame.
   ctx.clip();
+
+  // A soft highlight up and to the left reads as a facet.
   ctx.fillStyle = 'rgba(255,255,255,0.28)';
   ctx.beginPath();
   ctx.ellipse(x - radius * 0.28, y - radius * 0.34, radius * 0.5, radius * 0.3, -0.6, 0, TAU);
   ctx.fill();
-  ctx.restore();
 
   drawSpecial(ctx, x, y, radius, special);
+  ctx.restore();
 }
 
 /// The line and cross markings. Rockets and rainbows are whole gems of their
@@ -639,67 +652,149 @@ function shapePath(ctx, shape, x, y, r) {
   ctx.beginPath();
   switch (shape) {
     case 'circle':
-      ctx.arc(x, y, r, 0, TAU);
+      // Pulled in a little. A circle fills its radius completely where every
+      // other shape here leaves corners of it empty, so drawn to the same
+      // radius it sits on the board looking like the largest gem.
+      ctx.arc(x, y, r * 0.93, 0, TAU);
       break;
     case 'diamond':
-      ctx.moveTo(x, y - r);
-      ctx.lineTo(x + r * 0.82, y);
-      ctx.lineTo(x, y + r);
-      ctx.lineTo(x - r * 0.82, y);
-      ctx.closePath();
+      // A square stood on its corner. Both axes are the same length: stretched
+      // taller it stops reading as a square and starts reading as a kite.
+      roundedPath(ctx, polygon(x, y, r, 4, -Math.PI / 2), r * 0.26);
       break;
     case 'square':
       roundRect(ctx, x - r * 0.84, y - r * 0.84, r * 1.68, r * 1.68, r * 0.3);
       break;
     case 'triangle':
-      polygon(ctx, x, y + r * 0.12, r * 1.06, 3, -Math.PI / 2);
+      // Nudged down, because a triangle's weight sits low and centering it on
+      // its bounding box leaves it looking to have slipped. Grown past the
+      // others too: inscribed in the same circle it covers far less of it, and
+      // reads as a smaller gem rather than a different one.
+      roundedPath(ctx, polygon(x, y + r * 0.12, r * 1.16, 3, -Math.PI / 2), r * 0.24);
       break;
     case 'hex':
-      polygon(ctx, x, y, r, 6, 0);
+      roundedPath(ctx, polygon(x, y, r, 6, 0), r * 0.22);
       break;
     case 'pentagon':
-      polygon(ctx, x, y, r, 5, -Math.PI / 2);
+      roundedPath(ctx, polygon(x, y, r, 5, -Math.PI / 2), r * 0.22);
       break;
     case 'star':
-      star(ctx, x, y, r, r * 0.46, 5);
+      // Grown past the others for the same reason the triangle is: five points
+      // with gaps between them cover little of the circle they are cut from.
+      roundedPath(ctx, star(x, y, r * 1.14, r * 0.56, 5), r * 0.2);
       break;
-    case 'drop':
-      ctx.moveTo(x, y - r);
-      ctx.quadraticCurveTo(x + r, y - r * 0.2, x + r * 0.62, y + r * 0.45);
-      ctx.quadraticCurveTo(x, y + r * 1.1, x - r * 0.62, y + r * 0.45);
-      ctx.quadraticCurveTo(x - r, y - r * 0.2, x, y - r);
+    case 'tomb': {
+      // A headstone: straight sides, a semicircular top, and the two corners it
+      // stands on rounded off like everything else here.
+      const half = r * 0.7;
+      const top = y - r * 0.9;
+      const bottom = y + r * 0.88;
+      const foot = r * 0.24;
+      const springing = top + half;
+      ctx.moveTo(x - half, bottom - foot);
+      ctx.lineTo(x - half, springing);
+      // Over the top, left to right. Increasing angle from PI wraps up and
+      // over rather than down and under.
+      ctx.arc(x, springing, half, Math.PI, 0);
+      ctx.lineTo(x + half, bottom - foot);
+      ctx.arcTo(x + half, bottom, x + half - foot, bottom, foot);
+      ctx.lineTo(x - half + foot, bottom);
+      ctx.arcTo(x - half, bottom, x - half, bottom - foot, foot);
       ctx.closePath();
       break;
+    }
+    case 'drop': {
+      // A teardrop: a circle low in the cell, drawn up to a tip. The straight
+      // sides are the tangents from that tip to the circle, so the curve runs
+      // into them without a seam, and the tip itself is rounded over.
+      //
+      // Widening is the bulb's radius; the center rises to keep the bottom of
+      // the bulb where it was, so the drop grows sideways rather than downward
+      // out of its cell.
+      const cy = y + r * 0.2;
+      const body = r * 0.8;
+      const reach = cy - (y - r);
+      const spread = Math.acos(Math.min(1, body / reach));
+      const left = -Math.PI / 2 - spread;
+      const right = -Math.PI / 2 + spread;
+      ctx.moveTo(x + Math.cos(left) * body, cy + Math.sin(left) * body);
+      ctx.arcTo(
+        x,
+        y - r,
+        x + Math.cos(right) * body,
+        cy + Math.sin(right) * body,
+        r * 0.15,
+      );
+      ctx.lineTo(x + Math.cos(right) * body, cy + Math.sin(right) * body);
+      ctx.arc(x, cy, body, right, left);
+      ctx.closePath();
+      break;
+    }
     default:
       ctx.arc(x, y, r, 0, TAU);
   }
 }
 
-function polygon(ctx, x, y, r, sides, rotation) {
+function polygon(x, y, r, sides, rotation) {
+  const points = [];
   for (let i = 0; i < sides; i += 1) {
     const angle = rotation + (i * TAU) / sides;
-    const px = x + Math.cos(angle) * r;
-    const py = y + Math.sin(angle) * r;
-    if (i === 0) {
-      ctx.moveTo(px, py);
-    } else {
-      ctx.lineTo(px, py);
-    }
+    points.push([x + Math.cos(angle) * r, y + Math.sin(angle) * r]);
   }
-  ctx.closePath();
+  return points;
 }
 
-function star(ctx, x, y, outer, inner, points) {
+function star(x, y, outer, inner, points) {
+  const corners = [];
   for (let i = 0; i < points * 2; i += 1) {
     const radius = i % 2 === 0 ? outer : inner;
     const angle = -Math.PI / 2 + (i * Math.PI) / points;
-    const px = x + Math.cos(angle) * radius;
-    const py = y + Math.sin(angle) * radius;
-    if (i === 0) {
-      ctx.moveTo(px, py);
-    } else {
-      ctx.lineTo(px, py);
+    corners.push([x + Math.cos(angle) * radius, y + Math.sin(angle) * radius]);
+  }
+  return corners;
+}
+
+/**
+ * Traces a closed run of corners with every one of them rounded off.
+ *
+ * `arcTo` rounds a corner by cutting back along both of its edges, so a radius
+ * an edge cannot afford overshoots and folds the shape through itself. Each
+ * corner is clamped to what its own two edges and its own angle allow, which is
+ * why a star's needle points round off less than a hexagon's blunt ones: at a
+ * sharp angle the same radius would eat most of the edge.
+ *
+ * The path starts partway along an edge rather than at a corner, since every
+ * corner is about to be cut back from both sides.
+ */
+function roundedPath(ctx, points, radius) {
+  const count = points.length;
+  const last = points[count - 1];
+  ctx.moveTo((last[0] + points[0][0]) / 2, (last[1] + points[0][1]) / 2);
+
+  for (let i = 0; i < count; i += 1) {
+    const previous = points[(i + count - 1) % count];
+    const corner = points[i];
+    const next = points[(i + 1) % count];
+    const back = Math.hypot(previous[0] - corner[0], previous[1] - corner[1]);
+    const on = Math.hypot(next[0] - corner[0], next[1] - corner[1]);
+    if (back === 0 || on === 0) {
+      ctx.lineTo(corner[0], corner[1]);
+      continue;
     }
+    // Half of the shorter edge: the corner at its far end claims the rest.
+    const room = Math.min(back, on) / 2;
+    const ax = (previous[0] - corner[0]) / back;
+    const ay = (previous[1] - corner[1]) / back;
+    const bx = (next[0] - corner[0]) / on;
+    const by = (next[1] - corner[1]) / on;
+    const half = Math.acos(Math.max(-1, Math.min(1, ax * bx + ay * by))) / 2;
+    ctx.arcTo(
+      corner[0],
+      corner[1],
+      (corner[0] + next[0]) / 2,
+      (corner[1] + next[1]) / 2,
+      Math.min(radius, room * Math.tan(half)),
+    );
   }
   ctx.closePath();
 }

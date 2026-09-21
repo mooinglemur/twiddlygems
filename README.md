@@ -161,7 +161,12 @@ Each level gives a fixed number of moves and one or more objectives: reach a
 score, clear a number of gems of one color, or peel every layer of jelly. A
 board with no legal move left reshuffles itself rather than ending the level.
 Gems differ in shape as well as color, so the board is readable without relying
-on color alone.
+on color alone: a blue teardrop, a yellow circle, a red triangle, an orange
+headstone, a green star and a purple diamond. Every outline has its corners
+rounded off, which is what keeps six different silhouettes looking like one set
+rather than a bag of spikes. The palette in
+[`web/js/render.js`](web/js/render.js) is the gem set in dealing order, and the
+first `colors` of it is what a level plays with.
 
 Tap a gem and then a neighbor, or swipe one toward a neighbor; both work the
 same way. Progress is kept in the browser's local storage.

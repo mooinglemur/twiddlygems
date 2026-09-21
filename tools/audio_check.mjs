@@ -22,7 +22,10 @@ const server = spawn(
 const browser = spawn(
   BROWSER,
   [
-    '--headless', '--no-sandbox', '--disable-gpu',
+    // Muted at the device, which costs this check nothing: an
+    // OfflineAudioContext renders into a buffer and never reaches a speaker.
+    // The page behind it is the real game, though, and that one would play.
+    '--headless', '--no-sandbox', '--disable-gpu', '--mute-audio',
     `--remote-debugging-port=${DEBUG_PORT}`,
     '--user-data-dir=/tmp/twiddlygems-audio',
     'about:blank',

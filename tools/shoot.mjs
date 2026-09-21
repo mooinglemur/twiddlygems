@@ -32,7 +32,9 @@ const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '1
 const browser = spawn(
   BROWSER,
   [
-    '--headless', '--no-sandbox', '--disable-gpu', '--hide-scrollbars',
+    // Muted because this plays the game for real, sound and all, and headless
+    // or not it comes out of whatever speakers the machine is using.
+    '--headless', '--no-sandbox', '--disable-gpu', '--hide-scrollbars', '--mute-audio',
     `--remote-debugging-port=${DEBUG_PORT}`,
     '--user-data-dir=/tmp/twiddlygems-shots',
     'about:blank',
