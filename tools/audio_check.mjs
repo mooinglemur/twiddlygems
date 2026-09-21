@@ -260,6 +260,29 @@ const { result } = await send('Runtime.evaluate', {
       };
     }
 
+    // The loudest of several renders of the same stack.
+    //
+    // A stack's peak is a random variable, not a property of the sound. Copies
+    // are detuned per play, so they drift in and out of phase with each other
+    // and how squarely they happen to line up decides the peak: nine thuds
+    // measured anywhere between 0.33 and 0.91 at one fixed gain. A single
+    // render samples that at random, which is enough to fail the build on a
+    // Tuesday and pass it on a Wednesday, and enough to argue a level down
+    // that never needed touching.
+    //
+    // What the threshold checks is whether a stack *can* clip, so the worst of
+    // several runs is the honest number rather than any one of them.
+    async function worst(name, count, seconds = 1, runs = 8, opts = {}) {
+      let loudest = null;
+      for (let i = 0; i < runs; i += 1) {
+        const take = await render(name, count, seconds, false, opts);
+        if (!loudest || take.peak > loudest.peak) {
+          loudest = take;
+        }
+      }
+      return loudest;
+    }
+
     // Same sound, no per-play randomness, so the two renders are comparable.
     const steadyBoom = JSON.parse(JSON.stringify(SOUNDS.boom));
     for (const layer of steadyBoom.layers) delete layer.jitter;
@@ -314,10 +337,10 @@ const { result } = await send('Runtime.evaluate', {
     };
     return {
       one: await render('pop', 1),
-      three: await render('pop', 3),
+      three: await worst('pop', 3),
       twenty: await render('pop', 20),
       boom: full,
-      boomTwo: await render('boom', 2, 1.2),
+      boomTwo: await worst('boom', 2, 1.2),
       boomFour: await render('boom', 4, 1.2),
       rocketShort: await render('rocket', 1, 2, false, { duration: 0.4 }),
       rocketLong: await render('rocket', 1, 2.5, false, { duration: 1.4 }),
@@ -327,9 +350,9 @@ const { result } = await send('Runtime.evaluate', {
       thudThree: await render('thud', 3, 0.6),
       // A board-wide collapse settles every column at once, which is the most
       // of these that can ever land together.
-      thudEight: await render('thud', 8, 0.6),
+      thudBoard: await worst('thud', 9, 0.6),
       sparkle: await render('sparkle', 1, 2.6),
-      sparkleTwenty: await render('sparkle', 20, 2.6),
+      sparkleTwenty: await worst('sparkle', 20, 2.6),
       // Several separate plays, to see whether the overtone really is redrawn.
       sparkleRuns: await Promise.all(
         [0, 1, 2, 3, 4, 5, 6, 7].map(() => render('sparkle', 1, 2.6)),
@@ -387,7 +410,7 @@ for (const [label, key] of [
   ['clack', 'clack'],
   ['thud', 'thud'],
   ['thud x3', 'thudThree'],
-  ['thud x8', 'thudEight'],
+  ['thud x9', 'thudBoard'],
   ['sparkle', 'sparkle'],
   ['sparkle x20', 'sparkleTwenty'],
   ['chime 1/12', 'chimeFirst'],
@@ -463,19 +486,20 @@ if (declaredScatter > 0 && onsetRange < declaredScatter * 0.3) {
 // Twenty is a rainbow taking a whole color, and letting that one meet the
 // limiter is what the limiter is for, so its row is printed, not asserted.
 // Every column landing at once is asserted rather than printed, unlike the
-// extremes above: eight is not a worst case a rare move reaches but what any
-// board-wide collapse does, so the thud has to be quiet enough for all of it.
+// extremes above: a landing per column is not a worst case a rare move reaches
+// but what any board-wide collapse does, so the thud has to be quiet enough for
+// the whole width of the board at once.
 const loudest = Math.max(
   stats.three.peak,
   stats.boomTwo.peak,
   stats.sparkleTwenty.peak,
-  stats.thudEight.peak,
+  stats.thudBoard.peak,
 );
 if (loudest >= LIMITER_THRESHOLD) {
   console.error(
     `\nFAIL: ordinary play is reaching the limiter. Three pops peak ${stats.three.peak}, ` +
       `twenty sparkles ${stats.sparkleTwenty.peak}, two booms ${stats.boomTwo.peak} and ` +
-      `eight thuds ${stats.thudEight.peak}, against ${LIMITER_THRESHOLD}.`,
+      `a board of thuds ${stats.thudBoard.peak}, against ${LIMITER_THRESHOLD}.`,
   );
   stop();
   process.exit(1);

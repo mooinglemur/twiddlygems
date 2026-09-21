@@ -247,9 +247,9 @@ export class Renderer {
 
   /// The gem art for one color and special, drawn once and kept.
   ///
-  /// Filling and stroking 64 paths a frame is what makes a phone struggle;
-  /// blitting 64 bitmaps does not. Rainbows and rockets are cached in their
-  /// resting orientation and turned as they are blitted.
+  /// Filling and stroking a path per cell per frame is what makes a phone
+  /// struggle; blitting a bitmap per cell does not. Rainbows and rockets are
+  /// cached in their resting orientation and turned as they are blitted.
   sprite(color, special) {
     // Rockets and rainbows wear no gem colors, so each needs only one entry.
     const colorless = special === Special.ROCKET || special === Special.RAINBOW;

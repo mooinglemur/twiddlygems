@@ -65,8 +65,8 @@ pub const MAX_COLORS: usize = 8;
 impl Default for Rules {
     fn default() -> Self {
         Rules {
-            rows: 8,
-            cols: 8,
+            rows: 9,
+            cols: 9,
             colors: 6,
             min_match: 3,
             square_match: true,

@@ -427,8 +427,12 @@ mod tests {
         unsafe {
             let handle = tg_create(1234, 0);
             assert!(!handle.is_null());
-            assert_eq!(tg_rows(handle), 8);
-            assert_eq!(tg_cols(handle), 8);
+            // Against the level's own rules rather than a number written here
+            // twice: what this checks is that the ABI reports the board the
+            // engine actually has, not that the board is any given size.
+            let spec = &crate::level::levels()[0];
+            assert_eq!(tg_rows(handle), spec.rules.rows as u32);
+            assert_eq!(tg_cols(handle), spec.rules.cols as u32);
             assert_eq!(tg_level_index(handle), 0);
             assert_eq!(tg_status(handle), 0);
             assert_eq!(tg_accepts_input(handle), 1);

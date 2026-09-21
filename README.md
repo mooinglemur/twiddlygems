@@ -232,7 +232,7 @@ the frame cheap:
 
 - **Gems are cached bitmaps, not paths.** Each color and special is painted once
   into an offscreen canvas and blitted from then on. Filling, stroking and
-  *clipping* 64 paths a frame is what makes a phone struggle; `clip()` in
+  *clipping* a path per cell per frame is what makes a phone struggle; `clip()` in
   particular is among the most expensive things a canvas can be asked to do, and
   it used to run once per gem per frame.
 - **The board under the gems is painted once.** The panel and its empty sockets
@@ -364,8 +364,8 @@ bodies of the boom and the landing thud are deliberately kept near 190Hz and
 172Hz respectively, and both are checked for what gets through.
 
 It fails the build on several counts. If the stacks ordinary play actually asks
-for (three pops, twenty sparkles, two booms, a whole board's eight columns
-landing at once) reach the limiter threshold, because the limiter is a safety
+for (three pops, twenty sparkles, two booms, every column of the board landing
+at once) reach the limiter threshold, because the limiter is a safety
 net rather than part of the mix. (Twenty pops is a rainbow taking a color and
 four booms at once may well engage it; those rows are printed, not asserted.)
 If a sound is no darker at its end than at its start, because that

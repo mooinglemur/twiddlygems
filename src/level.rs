@@ -104,48 +104,57 @@ impl LevelSpec {
     }
 }
 
+// A layout declares its own size, so these are the board on the levels that
+// use one. All four are built around the middle, which an odd board actually
+// has: on nine columns a centered shape sits on column four rather than
+// straddling the gap between two.
+
 const JELLY_PATCH: &[&str] = &[
-    "........",
-    "........",
-    "........",
-    "..oooo..",
-    "..oooo..",
-    "..oooo..",
-    "........",
-    "........",
+    ".........",
+    ".........",
+    ".........",
+    "..ooooo..",
+    "..ooooo..",
+    "..ooooo..",
+    ".........",
+    ".........",
+    ".........",
 ];
 
 const CROSS: &[&str] = &[
-    "##....##",
-    "#......#",
-    "........",
-    "...oo...",
-    "...oo...",
-    "........",
-    "#......#",
-    "##....##",
+    "##.....##",
+    "#.......#",
+    ".........",
+    "....o....",
+    "...ooo...",
+    "....o....",
+    ".........",
+    "#.......#",
+    "##.....##",
 ];
 
 const HOURGLASS: &[&str] = &[
-    "oooooooo",
-    ".oooooo.",
-    "..OOOO..",
-    "...OO...",
-    "...OO...",
-    "..OOOO..",
-    ".oooooo.",
-    "oooooooo",
+    "ooooooooo",
+    ".ooooooo.",
+    "..OOOOO..",
+    "...OOO...",
+    "....O....",
+    "...OOO...",
+    "..OOOOO..",
+    ".ooooooo.",
+    "ooooooooo",
 ];
 
 const PILLARS: &[&str] = &[
-    "..o##o..",
-    "..o##o..",
-    "..oooo..",
-    "........",
-    "........",
-    "..oooo..",
-    "..o##o..",
-    "..o##o..",
+    "..o###o..",
+    "..o###o..",
+    "..ooooo..",
+    ".........",
+    ".........",
+    ".........",
+    "..ooooo..",
+    "..o###o..",
+    "..o###o..",
 ];
 
 /// The built-in level ladder. Ordered by difficulty; the solo campaign walks

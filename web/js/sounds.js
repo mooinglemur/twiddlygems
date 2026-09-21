@@ -123,10 +123,15 @@ export const SOUNDS = {
   /// actually reproduce is the knock above it: the body's tail ends up under
   /// what a small speaker can move, the same trade the boom makes.
   thud: {
-    gain: 0.26,
-    // A whole board settling is eight columns landing at once, and thinning
-    // that to five would drop thuds that the player can hear are missing.
-    voiceCap: 8,
+    // Trimmed from 0.26 when the board went from eight columns to nine: nine
+    // of these landing together clear the limiter's threshold where eight sat
+    // under it. This is the one level in here set by arithmetic rather than by
+    // ear, and it is worth an ear before it is trusted.
+    gain: 0.22,
+    // A whole board settling is one landing per column, all at once, and
+    // thinning that would drop thuds the player can hear are missing. Nine is
+    // the board's width; a wider board wants this raised with it.
+    voiceCap: 9,
     layers: [
       {
         source: 'sine',
