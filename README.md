@@ -362,6 +362,14 @@ universal set to MP3, AAC and WAV), and a sound can be pitched per play instead
 of shipping variants. A sample set would have been several times the size of the
 game.
 
+No browser will open an audio device until the player has done something, so the
+game opens one on the first gesture and **keeps trying until the device is
+actually running**. One attempt is not enough: a browser can accept the call and
+leave the context suspended anyway. Firefox on Android does not count a gesture
+as having happened until it finishes, so a context opened on `pointerdown` alone
+never starts, and the game plays in silence with the button still saying the
+sound is on. Taking one shot at it made that permanent for the whole session.
+
 Sounds are data, in [`web/js/sounds.js`](web/js/sounds.js). One is a stack of
 layers, each an oscillator or a burst of noise shaped by an envelope, and each
 carrying its own pitch and its own offset, so a chord is several layers at one

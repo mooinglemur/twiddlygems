@@ -103,7 +103,10 @@ export class Audio {
     this.limiter = limiter;
 
     this.master = this.ctx.createGain();
-    this.master.gain.value = 0.9;
+    // Honors the setting rather than assuming sound is wanted. The context is
+    // opened on the first gesture, which is long after the saved preference
+    // was applied to a player who had none yet.
+    this.master.gain.value = this.enabled ? 0.9 : 0;
     this.master.connect(limiter);
     limiter.connect(this.ctx.destination);
 

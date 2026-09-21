@@ -111,6 +111,19 @@ globalThis.document = {
 };
 
 const store = new Map();
+const windowListeners = new Map();
+/// Acts like someone touching the page. Honors `{ once: true }`, because
+/// whether a listener stays registered is exactly what some of this checks.
+const gesture = (type) => {
+  const list = windowListeners.get(type) ?? [];
+  windowListeners.set(
+    type,
+    list.filter((entry) => !entry.once),
+  );
+  for (const entry of list) {
+    entry.handler({ type });
+  }
+};
 globalThis.window = {
   devicePixelRatio: 2,
   // ?debug only hands the engine and renderer to window.twiddlygems; nothing
@@ -121,7 +134,18 @@ globalThis.window = {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => store.set(key, value),
   },
-  addEventListener() {},
+  // Recorded rather than dropped, so a test can act like someone touching the
+  // page. Opening the audio device hangs off these.
+  addEventListener(type, handler, options) {
+    const once = typeof options === 'object' && options !== null && Boolean(options.once);
+    const list = windowListeners.get(type) ?? [];
+    list.push({ handler, once });
+    windowListeners.set(type, list);
+  },
+  removeEventListener(type, handler) {
+    const list = (windowListeners.get(type) ?? []).filter((e) => e.handler !== handler);
+    windowListeners.set(type, list);
+  },
 };
 globalThis.ResizeObserver = class {
   observe() {}
@@ -249,6 +273,37 @@ assert.notEqual(
 );
 assert.ok(store.has('twiddlygems.sound.v1'), 'the sound setting was not saved');
 dispatch('sound-button', 'click', {});
+
+// Opening the audio device survives a browser that refuses the first attempt.
+//
+// Firefox on Android does not count a gesture as having happened until it
+// finishes, so the context opened on `pointerdown` comes back suspended and the
+// game plays in silence with the button still claiming sound is on. Modelled
+// here as a device that only starts on the second ask.
+{
+  const { audio } = window.twiddlygems;
+  let asked = 0;
+  let running = false;
+  audio.unlock = () => {
+    asked += 1;
+    running = asked > 1;
+  };
+  Object.defineProperty(audio, 'ready', { get: () => running, configurable: true });
+
+  // The same gesture twice over, which is what a player tapping the board
+  // does. A listener that fires once per kind of event would look fine against
+  // two different kinds and still leave this browser silent forever.
+  gesture('pointerdown');
+  assert.equal(asked, 1, 'the first gesture should have tried to open the audio device');
+  assert.ok(!audio.ready, 'and this browser refuses the first ask');
+
+  gesture('pointerdown');
+  assert.equal(asked, 2, 'a second tap should try again rather than giving up');
+  assert.ok(audio.ready, 'the second ask is the one that works');
+
+  gesture('pointerdown');
+  assert.equal(asked, 2, 'and once it is running, it stops asking');
+}
 
 // The pop-over that announces a shuffle or a short move budget.
 //

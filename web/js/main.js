@@ -103,10 +103,27 @@ async function boot() {
   dom.soundButton.setAttribute('aria-pressed', String(!soundOn));
 
   // Audio may only be opened from a gesture, and on iOS it must happen inside
-  // the handler itself, so this runs on the first touch anywhere.
-  const openAudio = () => audio.unlock();
-  window.addEventListener('pointerdown', openAudio, { once: true, capture: true });
-  window.addEventListener('keydown', openAudio, { once: true, capture: true });
+  // the handler itself, so this runs on a touch anywhere.
+  //
+  // It keeps trying until the context is actually running, rather than taking
+  // one shot at it. A browser can accept the call and leave the context
+  // suspended anyway: Firefox on Android does not count a gesture as having
+  // happened until it finishes, so opening on `pointerdown` alone gets a
+  // context that never starts, and the game plays in silence while the button
+  // still says the sound is on. Listening for the end of the gesture as well
+  // covers the same ground from the other side.
+  const gestures = ['pointerdown', 'pointerup', 'keydown'];
+  const openAudio = () => {
+    audio.unlock();
+    if (audio.ready) {
+      for (const gesture of gestures) {
+        window.removeEventListener(gesture, openAudio, true);
+      }
+    }
+  };
+  for (const gesture of gestures) {
+    window.addEventListener(gesture, openAudio, { capture: true });
+  }
 
   dom.soundButton.addEventListener('click', () => {
     soundOn = !soundOn;
