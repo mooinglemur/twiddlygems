@@ -27,6 +27,10 @@
 // with a `duration` option then scales the holds, decays and glides to fit —
 // attacks are left alone, because a transient that stretches is not one.
 //
+// A sound may instead declare `chords` and a `voice`: a list of note lists, and
+// the single layer each note is played through. Playing it with a `stage` picks
+// a chord, so one definition covers a whole progression.
+//
 // Keep levels low. These stack: a rainbow clear can fire twenty at once, and
 // the limiter should be a safety net rather than something the game leans on.
 
@@ -90,6 +94,44 @@ export const SOUNDS = {
         jitter: { frequency: 0.2, gain: 0.2 },
       },
     ],
+  },
+
+  /// The musical payoff of a clear, one chord per step of the chain.
+  ///
+  /// A chain starts at the first chord and climbs as it goes, so a long cascade
+  /// walks up the scale and the player hears how well they did. Twelve steps in
+  /// F; past that it holds at the top rather than running out of room.
+  ///
+  /// Plucked rather than sung: a hard attack, a fast decay, and a lowpass
+  /// closing as the note falls away, which is what a sawtooth needs to stop
+  /// sounding like a buzzer.
+  chime: {
+    gain: 0.2,
+    voiceCap: 6,
+    chords: [
+      ['A3', 'C4', 'F4'],
+      ['C4', 'E4', 'G4'],
+      ['C4', 'F4', 'A4'],
+      ['D4', 'F4', 'Bb4'],
+      ['F4', 'A4', 'C5'],
+      ['G4', 'Bb4', 'D5'],
+      ['Bb4', 'C5', 'E5'],
+      ['A4', 'C5', 'F5'],
+      ['C5', 'E5', 'G5'],
+      ['C5', 'F5', 'A5'],
+      ['E5', 'G5', 'C6'],
+      ['A5', 'C6', 'F6'],
+    ],
+    voice: {
+      source: 'sawtooth',
+      filters: [
+        { type: 'lowpass', frequency: 2400, q: 1.1, sweep: { to: 620, time: 0.18 } },
+        { type: 'highpass', frequency: 120, q: 0.5 },
+      ],
+      env: { attack: 0.002, decay: 0.415 },
+      gain: 1,
+      jitter: { gain: 0.1 },
+    },
   },
 
   /// A rocket in flight: ignition, then a whistle falling away until it hits.

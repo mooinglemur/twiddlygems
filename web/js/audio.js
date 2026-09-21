@@ -114,7 +114,10 @@ export class Audio {
 
   /// Plays a named sound. `delay` is in seconds from now, and is scheduled on
   /// the audio clock rather than with a timer.
-  play(name, { delay = 0, pan = 0, gain = 1, detune = 0, note = null, duration = null } = {}) {
+  play(
+    name,
+    { delay = 0, pan = 0, gain = 1, detune = 0, note = null, duration = null, stage = 0 } = {},
+  ) {
     if (!this.enabled || !this.ready) {
       return false;
     }
@@ -138,7 +141,7 @@ export class Audio {
     // vary with distance.
     const stretch = duration && sound.duration ? Math.max(0.05, duration) / sound.duration : 1;
     let longest = 0;
-    for (const layer of sound.layers) {
+    for (const layer of layersFor(sound, stage)) {
       longest = Math.max(longest, this.playLayer(layer, at, level, pan, detune, note, stretch));
     }
 
@@ -258,6 +261,21 @@ export class Audio {
     source.stop(start + duration + 0.01);
     return (layer.delay ?? 0) * span + duration;
   }
+}
+
+/// The layers one play of a sound needs.
+///
+/// Most sounds simply list theirs. A sound built from `chords` instead names a
+/// list of note lists and a single `voice`, and the stage picks which chord to
+/// spread across that voice — one definition covering a whole progression. A
+/// stage past the end holds on the last chord rather than wrapping back to the
+/// bottom, so a very long chain stays at its peak instead of collapsing.
+function layersFor(sound, stage) {
+  if (!sound.chords || !sound.voice) {
+    return sound.layers ?? [];
+  }
+  const index = Math.min(sound.chords.length - 1, Math.max(0, Math.floor(stage)));
+  return sound.chords[index].map((note) => ({ ...sound.voice, note }));
 }
 
 /// A couple of seconds of white noise, made once and shared by every noise

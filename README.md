@@ -269,6 +269,14 @@ distance and sends it along with the launch, so a shot across the board whistles
 for longer than one next door. A layer sets `stretch: false` to stay put — an
 ignition hiss is the same length however far the rocket is going.
 
+A sound may instead be built from `chords`: a list of note lists and a single
+`voice`, with a `stage` picking which chord to spread across that voice. The
+clear chime is twelve chords in F, and a cascade climbs them one step per clear,
+so a long chain walks up the scale and you can hear how well you did. The engine
+stamps every clear with its place in the chain and resets that when the board
+settles, so a fresh chain starts at the bottom on its own. A stage past the end
+holds at the top rather than wrapping back down.
+
 A `waver` walks a pitch glide in small steps and pushes each one slightly off,
 which is how a firework fails to hold its note. Its `depth` is a fraction of the
 frequency, and the useful range is far narrower than it looks: 0.022 is about a

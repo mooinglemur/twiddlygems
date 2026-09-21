@@ -125,6 +125,16 @@ async function boot() {
   /// the engine gave it, and placed left to right by the column it was in.
   const playEvents = (events) => {
     const spread = Math.max(1, engine.cols - 1);
+
+    // One chord per clear, not per gem, climbing with the chain. The engine
+    // stamps every clear with its place in the cascade and resets that when the
+    // board settles, so a fresh chain starts at the bottom of the progression
+    // on its own.
+    const chain = events.find((event) => event.kind === EventKind.CLEAR);
+    if (chain) {
+      audio.play('chime', { stage: Math.max(0, chain.cascade - 1) });
+    }
+
     for (const event of events) {
       if (event.kind === EventKind.CLEAR) {
         audio.play('pop', {

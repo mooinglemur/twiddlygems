@@ -231,6 +231,11 @@ const { result } = await send('Runtime.evaluate', {
       boomFour: await render('boom', 4, 1.2),
       rocketShort: await render('rocket', 1, 2, false, { duration: 0.4 }),
       rocketLong: await render('rocket', 1, 2.5, false, { duration: 1.4 }),
+      chimeFirst: await render('chime', 1, 0.8, false, { stage: 0 }),
+      chimeLast: await render('chime', 1, 0.8, false, { stage: 11 }),
+      // Past the end of the progression it should hold, not wrap round.
+      chimePastEnd: await render('chime', 1, 0.8, false, { stage: 40 }),
+      chimeStages: SOUNDS.chime.chords.length,
       // How much of the boom survives a speaker that cannot do bass.
       boomThroughPhone: Number((thin.rms / Math.max(1e-9, full.rms)).toFixed(3)),
       steadyTone,
@@ -259,6 +264,8 @@ for (const [label, key] of [
   ['boom x4', 'boomFour'],
   ['rocket .4s', 'rocketShort'],
   ['rocket 1.4s', 'rocketLong'],
+  ['chime 1/12', 'chimeFirst'],
+  ['chime 12/12', 'chimeLast'],
   ['glide plain', 'steadyTone'],
   ['glide waver', 'waveryTone'],
   ['glide wild', 'wildTone'],
@@ -340,6 +347,33 @@ if (stats.waveryTone.wobble > WAVER_CEILING) {
   console.error(
     `\nFAIL: the shipped waver measures ${stats.waveryTone.wobble}, past ${WAVER_CEILING} — ` +
       `that is a vibrato, not a firework failing to hold its note.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// The chain's chords have to actually differ, or the progression is decoration
+// on a sound that never changes. Higher chords cross zero more often, so the
+// top of the scale must measurably outrank the bottom.
+if (stats.chimeLast.early <= stats.chimeFirst.early * 1.4) {
+  console.error(
+    `\nFAIL: the last chord of the progression (${stats.chimeLast.early}) is no higher than ` +
+      `the first (${stats.chimeFirst.early}). The stage is not selecting a chord.`,
+  );
+  stop();
+  process.exit(1);
+}
+if (Math.abs(stats.chimePastEnd.early - stats.chimeLast.early) > stats.chimeLast.early * 0.25) {
+  console.error(
+    `\nFAIL: a stage past the end of the progression (${stats.chimePastEnd.early}) does not ` +
+      `hold at the last chord (${stats.chimeLast.early}) — a long chain would wrap round.`,
+  );
+  stop();
+  process.exit(1);
+}
+if (stats.chimeFirst.ms < 120 || stats.chimeFirst.ms > 340) {
+  console.error(
+    `\nFAIL: a chord rings for ${stats.chimeFirst.ms}ms; it is meant to be about 200.`,
   );
   stop();
   process.exit(1);
