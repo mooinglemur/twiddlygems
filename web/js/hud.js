@@ -114,19 +114,33 @@ export class Hud {
     dom.overlay.classList.remove('hidden');
   }
 
+  /**
+   * The level the picker marks: the one being played, or, once it has been
+   * won, the one that "Next level" beside it would start.
+   *
+   * Marking the level just finished reads as though that is where the player
+   * still is, which is wrong the moment the panel offers to move them on.
+   */
+  focusedLevel() {
+    const { engine } = this;
+    const next = engine.levelIndex + 1;
+    return engine.status === Status.WON && next < engine.levelCount ? next : engine.levelIndex;
+  }
+
   /** The level picker. */
   showLevels(actions) {
     const { engine, dom } = this;
     dom.overlayTitle.textContent = 'Levels';
     dom.overlayBody.textContent = `${engine.unlocked} of ${engine.levelCount} unlocked.`;
 
+    const focused = this.focusedLevel();
     const names = engine.levelNames();
     const chips = [];
     for (let i = 0; i < engine.levelCount; i += 1) {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'level-chip';
-      if (i === engine.levelIndex) {
+      if (i === focused) {
         chip.classList.add('current');
       }
       const unlocked = i < engine.unlocked;

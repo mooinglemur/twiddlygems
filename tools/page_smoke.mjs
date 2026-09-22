@@ -177,6 +177,14 @@ globalThis.fetch = async (url) => {
 
 // ---- run the real front end ----
 
+// Pin the seed rather than letting the page deal a random one. Everything the
+// engine does follows from it, so this is what makes the run reproducible: one
+// of the checks below plays a level out by following the engine's own hints,
+// and that bot wins First Light on 99% of boards, not all of them. A test that
+// fails one run in a hundred is worse than one that only ever sees one board.
+const SAVE_KEY = 'twiddlygems.save.v1';
+store.set(SAVE_KEY, JSON.stringify({ seed: 20260920, unlocked: 1, level: 0 }));
+
 await import(path.resolve('web/js/main.js'));
 
 // boot() is async and pulls in a module graph, so give it real time rather
@@ -253,10 +261,13 @@ function overlayButton(label) {
   pump(30);
   assert.equal(calls.clearRect ?? 0, drawnBefore, 'the board kept running behind the title screen');
 
+  // Dropped first because the run above planted one: what is being checked is
+  // that starting a run writes the seed down, not that one was already there.
+  store.delete(SAVE_KEY);
   dispatch('solo-button', 'click', {});
   assert.ok(title.classList.contains('hidden'), 'choosing Solo Play left the title screen up');
   assert.equal(elements.get('app').getAttribute('aria-hidden'), null);
-  assert.ok(store.has('twiddlygems.save.v1'), 'starting a run did not pin its seed');
+  assert.ok(store.has(SAVE_KEY), 'starting a run did not pin its seed');
 }
 
 pump(FRAMES);
@@ -362,6 +373,12 @@ dispatch('sound-button', 'click', {});
 
   gesture('pointerdown');
   assert.equal(asked, 2, 'and once it is running, it stops asking');
+
+  // Hand the real object back. Both of these shadow what the class provides,
+  // and left in place they leave an Audio that says it is ready with no
+  // context behind it, which throws the moment anything later plays a sound.
+  delete audio.unlock;
+  delete audio.ready;
 }
 
 // The pop-over that announces a shuffle or a short move budget.
@@ -397,6 +414,42 @@ const grid = elements.get('level-grid');
 assert.ok(grid.children.length >= 10, 'the level picker is missing levels');
 assert.equal(grid.children[0].disabled, false, 'level one is locked');
 assert.equal(grid.children[9].disabled, true, 'a level nobody has reached is unlocked');
+assert.ok(
+  grid.children[0].classList.contains('current'),
+  'the picker does not mark the level being played',
+);
+click(overlayButton('Close'), 'the level picker has no way out');
+
+// Play the opening level out with the engine's own hints, which is the only
+// way to reach the panel that appears when a level ends.
+{
+  const { Status } = await import(path.resolve('web/js/engine.js'));
+  const { engine } = window.twiddlygems;
+  for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
+    if (engine.acceptsInput) {
+      const move = engine.hint();
+      if (move) {
+        engine.swap(...move);
+      }
+    }
+    pump(1);
+  }
+  assert.equal(engine.status, Status.WON, 'following the hints never finished level one');
+  pump(3);
+
+  const overlay = elements.get('overlay');
+  assert.ok(!overlay.classList.contains('hidden'), 'winning raised no panel');
+  assert.ok(
+    grid.classList.contains('hidden'),
+    'the finished-level panel is showing the level picker underneath its buttons',
+  );
+
+  // From there the picker marks where the player is going, not the level they
+  // just finished: it sits beside a button offering to start the next one.
+  click(overlayButton('Levels'), 'the finished-level panel offers no way to the picker');
+  const marked = grid.children.findIndex((chip) => chip.classList.contains('current'));
+  assert.equal(marked, 1, 'the picker marks the level just finished rather than the next one');
+}
 
 // Ending a run from that same menu asks first, then throws the progress away
 // and goes back to the title screen.
@@ -416,7 +469,7 @@ assert.equal(grid.children[9].disabled, true, 'a level nobody has reached is unl
   assert.ok(elements.get('overlay').classList.contains('hidden'), 'the menu is still over the title');
   assert.equal(engine.unlocked, 1, 'ending a run kept the levels it had unlocked');
   assert.equal(engine.levelIndex, 0, 'ending a run left us on a later level');
-  assert.ok(!store.has('twiddlygems.save.v1'), 'ending a run left the save behind');
+  assert.ok(!store.has(SAVE_KEY), 'ending a run left the save behind');
 }
 
 console.log(

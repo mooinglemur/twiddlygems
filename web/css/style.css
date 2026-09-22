@@ -150,9 +150,12 @@ button[disabled] { opacity: 0.4; cursor: default; }
   padding: 20px;
   z-index: 10;
 }
-/* The id selectors below set `display`, so hiding them needs the same weight:
-   a bare `.hidden` loses to `#title` and the panel stays on screen. */
-#overlay.hidden, #title.hidden, .hidden { display: none; }
+/* `!important` because this is a utility that means exactly one thing, and
+   every panel it is put on is an id selector that sets its own `display`. A
+   plain `.hidden` loses to all of them on specificity, so the JS adds the
+   class, the element stays on screen, and the only sign of it is a stale panel
+   in a screenshot. Naming each one instead only works until the next id. */
+.hidden { display: none !important; }
 
 #overlay-card {
   background: var(--panel);

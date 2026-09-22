@@ -196,6 +196,35 @@ for (const [name, metrics] of [
   await evaluate(`document.getElementById('levels-button').click()`);
   await sleep(400);
   await shoot(`${name}-04-levels`);
+
+  // `hidden` is a utility class, and every panel it goes on is an id selector
+  // that sets its own `display`, which outweighs a bare class. When that goes
+  // wrong the JS looks right and nothing throws: the panel simply stays on
+  // screen, which is how a stale level picker sat under the end-of-level
+  // buttons unnoticed. Only a real browser computes this, so it is checked
+  // here rather than in the stubbed page smoke.
+  const stuck = await evaluate(`
+    (() => {
+      const bad = [];
+      for (const element of document.querySelectorAll('[id]')) {
+        const had = element.classList.contains('hidden');
+        element.classList.add('hidden');
+        if (getComputedStyle(element).display !== 'none') {
+          bad.push(element.id);
+        }
+        if (!had) {
+          element.classList.remove('hidden');
+        }
+      }
+      return bad;
+    })()
+  `);
+  if (stuck.length) {
+    console.error(`the "hidden" class does not hide: ${stuck.join(', ')}`);
+    stop();
+    process.exit(1);
+  }
+
   await evaluate(`document.querySelector('#overlay-buttons button').click()`);
   await sleep(200);
 

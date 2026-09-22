@@ -6,13 +6,25 @@
 
 use crate::game::{Game, Status};
 use crate::level::{levels, LevelSpec};
+use crate::rng::Rng;
 
 pub struct Session {
     levels: Vec<LevelSpec>,
     index: usize,
     /// How many levels the player may pick from, counting from the first.
     unlocked: usize,
-    seed: u64,
+    /// Deals each level's board seed, in the order the levels are started.
+    ///
+    /// Starting a level draws the next one rather than deriving it from the
+    /// level's place in the ladder, so coming back to a level deals a fresh
+    /// board. A seed that happens to lay out badly is then one restart away
+    /// from a better one instead of something to grind against, which matters
+    /// once a level can be replayed for a score.
+    ///
+    /// The run as a whole stays reproducible: the same run seed walked through
+    /// the same levels in the same order deals the same boards, which is what
+    /// the tests and the screenshot tooling rely on.
+    deal: Rng,
     game: Game,
     name_buf: Vec<u8>,
     names_blob: Vec<u8>,
@@ -22,12 +34,13 @@ impl Session {
     pub fn new(seed: u64) -> Self {
         let levels = levels();
         let first = levels.first().cloned().expect("the ladder is never empty");
+        let mut deal = Rng::new(seed);
         let mut session = Session {
-            game: Game::new(first, level_seed(seed, 0)),
+            game: Game::new(first, deal.next_u64()),
             levels,
             index: 0,
             unlocked: 1,
-            seed,
+            deal,
             name_buf: Vec::new(),
             names_blob: Vec::new(),
         };
@@ -75,8 +88,7 @@ impl Session {
             return false;
         }
         self.index = index;
-        self.game = Game::new(self.levels[index].clone(), level_seed(self.seed, index));
-        self.sync_name();
+        self.deal_level();
         true
     }
 
@@ -96,9 +108,20 @@ impl Session {
         self.unlocked = self.unlocked.max(count.clamp(1, self.levels.len()));
     }
 
-    /// Replays the current level from the same seed.
+    /// Plays the current level again on a freshly dealt board.
+    ///
+    /// Not [`Game::restart`], which replays the same deal: a player who asks
+    /// for another go at a level they could not clear wants another board, not
+    /// the one that just beat them.
     pub fn retry(&mut self) {
-        self.game.restart();
+        self.deal_level();
+    }
+
+    /// Opens the current level on the next board the run has to give.
+    fn deal_level(&mut self) {
+        let seed = self.deal.next_u64();
+        self.game = Game::new(self.levels[self.index].clone(), seed);
+        self.sync_name();
     }
 
     pub fn update(&mut self, dt_ms: f32) {
@@ -116,11 +139,6 @@ impl Session {
         self.name_buf.clear();
         self.name_buf.extend_from_slice(self.levels[self.index].name.as_bytes());
     }
-}
-
-/// Each level gets its own reproducible board, derived from the run's seed.
-fn level_seed(seed: u64, index: usize) -> u64 {
-    seed ^ (index as u64).wrapping_add(1).wrapping_mul(0x9e37_79b9_7f4a_7c15)
 }
 
 #[cfg(test)]
@@ -216,6 +234,38 @@ mod tests {
         assert_eq!(session.unlocked(), 4, "restoring never takes a level away");
         session.set_unlocked(9_999);
         assert_eq!(session.unlocked(), session.level_count());
+    }
+
+    /// Every gem on the board, for comparing one deal against another.
+    fn deal_of(session: &Session) -> Vec<Option<crate::board::Gem>> {
+        let board = &session.game().board;
+        board.positions().map(|p| board.gem(p)).collect()
+    }
+
+    #[test]
+    fn another_go_at_a_level_deals_a_different_board() {
+        // A level that laid out badly should be one restart away from a better
+        // board rather than something to grind against.
+        let mut session = Session::new(7);
+        let before = deal_of(&session);
+        session.retry();
+        assert_ne!(before, deal_of(&session), "retrying replayed the same deal");
+    }
+
+    #[test]
+    fn a_run_walked_the_same_way_deals_the_same_boards() {
+        // Rerolling is per level start, not per call: a whole run still
+        // follows from its seed, which is what the screenshot tooling and the
+        // difficulty bots rely on.
+        let walk = |seed| {
+            let mut session = Session::new(seed);
+            session.retry();
+            session.set_unlocked(3);
+            assert!(session.load(2));
+            deal_of(&session)
+        };
+        assert_eq!(walk(42), walk(42), "the same run dealt two different sets of boards");
+        assert_ne!(walk(42), walk(43), "two runs dealt the same boards");
     }
 
     #[test]

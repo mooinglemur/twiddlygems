@@ -69,6 +69,14 @@ Because nothing links the two languages, `make abi` compares the exports and the
 shared enum numbering between `src/` and `web/js/` and fails the build on a
 mismatch, rather than letting it surface as a blank page.
 
+**Boards are dealt, not derived.** A run has one seed, and starting a level
+draws the next board seed from it rather than deriving one from the level's
+place in the ladder. So coming back to a level gives a different board, and a
+layout that happens to be miserable is one restart away from a better one
+instead of something to grind against. The run as a whole stays reproducible:
+the same seed walked through the same levels in the same order deals the same
+boards, which is what the difficulty bots and the screenshot tooling rely on.
+
 **The page opens on a title screen**, where a mode is chosen: Solo Play, or
 Archipelago once it exists. Nothing about the mode reaches the engine, which
 only ever knows about a session; the frame loop simply holds the clock until a
@@ -86,7 +94,7 @@ src/
   matching.rs   run finding, special awards, and chain reactions
   level.rs      objectives and the built-in level ladder
   game.rs       input, the phase state machine, scoring, the snapshot
-  session.rs    the level ladder and what is unlocked
+  session.rs    the level ladder, what is unlocked, and dealing each board
   ffi.rs        the C ABI the page calls
 web/
   index.html    the page shell
