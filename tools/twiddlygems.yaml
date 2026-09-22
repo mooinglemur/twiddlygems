@@ -1,0 +1,9 @@
+# A player file for `make apworld-gen`, which rolls a real seed to prove the
+# world generates rather than only that its rules hold.
+#
+# Nothing is set under the game's own heading because nothing is an option
+# yet: the ladder, the pool and the goal are all fixed in this first pass.
+# When there are options, this is where they would be tried.
+name: Tester
+game: Twiddly Gems
+Twiddly Gems: {}

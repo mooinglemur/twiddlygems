@@ -5,3 +5,12 @@
 # Not vendored: a pinned clone, the same one CI will make.
 /vendor
 /.venv
+# Where the .apworld is zipped up, and the scratch copy of the world it is
+# zipped from. The Python that makes up the world is tracked; this is only its
+# wrapper.
+/build
+# The world's data, which is a transformation of src/progression.rs and nothing
+# else. `make apdata` writes it, and everything that needs it builds it first.
+/worlds/twiddlygems/game.json
+# Left behind by running the apworld's tests.
+__pycache__/

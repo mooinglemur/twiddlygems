@@ -44,6 +44,10 @@ frame loop never runs, and you get a first frame that never advances. That is wh
 turned out to be. `make serve` is the one to use: a `.wasm` module cannot be loaded from a
 `file://` page, so opening `web/index.html` directly will not work.
 
+The Archipelago world has targets of its own, and they want a checkout to work
+against: `make ap-setup` once, then `make apworld-test` and `make apworld-gen`.
+See [The Archipelago side](#the-archipelago-side).
+
 ## How it fits together
 
 The engine is a dependency-free Rust crate compiled straight to
@@ -106,11 +110,17 @@ web/
   js/hud.js     score, objectives, the item feed, overlays
   js/main.js    bootstrap and the frame loop
   bin/balance.rs  difficulty measurement, see below
+  bin/apworld.rs  writes the Archipelago world out as data
+worlds/twiddlygems/
+  __init__.py     the apworld, which reads that data and adds no logic
+  test/           Archipelago's own tests, run against a pinned checkout
+  game.json       written by bin/apworld, not checked in
 tools/
   check_abi.py    engine/front-end ABI consistency
   abi_smoke.mjs   drives the built module from node
   page_smoke.mjs  boots the real front end against a stubbed browser
   shoot.mjs       plays the game in a real headless browser, writes screenshots
+  twiddlygems.yaml  a player file, for rolling a real seed
 ```
 
 ## Difficulty
@@ -782,6 +792,64 @@ What none of this can tell you is whether a sound is any good. Levels,
 durations and brightness are measurable; character is not. Listen, then edit
 `sounds.js`.
 
+## The Archipelago side
+
+The apworld holds no logic. What the items are, where they can be found and
+what each place asks for first are settled in `progression.rs`, because the
+solo game plays by them too, and one game answering a question two ways is the
+bug this arrangement exists to prevent. `cargo run --bin apworld` writes them
+out; `worlds/twiddlygems/game.json` is that output.
+
+**The rules go over as rules.** Archipelago's rule builder serializes to dicts
+and reads them back with `rule_from_dict`, so a `Requirement` written once in
+Rust arrives in Python as the real thing: `All` is its `And`, `Has` is its
+`Has`, `Reached` is its `CanReachLocation`, `Always` is its `True_`. The Python
+package reads the file, builds one region, hangs every location off it, and
+writes no logic at all. Regenerate the data and the world follows.
+
+`game.json` is not checked in. It is a transformation of the engine and nothing
+else, so the engine is the copy worth keeping: a second one in the tree could
+only ever be right or stale. Every target that needs it writes it first, and
+`make apworld` puts it in the zip.
+
+```
+make apdata          # regenerate worlds/twiddlygems/game.json
+make apworld         # zip it into build/twiddlygems.apworld
+make apworld-test    # Archipelago's own tests, against a pinned checkout
+make apworld-gen     # roll a real seed from the source tree
+make apworld-install # install the zip as a player would, and roll one from that
+make ap-setup        # clone Archipelago 0.6.7 and make the venv those need
+```
+
+The last two are not the same check, and the difference bit once already. A
+module inside an `.apworld` is inside a zip, with no directory to read a data
+file out of, so reading `game.json` by path worked in the checkout, passed
+every test, and failed for anybody who installed the zip. It goes through the
+loader now. Nothing else here can catch that, so the zip gets installed and
+generated from.
+
+`WorldTestBase` brings the three checks every world has to pass: that nothing
+is reachable from nowhere, that everything is reachable with everything, and
+that a real fill can be made. That last one is the completability gate, done by
+Archipelago's generator rather than by ours, against the same rules the solo
+placement is filled from. The tests beside them are this game's own: that the
+opening level asks for nothing, that a score mark wants the unlocks, that a
+gold wants two of that level's moves and is not satisfied by one.
+
+**The goal is gold on the last level**, not clearing it. The difference matters
+more than it looks. Clearing a level asks for nothing but having reached it, so
+a goal of "clear the last one" is one the player holds the moment they connect:
+the generator sees a game already beatable, the playthrough comes back with no
+spheres in it, and every item in the world is effectively optional. That is not
+a guess; it is what the first generated seed did. Gold asks for all five
+unlocks and that level's own moves, so finishing means collecting things and
+the spheres mean something.
+
+A world submits as many items as it has locations, and this game has more
+places to look than things to find: fifty locations against eighteen distinct
+items. The rest is filler, and the filler is more moves on some level, the only
+item here that cannot make a seed easier or harder to finish.
+
 ## Where this is going
 
 1. **A playable solo game.** Done: mechanics, levels, objectives, and the browser
@@ -792,8 +860,10 @@ durations and brightness are measurable; character is not. Listen, then edit
    up, found by clearing levels, beating their score marks and making chains in
    solo, and delivered by the multiworld later. Both sides fill the same
    `Inventory`, so "can this be cleared from here" is one question asked of one
-   thing. Still to come: the trap and usable items, which need somewhere to
-   keep and spend them; and emitting the apworld from the same tables.
+   thing. The apworld is emitted from those same tables and generates real
+   seeds. Still to come: the trap and usable items, which need somewhere to
+   keep and spend them; options, since everything is fixed in this first pass;
+   and the client that connects a run to a server.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles

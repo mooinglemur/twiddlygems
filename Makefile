@@ -10,7 +10,19 @@ BUILT  := target/$(TARGET)/release/twiddlygems.wasm
 OUT    := web/twiddlygems.wasm
 PORT   ?= 8080
 
-.PHONY: all wasm test abi check serve smoke shots audio balance clean target-check
+# The Archipelago side. The world is a directory under worlds/; an .apworld is
+# that directory zipped. AP is a pinned clone rather than a dependency, so the
+# tests run against a tree that is not here until someone makes it: see
+# ap-setup.
+AP      := vendor/Archipelago
+VENV    := .venv
+WORLD   := worlds/twiddlygems
+APDATA  := $(WORLD)/game.json
+APWORLD := build/twiddlygems.apworld
+AP_TAG  ?= 0.6.7
+
+.PHONY: all wasm test abi check serve smoke shots audio balance clean target-check \
+	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link
 
 all: check wasm
 
@@ -66,6 +78,101 @@ audio:
 balance:
 	$(CARGO) run --release --bin balance
 
+## Write the Archipelago world's data out of the engine.
+##
+## The rules, the items and the locations all live in src/progression.rs,
+## because the solo game plays by them too. This is how they reach the Python
+## side: as data, so there is one answer rather than two.
+##
+## Not checked in. It is a transformation of the engine and nothing else, so
+## the engine is the copy worth keeping; everything that needs the file builds
+## it first, and a checked-in copy could only ever be right or stale.
+apdata:
+	$(CARGO) run --quiet --release --bin apworld > $(APDATA)
+
+## Zip the world into an .apworld, which is all an .apworld is.
+##
+## The tests are left out: they import Archipelago's own test bases, which only
+## exist inside a checkout, so they are for this repository rather than for the
+## file a player installs.
+apworld: apdata
+	rm -rf build/apworld
+	mkdir -p build/apworld
+	cp -r $(WORLD) build/apworld/twiddlygems
+	rm -rf build/apworld/twiddlygems/test build/apworld/twiddlygems/__pycache__
+	cd build/apworld && $(PYTHON) -m zipfile -c ../$(notdir $(APWORLD)) twiddlygems
+	@echo "built $(APWORLD) ($$(wc -c < $(APWORLD) | awk '{printf "%.0f KiB", $$1/1024}'))"
+
+## Run Archipelago's own tests against the world, in a pinned checkout.
+##
+## The three that come free from WorldTestBase are the ones worth having: that
+## nothing is reachable from nowhere, that everything is reachable with
+## everything, and that a real fill can be made. That last one is the
+## completability gate, done by Archipelago's generator rather than by ours.
+apworld-test: apdata ap-link
+	cd $(AP) && $(CURDIR)/$(VENV)/bin/python -m unittest worlds.twiddlygems.test.test_logic
+
+## Roll a real seed, which is the check the unit tests cannot be.
+##
+## Generation is the whole pipeline: options parsed, a world built, the pool
+## filled, a playthrough calculated and an output archive written. The spoiler
+## it leaves in build/ap/out is worth reading, since it says where this seed
+## put everything and in what order a player would find it.
+apworld-gen: apdata ap-link
+	rm -rf build/ap/out
+	mkdir -p build/ap/players build/ap/out
+	cp tools/twiddlygems.yaml build/ap/players/
+	cd $(AP) && SKIP_REQUIREMENTS_UPDATE=1 $(CURDIR)/$(VENV)/bin/python Generate.py \
+		--player_files_path $(CURDIR)/build/ap/players \
+		--outputpath $(CURDIR)/build/ap/out \
+		--seed 20260922
+
+## Install the zip the way a player would, and roll a seed from that.
+##
+## The check only the zip can fail. A module inside an .apworld has no
+## directory to read a data file out of, so anything that opens one by path
+## works in a checkout, passes every test here, and then fails for everybody
+## who installed the zip. Ask me how I know.
+apworld-install: apworld
+	@test -d $(AP) || { echo "error: no Archipelago checkout. Run 'make ap-setup'."; exit 1; }
+	rm -f $(AP)/worlds/twiddlygems
+	cp $(APWORLD) $(AP)/custom_worlds/
+	rm -rf build/ap/installed
+	mkdir -p build/ap/players build/ap/installed
+	cp tools/twiddlygems.yaml build/ap/players/
+	cd $(AP) && SKIP_REQUIREMENTS_UPDATE=1 $(CURDIR)/$(VENV)/bin/python Generate.py \
+		--player_files_path $(CURDIR)/build/ap/players \
+		--outputpath $(CURDIR)/build/ap/installed \
+		--seed 20260922
+
+## Put the world where Archipelago can import it. The checkout is ignored by
+## git, so the link lives outside the repository's own tree.
+##
+## The installed zip goes first: two copies of one game under different names
+## is a checkout that generates nothing.
+ap-link:
+	@test -d $(AP) || { echo "error: no Archipelago checkout. Run 'make ap-setup'."; exit 1; }
+	@rm -f $(AP)/custom_worlds/twiddlygems.apworld
+	@ln -sfn $(CURDIR)/$(WORLD) $(AP)/worlds/twiddlygems
+
+## Clone Archipelago and make the virtualenv the apworld tests need.
+##
+## Far less than its requirements.txt: generation never opens the GUI, so kivy
+## is not needed. Both directories are ignored by git.
+ap-setup:
+	test -d $(AP) || git clone --depth 1 --branch $(AP_TAG) \
+		https://github.com/ArchipelagoMW/Archipelago.git $(AP)
+	test -d $(VENV) || $(PYTHON) -m venv $(VENV)
+	$(VENV)/bin/python -m pip install --quiet colorama PyYAML jellyfish schema orjson \
+		typing_extensions platformdirs certifi websockets pathspec
+	# Generate.py reads every world's requirements through pkg_resources, which
+	# setuptools stopped shipping at 81, and loading an installed .apworld goes
+	# through worlds/Files.py, which imports bsdiff4. Neither is needed to run
+	# the world's own tests out of the checkout.
+	$(VENV)/bin/python -m pip install --quiet "setuptools<81" bsdiff4
+	@echo "Archipelago $(AP_TAG) ready in $(AP)"
+
 clean:
 	$(CARGO) clean
 	rm -f $(OUT)
+	rm -rf build

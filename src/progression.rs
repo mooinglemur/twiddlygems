@@ -51,6 +51,21 @@ pub enum Item {
 }
 
 impl Item {
+    /// A stable number for this item, the way [`Location::id`] is one for a
+    /// location.
+    ///
+    /// What Archipelago calls it by in a datapackage, which is the same kind
+    /// of promise: a number that moves once a seed has been rolled hands the
+    /// player somebody else's item. Each kind gets its own thousand so a new
+    /// kind of item, a trap say, cannot renumber the ones already out there.
+    /// An unlock takes the special's own code, which is already fixed.
+    pub fn id(self) -> u32 {
+        match self {
+            Item::Unlock(special) => special.code() as u32,
+            Item::Moves { level } => MOVES_ID_BASE + level as u32,
+        }
+    }
+
     /// Which sort of item this is, for the event that announces it. See
     /// [`crate::game::EV_ITEM`].
     pub fn kind(self) -> u8 {
@@ -191,6 +206,18 @@ impl Location {
 const CHAIN_ID_BASE: u32 = 1_000;
 const SILVER_ID_BASE: u32 = 2_000;
 const GOLD_ID_BASE: u32 = 3_000;
+
+/// Where the move items start. The unlocks sit below it on their own codes.
+const MOVES_ID_BASE: u32 = 1_000;
+
+/// What Archipelago's own numbers are offset by.
+///
+/// Its ids only have to be unique within one game, so the engine's own
+/// numbering would do. Offsetting keeps the two apart all the same: a number
+/// read off a spoiler log or a tracker is unmistakably an Archipelago id and
+/// not a location id out of a solo save, and the day one of them has to move
+/// the other can stay put. The digits are the ASCII for "tw".
+pub const AP_ID_BASE: u32 = 7_477_000;
 
 /// The location index standing for no location at all: an item the multiworld
 /// sent rather than one this run found.
@@ -1109,6 +1136,26 @@ mod tests {
                 "{levels} levels give {pool} items and only {places} places to hide them",
             );
         }
+    }
+
+    #[test]
+    fn every_item_has_a_number_of_its_own() {
+        // These go into an Archipelago datapackage, where two items sharing a
+        // number is two items nobody can tell apart.
+        let ids: Vec<u32> = items(50).iter().map(|item| item.id()).collect();
+        let mut unique = ids.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), ids.len(), "two items share a number");
+        // And the two kinds stay in their own ranges, so a new kind of item
+        // can be added without renumbering either.
+        assert!(
+            items(50).iter().all(|item| match item {
+                Item::Unlock(_) => item.id() < MOVES_ID_BASE,
+                Item::Moves { .. } => item.id() >= MOVES_ID_BASE,
+            }),
+            "an item is numbered outside its own range",
+        );
     }
 
     #[test]
