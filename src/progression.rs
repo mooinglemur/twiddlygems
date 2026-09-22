@@ -1139,6 +1139,53 @@ mod tests {
     }
 
     #[test]
+    fn the_numbers_already_written_down_still_mean_what_they_meant() {
+        // Written out rather than worked out, because working them out the
+        // same way twice proves nothing. These numbers are in saves on
+        // people's machines and in Archipelago seeds already rolled; what a
+        // number means is a promise, and this is the promise.
+        //
+        // The tempting refactor is to number these by where they sit in
+        // `items` and `locations`, since both lists are built and indexed for
+        // the event stream already. Those positions move with the length of
+        // the ladder, so a thirteen level game and a fifty level one would
+        // disagree about what 2013 means.
+        //
+        // Appending levels is safe and so is adding a kind of item, which is
+        // what the thousands are for. Inserting a level in the middle is not,
+        // and nothing here can catch it: the numbers follow a level's place in
+        // the ladder, so a new level five renumbers every level above it.
+        let places = [
+            (0, "Level 1 Clear"),
+            (12, "Level 13 Clear"),
+            (1_002, "2 Chain"),
+            (1_012, "12 Chain"),
+            (2_000, "Level 1 Silver"),
+            (2_012, "Level 13 Silver"),
+            (3_000, "Level 1 Gold"),
+            (3_049, "Level 50 Gold"),
+        ];
+        for (id, name) in places {
+            let at = Location::from_id(id).expect("a number in use is a location");
+            assert_eq!(location_name(at), name, "location {id} changed meaning");
+            assert_eq!(at.id(), id, "and it does not answer to that number any more");
+        }
+
+        let things = [
+            (1, Item::Unlock(Special::LineH)),
+            (2, Item::Unlock(Special::LineV)),
+            (3, Item::Unlock(Special::Cross)),
+            (4, Item::Unlock(Special::Rainbow)),
+            (5, Item::Unlock(Special::Rocket)),
+            (1_000, Item::Moves { level: 0 }),
+            (1_049, Item::Moves { level: 49 }),
+        ];
+        for (id, item) in things {
+            assert_eq!(item.id(), id, "{} changed its number", item_name(item));
+        }
+    }
+
+    #[test]
     fn every_item_has_a_number_of_its_own() {
         // These go into an Archipelago datapackage, where two items sharing a
         // number is two items nobody can tell apart.

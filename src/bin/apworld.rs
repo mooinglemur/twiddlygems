@@ -12,9 +12,12 @@
 //! which means a [`Requirement`] can be emitted in its vocabulary and arrive as
 //! the real thing: `All` is its `And`, `Has` is its `Has`, `Reached` is its
 //! `CanReachLocation`, and `Always` is its `True_`. The Python side builds a
-//! world out of this file and writes no logic at all.
+//! world out of these files and writes no logic at all.
 //!
-//!     cargo run --release --bin apworld > worlds/twiddlygems/game.json
+//!     cargo run --release --bin apworld -- worlds/twiddlygems/data
+
+use std::fs;
+use std::path::Path;
 
 use twiddlygems::level::levels;
 use twiddlygems::progression::{
@@ -43,73 +46,82 @@ fn goal(levels: usize) -> Requirement {
 }
 
 fn main() {
+    let into = std::env::args().nth(1).unwrap_or_else(|| {
+        eprintln!("usage: apworld <directory>");
+        eprintln!("  writes game.json, items.json and locations.json into it");
+        std::process::exit(2);
+    });
+    let into = Path::new(&into);
+    fs::create_dir_all(into).expect("the data directory can be made");
+
     let ladder = levels();
     let count = ladder.len();
 
-    let items: Vec<String> = item_table(count)
-        .into_iter()
-        .map(|(item, copies)| {
-            object(&[
-                ("name", string(&item_name(item))),
-                ("id", number(AP_ID_BASE + item.id())),
-                ("classification", string(classification(item))),
-                ("count", number(copies)),
-                ("top_up", boolean(tops_up(item))),
-            ])
-        })
-        .collect();
-
-    let places: Vec<String> = locations(count)
-        .into_iter()
-        .map(|at| {
-            object(&[
-                ("name", string(&location_name(at))),
-                ("id", number(AP_ID_BASE + at.id())),
-                ("rule", rule(&requirement(at, count))),
-            ])
-        })
-        .collect();
-
-    let names: Vec<String> = ladder.iter().map(|level| string(level.name)).collect();
-
-    println!(
-        "{}",
-        object(&[
-            ("game", string(GAME)),
-            // Written so the Python side can say where this came from without
-            // anyone having to remember to keep a version number in step.
-            ("generated_by", string("cargo run --bin apworld")),
-            ("levels", array(&names)),
-            ("moves_per_level", number(MOVES_PER_LEVEL as u32)),
-            ("shortest_chain", number(SHORTEST_CHAIN)),
-            ("longest_chain", number(LONGEST_CHAIN)),
-            ("reliable_chain", number(RELIABLE_CHAIN)),
-            ("items", array(&items)),
-            ("locations", array(&places)),
-            ("goal", rule(&goal(count))),
-        ]),
-    );
+    write(into, "game.json", &world(&ladder, count));
+    write(into, "items.json", &item_table(count));
+    write(into, "locations.json", &location_table(count));
 }
 
-/// Every distinct item and how many of it the pool holds.
+/// What the world is, apart from its items and the places they hide.
+fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
+    Json::Obj(vec![
+        ("game", Json::Str(GAME.to_string())),
+        // Written so the Python side can say where this came from without
+        // anyone having to remember to keep a version number in step.
+        ("generated_by", Json::Str("cargo run --bin apworld".to_string())),
+        (
+            "levels",
+            Json::Arr(ladder.iter().map(|level| Json::Str(level.name.to_string())).collect()),
+        ),
+        ("moves_per_level", Json::Num(MOVES_PER_LEVEL as u32)),
+        ("shortest_chain", Json::Num(SHORTEST_CHAIN)),
+        ("longest_chain", Json::Num(LONGEST_CHAIN)),
+        ("reliable_chain", Json::Num(RELIABLE_CHAIN)),
+        ("goal", rule(&goal(count))),
+    ])
+}
+
+/// Every distinct item, in the order the numbers are settled in.
 ///
-/// Read off [`item_pool`] rather than worked out again here, so the apworld
-/// and the solo run are filling from the same pool by construction. Anything
-/// else would leave the two games subtly different lengths.
-/// In the table's order rather than the pool's, because that is the order the
-/// numbers are settled in. An item named but never placed would come through
-/// with a count of zero, which is a thing to see rather than a thing to hide:
-/// Archipelago still needs its name and number, since a seed can hand one over
-/// from another world's filler.
-fn item_table(levels: usize) -> Vec<(Item, u32)> {
+/// How many of each comes from [`item_pool`] rather than being worked out
+/// again here, so the apworld and the solo run fill from the same pool by
+/// construction. An item named but never placed comes through with a count of
+/// zero, which is a thing to see rather than a thing to hide: Archipelago
+/// still needs its name and number, since a seed can hand one over from
+/// another world.
+fn item_table(levels: usize) -> Json {
     let pool = item_pool(levels);
-    items(levels)
-        .into_iter()
-        .map(|item| {
-            let copies = pool.iter().filter(|other| **other == item).count() as u32;
-            (item, copies)
-        })
-        .collect()
+    Json::Arr(
+        items(levels)
+            .into_iter()
+            .map(|item| {
+                let copies = pool.iter().filter(|other| **other == item).count() as u32;
+                Json::Obj(vec![
+                    ("name", Json::Str(item_name(item))),
+                    ("id", Json::Num(AP_ID_BASE + item.id())),
+                    ("classification", Json::Str(classification(item).to_string())),
+                    ("count", Json::Num(copies)),
+                    ("top_up", Json::Bool(tops_up(item))),
+                ])
+            })
+            .collect(),
+    )
+}
+
+/// Every place an item can be found, and what it asks for first.
+fn location_table(levels: usize) -> Json {
+    Json::Arr(
+        locations(levels)
+            .into_iter()
+            .map(|at| {
+                Json::Obj(vec![
+                    ("name", Json::Str(location_name(at))),
+                    ("id", Json::Num(AP_ID_BASE + at.id())),
+                    ("rule", rule(&requirement(at, levels))),
+                ])
+            })
+            .collect(),
+    )
 }
 
 /// How much Archipelago should care about an item going missing.
@@ -150,54 +162,124 @@ fn tops_up(item: Item) -> bool {
 /// `rule_from_dict` looks up. `options` and `filtered_resolution` are written
 /// out at their defaults: they are how a world varies a rule by its yaml
 /// settings, and nothing here varies yet.
-fn rule(requirement: &Requirement) -> String {
+fn rule(requirement: &Requirement) -> Json {
     match requirement {
-        Requirement::Always => ap_rule("True_", &[("args", object(&[]))]),
+        Requirement::Always => ap_rule("True_", ("args", Json::Obj(vec![]))),
         Requirement::All(parts) => {
-            let children: Vec<String> = parts.iter().map(rule).collect();
-            ap_rule("And", &[("children", array(&children))])
+            ap_rule("And", ("children", Json::Arr(parts.iter().map(rule).collect())))
         }
         Requirement::Has { item, count } => ap_rule(
             "Has",
-            &[(
+            (
                 "args",
-                object(&[
-                    ("item_name", string(&item_name(*item))),
-                    ("count", number(*count)),
+                Json::Obj(vec![
+                    ("item_name", Json::Str(item_name(*item))),
+                    ("count", Json::Num(*count)),
                 ]),
-            )],
+            ),
         ),
         Requirement::Reached(at) => ap_rule(
             "CanReachLocation",
-            &[("args", object(&[("location_name", string(&location_name(*at)))]))],
+            (
+                "args",
+                Json::Obj(vec![("location_name", Json::Str(location_name(*at)))]),
+            ),
         ),
     }
 }
 
 /// The wrapper every serialized rule carries, whatever it is.
-fn ap_rule(name: &str, rest: &[(&str, String)]) -> String {
-    let mut fields = vec![
-        ("rule", string(name)),
-        ("options", array(&[])),
-        ("filtered_resolution", "false".to_string()),
-    ];
-    fields.extend_from_slice(rest);
-    object(&fields)
+fn ap_rule(name: &str, rest: (&'static str, Json)) -> Json {
+    Json::Obj(vec![
+        ("rule", Json::Str(name.to_string())),
+        ("options", Json::Arr(vec![])),
+        ("filtered_resolution", Json::Bool(false)),
+        rest,
+    ])
+}
+
+fn write(into: &Path, name: &str, value: &Json) {
+    let mut text = String::new();
+    value.write(&mut text, 0);
+    text.push('\n');
+    let path = into.join(name);
+    fs::write(&path, &text).unwrap_or_else(|e| panic!("could not write {}: {e}", path.display()));
+    println!("wrote {} ({} bytes)", path.display(), text.len());
 }
 
 // ---- the smallest JSON writer that will do ----
 //
 // The engine has no dependencies and this is the only thing in the tree that
 // writes JSON, so it writes it by hand. What it has to produce is a handful of
-// fixed shapes, none of them nested deeply, and `make apworld-test` parses
-// every one of them with a real parser before believing any of it.
+// shapes, and `make apworld-test` parses every one of them with a real parser
+// before believing any of it.
+
+enum Json {
+    Str(String),
+    Num(u32),
+    Bool(bool),
+    Arr(Vec<Json>),
+    Obj(Vec<(&'static str, Json)>),
+}
+
+/// How far one level of nesting is indented.
+const STEP: usize = 2;
+
+impl Json {
+    /// Writes this value out, indented, for reading rather than for size.
+    ///
+    /// Nothing here is big enough for the difference to matter, and these
+    /// files are read by people: what a location asks for is a nested rule
+    /// several deep, and on one line it is unreadable.
+    ///
+    /// Empty containers stay on their line, because a `{}` broken over three
+    /// lines reads as though something is missing from it.
+    fn write(&self, out: &mut String, depth: usize) {
+        let pad = |out: &mut String, depth: usize| out.push_str(&" ".repeat(depth * STEP));
+        match self {
+            Json::Str(text) => out.push_str(&quote(text)),
+            Json::Num(value) => out.push_str(&value.to_string()),
+            Json::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Json::Arr(values) if values.is_empty() => out.push_str("[]"),
+            Json::Arr(values) => {
+                out.push_str("[\n");
+                for (at, value) in values.iter().enumerate() {
+                    pad(out, depth + 1);
+                    value.write(out, depth + 1);
+                    if at + 1 < values.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                pad(out, depth);
+                out.push(']');
+            }
+            Json::Obj(fields) if fields.is_empty() => out.push_str("{}"),
+            Json::Obj(fields) => {
+                out.push_str("{\n");
+                for (at, (name, value)) in fields.iter().enumerate() {
+                    pad(out, depth + 1);
+                    out.push_str(&quote(name));
+                    out.push_str(": ");
+                    value.write(out, depth + 1);
+                    if at + 1 < fields.len() {
+                        out.push(',');
+                    }
+                    out.push('\n');
+                }
+                pad(out, depth);
+                out.push('}');
+            }
+        }
+    }
+}
 
 /// A JSON string, with the escapes the spec insists on.
 ///
 /// Item and location names are ours and are plain ASCII words today, but a
 /// level named `The "Vault"` should not silently produce a file nothing can
 /// parse.
-fn string(text: &str) -> String {
+fn quote(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
     for c in text.chars() {
@@ -213,22 +295,4 @@ fn string(text: &str) -> String {
     }
     out.push('"');
     out
-}
-
-fn number(value: u32) -> String {
-    value.to_string()
-}
-
-fn boolean(value: bool) -> String {
-    value.to_string()
-}
-
-fn object(fields: &[(&str, String)]) -> String {
-    let body: Vec<String> =
-        fields.iter().map(|(name, value)| format!("{}: {}", string(name), value)).collect();
-    format!("{{{}}}", body.join(", "))
-}
-
-fn array(values: &[String]) -> String {
-    format!("[{}]", values.join(", "))
 }

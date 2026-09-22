@@ -17,7 +17,7 @@ PORT   ?= 8080
 AP      := vendor/Archipelago
 VENV    := .venv
 WORLD   := worlds/twiddlygems
-APDATA  := $(WORLD)/game.json
+APDATA  := $(WORLD)/data
 APWORLD := build/twiddlygems.apworld
 AP_TAG  ?= 0.6.7
 
@@ -88,7 +88,7 @@ balance:
 ## the engine is the copy worth keeping; everything that needs the file builds
 ## it first, and a checked-in copy could only ever be right or stale.
 apdata:
-	$(CARGO) run --quiet --release --bin apworld > $(APDATA)
+	@$(CARGO) run --quiet --release --bin apworld -- $(APDATA)
 
 ## Zip the world into an .apworld, which is all an .apworld is.
 ##

@@ -4,14 +4,17 @@ Nothing in this package decides anything. What the items are, where they can be
 found and what each place asks for first are settled in the engine, in
 ``src/progression.rs``, because the solo game answers those same questions from
 those same tables and the two have to be one answer rather than two. The engine
-writes them out with ``cargo run --bin apworld``; ``game.json`` next to this
-file is that output, and everything below is the reading of it.
+writes them out with ``cargo run --bin apworld``; ``data/`` next to this file is
+that output, and everything below is the reading of it.
 
 The rules come over as rules, not as prose to be reimplemented. Archipelago's
 rule builder serializes to dicts and reads them back with ``rule_from_dict``, so
 a requirement written once in Rust arrives here as the real thing: ``And``,
-``Has``, ``CanReachLocation``, ``True_``. Regenerate ``game.json`` and the logic
-here follows, with nothing to keep in step by hand.
+``Has``, ``CanReachLocation``, ``True_``. Regenerate the data and the logic here
+follows, with nothing to keep in step by hand.
+
+``data/`` holds three files: the items, the locations with their rules, and the
+world itself (its name, its ladder and its goal). None of them are checked in.
 """
 
 from __future__ import annotations
@@ -24,15 +27,23 @@ from BaseClasses import Item, ItemClassification, Location, Region
 from Options import PerGameCommonOptions
 from worlds.AutoWorld import World
 
-# Through the loader rather than off the filesystem. An installed .apworld is a
-# zip, and a module inside one has no directory to read a file out of: opening
-# it by path works in a checkout, where the tests run, and fails for every
-# player who installed the zip.
-_DATA = pkgutil.get_data(__package__, "game.json")
-if _DATA is None:  # pragma: no cover - a package missing its own data
-    raise RuntimeError("twiddlygems is missing game.json; regenerate it with 'make apdata'")
+def _data(name: str) -> Any:
+    """Reads one of the generated files.
 
-GAME_DATA: dict[str, Any] = json.loads(_DATA.decode("utf-8"))
+    Through the loader rather than off the filesystem. An installed .apworld is
+    a zip, and a module inside one has no directory to read a file out of:
+    opening it by path works in a checkout, where the tests run, and fails for
+    every player who installed the zip.
+    """
+    raw = pkgutil.get_data(__package__, f"data/{name}")
+    if raw is None:  # pragma: no cover - a package missing its own data
+        raise RuntimeError(f"twiddlygems is missing data/{name}; write it with 'make apdata'")
+    return json.loads(raw.decode("utf-8"))
+
+
+GAME_DATA: dict[str, Any] = _data("game.json")
+ITEMS: list[dict[str, Any]] = _data("items.json")
+LOCATIONS: list[dict[str, Any]] = _data("locations.json")
 
 CLASSIFICATIONS = {
     "progression": ItemClassification.progression,
@@ -41,12 +52,11 @@ CLASSIFICATIONS = {
     "trap": ItemClassification.trap,
 }
 
-ITEMS_BY_NAME = {item["name"]: item for item in GAME_DATA["items"]}
-LOCATIONS_BY_NAME = {at["name"]: at for at in GAME_DATA["locations"]}
+ITEMS_BY_NAME = {item["name"]: item for item in ITEMS}
 
 #: The items there may be more of than the pool asks for. The engine says
 #: which, for the same reason it says everything else here.
-TOP_UP_NAMES = [item["name"] for item in GAME_DATA["items"] if item["top_up"]]
+TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
 
 
 class TwiddlyGemsItem(Item):
@@ -74,14 +84,14 @@ class TwiddlyGemsWorld(World):
     # as a connection.
     topology_present = False
 
-    item_name_to_id = {item["name"]: item["id"] for item in GAME_DATA["items"]}
-    location_name_to_id = {at["name"]: at["id"] for at in GAME_DATA["locations"]}
+    item_name_to_id = {item["name"]: item["id"] for item in ITEMS}
+    location_name_to_id = {at["name"]: at["id"] for at in LOCATIONS}
 
     def create_regions(self) -> None:
         menu = Region(self.origin_region_name, self.player, self.multiworld)
         menu.locations += [
             TwiddlyGemsLocation(self.player, at["name"], at["id"], menu)
-            for at in GAME_DATA["locations"]
+            for at in LOCATIONS
         ]
         self.multiworld.regions.append(menu)
 
@@ -103,7 +113,7 @@ class TwiddlyGemsWorld(World):
     def create_items(self) -> None:
         pool = [
             self.create_item(item["name"])
-            for item in GAME_DATA["items"]
+            for item in ITEMS
             for _ in range(item["count"])
         ]
         # A world submits as many items as it has locations. The game has more
@@ -115,7 +125,7 @@ class TwiddlyGemsWorld(World):
         self.multiworld.itempool += pool
 
     def set_rules(self) -> None:
-        for at in GAME_DATA["locations"]:
+        for at in LOCATIONS:
             self.set_rule(self.get_location(at["name"]), self.rule_from_dict(at["rule"]))
         self.set_completion_rule(self.rule_from_dict(GAME_DATA["goal"]))
 

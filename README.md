@@ -114,7 +114,8 @@ web/
 worlds/twiddlygems/
   __init__.py     the apworld, which reads that data and adds no logic
   test/           Archipelago's own tests, run against a pinned checkout
-  game.json       written by bin/apworld, not checked in
+  data/           game.json, items.json, locations.json: written by
+                  bin/apworld, not checked in
 tools/
   check_abi.py    engine/front-end ABI consistency
   abi_smoke.mjs   drives the built module from node
@@ -798,7 +799,10 @@ The apworld holds no logic. What the items are, where they can be found and
 what each place asks for first are settled in `progression.rs`, because the
 solo game plays by them too, and one game answering a question two ways is the
 bug this arrangement exists to prevent. `cargo run --bin apworld` writes them
-out; `worlds/twiddlygems/game.json` is that output.
+out; `worlds/twiddlygems/data/` is that output, as three files: the items, the
+locations with their rules, and the world itself (its name, its ladder, its
+goal). Indented rather than packed, because what a location asks for is a
+nested rule several deep and on one line it cannot be read.
 
 **The rules go over as rules.** Archipelago's rule builder serializes to dicts
 and reads them back with `rule_from_dict`, so a `Requirement` written once in
@@ -807,13 +811,13 @@ Rust arrives in Python as the real thing: `All` is its `And`, `Has` is its
 package reads the file, builds one region, hangs every location off it, and
 writes no logic at all. Regenerate the data and the world follows.
 
-`game.json` is not checked in. It is a transformation of the engine and nothing
+None of it is checked in. It is a transformation of the engine and nothing
 else, so the engine is the copy worth keeping: a second one in the tree could
-only ever be right or stale. Every target that needs it writes it first, and
-`make apworld` puts it in the zip.
+only ever be right or stale. Every target that needs the data writes it first,
+and `make apworld` puts it in the zip.
 
 ```
-make apdata          # regenerate worlds/twiddlygems/game.json
+make apdata          # write worlds/twiddlygems/data/
 make apworld         # zip it into build/twiddlygems.apworld
 make apworld-test    # Archipelago's own tests, against a pinned checkout
 make apworld-gen     # roll a real seed from the source tree
@@ -823,7 +827,7 @@ make ap-setup        # clone Archipelago 0.6.7 and make the venv those need
 
 The last two are not the same check, and the difference bit once already. A
 module inside an `.apworld` is inside a zip, with no directory to read a data
-file out of, so reading `game.json` by path worked in the checkout, passed
+file out of, so reading the data by path worked in the checkout, passed
 every test, and failed for anybody who installed the zip. It goes through the
 loader now. Nothing else here can catch that, so the zip gets installed and
 generated from.

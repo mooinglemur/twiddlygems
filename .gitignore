@@ -11,6 +11,6 @@
 /build
 # The world's data, which is a transformation of src/progression.rs and nothing
 # else. `make apdata` writes it, and everything that needs it builds it first.
-/worlds/twiddlygems/game.json
+/worlds/twiddlygems/data/
 # Left behind by running the apworld's tests.
 __pycache__/
