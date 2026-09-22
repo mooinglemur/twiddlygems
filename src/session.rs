@@ -397,7 +397,14 @@ mod tests {
         assert!(first.iter().any(|said| said.0 .0 == Item::Unlock(UNLOCKS[0]).kind()));
         session.retry();
         let again = force_win(&mut session);
-        assert!(again.is_empty(), "the second clear had nothing left to give");
+        // Other locations may well pay on the way (the end-of-level flourish
+        // can chain, and chains are locations too). What must not happen is
+        // this level's own clear paying a second time.
+        let clear = Location::LevelClear(0);
+        assert!(
+            !again.iter().any(|(_, from)| *from == (clear.kind(), clear.param())),
+            "clearing the same level paid its location twice",
+        );
         assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "and it kept the first");
     }
 

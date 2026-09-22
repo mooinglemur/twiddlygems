@@ -140,7 +140,7 @@ fn calibrate(bot: Bot, seeds: u64) {
         for seed in 0..seeds {
             let game = play(&spec, seed * 7919 + index as u64, bot);
             if game.status() == Status::Won {
-                used.push(spec.moves - game.moves_left);
+                used.push(spec.moves.saturating_sub(game.progress.moves_spare));
             }
         }
 
@@ -219,7 +219,10 @@ fn specials_made(bot: Bot, seeds: u64) {
                 &mut spreads,
                 &mut voices,
             );
-            moves += spec.moves - game.moves_left;
+            // Moves the player actually made, which is what the counts below
+            // are per hundred of. The flourish at the end of a level spends
+            // the rest without anyone swapping anything.
+            moves += spec.moves.saturating_sub(game.progress.moves_spare.max(game.moves_left));
         }
         all_spreads.extend_from_slice(&spreads);
         all_voices.extend_from_slice(&voices);
@@ -304,7 +307,11 @@ fn run(bot: Bot, seeds: u64) {
             }
             if game.status() == Status::Won {
                 wins += 1;
-                used_when_won.push(moves - game.moves_left);
+                // From `moves_spare` rather than the counter: the end of a
+                // level spends whatever was left, so afterwards the counter
+                // always reads zero and every level would look like it needed
+                // its whole budget.
+                used_when_won.push(moves.saturating_sub(game.progress.moves_spare));
             }
         }
 

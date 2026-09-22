@@ -85,6 +85,13 @@ pub struct Progress {
     /// belongs to no color and appears in neither of these.
     pub seals_at_start: [u32; MAX_COLORS],
     pub seals_now: [u32; MAX_COLORS],
+    /// How many moves were still in hand when the goals were met.
+    ///
+    /// Recorded before those moves are cashed in, so it survives the flourish
+    /// spending them: afterwards the counter always reads zero, and how
+    /// briskly a level was beaten would be lost. What a score tier is chased
+    /// with, and the honest read on how hard a level asked.
+    pub moves_spare: u32,
 }
 
 impl Progress {

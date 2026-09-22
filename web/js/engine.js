@@ -57,6 +57,9 @@ export const EventKind = {
   /// An item reached the run. `color` is its `ItemKind`, `value` its one
   /// parameter. Raised by the session, not the board.
   ITEM: 15,
+  /// The goal is met and the moves left over are being spent. `value` is how
+  /// many specials are about to go off. Raised once per round.
+  FINALE: 16,
 };
 
 /// What sort of item an `EventKind.ITEM` is about. Its parameter is the

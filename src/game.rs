@@ -60,6 +60,13 @@ const SCORE_PER_GEM: u64 = 50;
 const SCORE_PER_SPECIAL_FIRED: u64 = 120;
 const SCORE_PER_SPECIAL_MADE: u64 = 200;
 
+/// How far apart the specials minted at the end of a level go off.
+///
+/// Wider than a match's own spread: this is a dozen of them at once, and
+/// firing them on the same frame reads as one white flash rather than as the
+/// board being taken apart.
+const FINALE_JITTER_MS: f32 = 700.0;
+
 /// Event tags shared with the front end for sound and particles.
 pub const EV_CLEAR: u8 = 1;
 pub const EV_SPECIAL_MADE: u8 = 2;
@@ -124,6 +131,13 @@ pub const EV_BRICK: u8 = 14;
 /// handing one over looks like). The page turns those numbers into words: the
 /// stream carries no text, and a feed needs names.
 pub const EV_ITEM: u8 = 15;
+
+/// The goals are met and the moves left over are being cashed in. `value` is
+/// how many specials are about to go off, which is the size of the bonus.
+///
+/// Raised once per round of the finale, so a board that keeps making specials
+/// keeps saying so.
+pub const EV_FINALE: u8 = 16;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -1177,6 +1191,14 @@ impl Game {
         self.progress.jelly_left = self.board.jelly_remaining();
 
         if self.objectives_met() {
+            // Before the flourish, which spends them: afterwards the counter
+            // always reads zero and how briskly the level was beaten is gone.
+            // Before the flourish, which spends them: afterwards the counter
+            // always reads zero and how briskly the level was beaten is gone.
+            self.progress.moves_spare = self.progress.moves_spare.max(self.moves_left);
+            if self.begin_finale() {
+                return;
+            }
             self.status = Status::Won;
             self.phase = Phase::Finished;
             self.events.push(Event::plain(EV_WON, 0));
@@ -1200,6 +1222,99 @@ impl Game {
             return;
         }
         self.phase = Phase::Idle;
+    }
+
+    /// Cashes in whatever is left once the goals are met.
+    ///
+    /// Every move still in hand turns a gem into a special, and then
+    /// everything inert on the board goes off at once. What that clears can
+    /// leave more specials behind, and the board coming to rest brings it back
+    /// here to set those off too, round after round until there is nothing
+    /// left to fire. The score climbs the whole way, which is what makes
+    /// finishing a level early worth more than merely finishing it.
+    ///
+    /// It reuses the ordinary clear and fall rather than adding a phase: a
+    /// finale round is a detonation that nobody swapped for. Returns whether
+    /// there was anything to cash in, so [`Game::settle`] knows whether the
+    /// level is actually over.
+    ///
+    /// A run that has unlocked nothing has nothing to mint, so the finale
+    /// quietly does not happen. That is the same rule as everywhere else: the
+    /// board can only make what the run may make.
+    fn begin_finale(&mut self) -> bool {
+        if self.moves_left > 0 {
+            let spend = self.moves_left;
+            self.moves_left = 0;
+            self.mint_specials(spend);
+        }
+
+        let waiting = self.inert_specials();
+        if !waiting.is_empty() {
+            self.events.push(Event::plain(EV_FINALE, waiting.len().min(65_535) as u16));
+            self.begin_clear(Resolution {
+                seeds: waiting,
+                creations: Vec::new(),
+                spent: Vec::new(),
+                jitter_ms: FINALE_JITTER_MS,
+            });
+            return true;
+        }
+
+        // Nothing inert, but the minting may have left rockets, which fly
+        // rather than detonate where they stand.
+        let rockets = self.rockets_on_board();
+        if !rockets.is_empty() {
+            self.events.push(Event::plain(EV_FINALE, rockets.len().min(65_535) as u16));
+            if self.begin_launch(&rockets) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Turns `count` plain gems into specials, one per move left over.
+    ///
+    /// Only gems: a cell holding a special already is worth more left alone,
+    /// and a brick is not a gem. Which special each becomes is drawn from what
+    /// the level allows, so this cannot hand out something the run has not
+    /// earned.
+    fn mint_specials(&mut self, count: u32) {
+        let allowed = self.spec.rules.specials.list();
+        if allowed.is_empty() {
+            return;
+        }
+        let mut plain: Vec<Pos> = self
+            .board
+            .positions()
+            .filter(|p| self.board.gem(*p).map_or(false, |gem| !gem.special.is_special()))
+            .collect();
+
+        for _ in 0..count {
+            if plain.is_empty() {
+                break;
+            }
+            let at = plain.swap_remove(self.rng.below(plain.len() as u32) as usize);
+            let special = allowed[self.rng.below(allowed.len() as u32) as usize];
+            let Some(gem) = self.board.gem(at) else { continue };
+            self.board.set_gem(at, Some(Gem { special, ..gem }));
+            self.progress.score += SCORE_PER_SPECIAL_MADE;
+            self.events.push(Event::at(EV_SPECIAL_MADE, at, gem.color, special, 1));
+        }
+    }
+
+    /// Specials sitting on the board waiting for something to set them off.
+    ///
+    /// Rockets are left out: they fly at a target rather than going off where
+    /// they stand, and the launch path already knows how to send them.
+    fn inert_specials(&self) -> Vec<Pos> {
+        self.board
+            .positions()
+            .filter(|p| {
+                self.board.gem(*p).map_or(false, |gem| {
+                    gem.special.is_special() && gem.special != Special::Rocket
+                })
+            })
+            .collect()
     }
 
     pub fn objectives_met(&self) -> bool {
@@ -3326,6 +3441,117 @@ mod tests {
         let _ = settle(&mut game);
         assert_eq!(game.status(), Status::Won);
         assert!(game.events().iter().any(|e| e.kind == EV_WON));
+    }
+
+    #[test]
+    fn moves_left_over_are_cashed_in_before_the_level_ends() {
+        // The whole point of finishing early: the moves still in hand each
+        // turn a gem into a special, and then the board goes off.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 501);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+        let events = settle(&mut game);
+
+        assert_eq!(game.status(), Status::Won);
+        assert_eq!(game.moves_left, 0, "the moves left over should have been spent");
+        let minted = events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).count();
+        assert!(minted >= 20, "a 29 move surplus made only {minted} specials");
+        assert!(
+            events.iter().any(|e| e.kind == EV_FINALE),
+            "the board never said it was cashing anything in",
+        );
+        assert!(
+            events.iter().position(|e| e.kind == EV_FINALE)
+                < events.iter().position(|e| e.kind == EV_WON),
+            "the level ended before the flourish rather than after it",
+        );
+    }
+
+    #[test]
+    fn how_briskly_a_level_was_beaten_outlives_the_flourish() {
+        // The flourish spends every move that was left, so afterwards the
+        // counter always reads zero. Without this the difference between
+        // beating a level on the first move and scraping it on the last would
+        // be gone, and that difference is what a score tier is for.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 505);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+        let _ = settle(&mut game);
+
+        assert_eq!(game.moves_left, 0, "the flourish should have spent what was left");
+        assert_eq!(
+            game.progress.moves_spare, 29,
+            "and the record of what there was should have survived it",
+        );
+    }
+
+    #[test]
+    fn finishing_with_moves_to_spare_scores_better_than_finishing_without() {
+        // The incentive this exists to create. Same board, same objective;
+        // the only difference is how much was left when it was met.
+        let score_with = |spare: u32| {
+            let mut level = spec(9, 9, 6, 30);
+            level.objectives = vec![Objective::Score(1)];
+            let mut game = Game::new(level, 502);
+            game.moves_left = spare;
+            let (a, b) = game.hint().expect("a fresh board has a move");
+            game.try_swap(a, b);
+            let _ = settle(&mut game);
+            assert_eq!(game.status(), Status::Won);
+            game.progress.score
+        };
+        assert!(
+            score_with(25) > score_with(2),
+            "keeping moves back was worth nothing",
+        );
+    }
+
+    #[test]
+    fn a_run_that_has_unlocked_nothing_gets_no_flourish() {
+        // The finale mints specials, so it can only hand out what the run may
+        // make. With nothing unlocked there is nothing to mint and the level
+        // simply ends, which is how the opening level plays.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        level.rules.specials = SpecialSet::NONE;
+        let mut game = Game::new(level, 503);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+        let events = settle(&mut game);
+
+        assert_eq!(game.status(), Status::Won);
+        assert!(
+            !events.iter().any(|e| e.kind == EV_FINALE),
+            "a run holding nothing still got a flourish",
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EV_SPECIAL_MADE),
+            "and it should not have minted anything either",
+        );
+    }
+
+    #[test]
+    fn the_flourish_only_mints_what_the_run_may_make() {
+        // Whatever it turns gems into has to come from the level's own set.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        level.rules.specials = SpecialSet { rocket: true, ..SpecialSet::NONE };
+        let mut game = Game::new(level, 504);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+        let events = settle(&mut game);
+
+        let made: Vec<u8> =
+            events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).map(|e| e.special).collect();
+        assert!(!made.is_empty(), "nothing was minted at all");
+        assert!(
+            made.iter().all(|code| *code == Special::Rocket.code()),
+            "the flourish handed out something the run had not earned: {made:?}",
+        );
     }
 
     #[test]

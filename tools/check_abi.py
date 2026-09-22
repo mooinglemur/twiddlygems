@@ -127,6 +127,7 @@ compare(
         ("LOW_MOVES", "LOW_MOVES"),
         ("BRICK", "BRICK"),
         ("ITEM", "ITEM"),
+        ("FINALE", "FINALE"),
     ],
 )
 

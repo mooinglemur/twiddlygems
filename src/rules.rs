@@ -68,6 +68,22 @@ impl SpecialSet {
     pub fn is_empty(self) -> bool {
         self == SpecialSet::NONE
     }
+
+    /// The specials in this set, for picking one at random.
+    pub fn list(self) -> Vec<crate::board::Special> {
+        use crate::board::Special;
+        [
+            (self.line_h, Special::LineH),
+            (self.line_v, Special::LineV),
+            (self.cross, Special::Cross),
+            (self.rainbow, Special::Rainbow),
+            (self.rocket, Special::Rocket),
+        ]
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, special)| *special)
+        .collect()
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

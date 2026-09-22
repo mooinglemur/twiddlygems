@@ -57,6 +57,10 @@ const BRICK_DEBRIS = '#b96a4f';
 /// How long a pop-over line of text lives, and the share of that spent fading
 /// in and fading out. It outlasts the shuffle it announces, because a message
 /// that has gone by the time the board settles is one nobody read.
+/// Said when the goal is met and the leftover moves are being spent. Held in
+/// one place because the pop-over checks against it to avoid re-raising itself
+/// on every round of the flourish.
+const FINALE_TOAST = 'Goal! Cashing in';
 const TOAST_MS = 1800;
 const TOAST_IN = 0.18;
 const TOAST_OUT = 0.4;
@@ -115,6 +119,13 @@ export class Renderer {
       } else if (event.kind === EventKind.LOW_MOVES) {
         const left = event.value;
         this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };
+      } else if (event.kind === EventKind.FINALE) {
+        // The goal is met and the board is about to take itself apart. Said
+        // once, on the first round: the later rounds are the same event again
+        // and would keep re-raising the pop-over over its own fade.
+        if (!this.toast || this.toast.text !== FINALE_TOAST) {
+          this.toast = { text: FINALE_TOAST, at: now };
+        }
       }
     }
   }

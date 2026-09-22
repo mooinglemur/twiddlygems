@@ -219,6 +219,19 @@ found by clearing a level does, and the end-of-level panel takes what it says
 from the same place: the two should never be able to disagree about what was
 found.
 
+**A level does not end the moment its goals are met.** Every move still in hand
+turns a gem into a special, one per move, and then everything inert on the
+board goes off at once. What that clears can leave more specials behind, and
+the board coming to rest sets those off too, round after round until there is
+nothing left to fire. The score climbs the whole way, which is the point: it is
+what makes finishing a level early worth more than merely finishing it, and
+what a score tier will be chased with.
+
+It reuses the ordinary clear and fall rather than adding a phase, because a
+round of it is a detonation nobody swapped for. And it can only hand out what
+the run may make, like everything else, so a run that has unlocked nothing has
+nothing to mint and the level just ends.
+
 Specials are inert against ordinary gems. A line gem or a cross sits where it is
 until a match of its own color sweeps it up; shoving one against a plain gem
 achieves nothing.

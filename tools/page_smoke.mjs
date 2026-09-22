@@ -474,6 +474,10 @@ click(overlayButton('Close'), 'the level picker has no way out');
     pump(1);
   }
   assert.equal(engine.status, Status.WON, 'following the hints never finished level one');
+  // The moves left over when the goal was met are spent on the way out, so a
+  // won level always ends on nothing. This also means the frame loop ran the
+  // whole flourish, pop-over and all, without throwing.
+  assert.equal(engine.movesLeft, 0, 'the leftover moves were not cashed in');
   pump(3);
 
   const overlay = elements.get('overlay');
