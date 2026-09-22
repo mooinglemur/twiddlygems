@@ -521,11 +521,11 @@ export class Renderer {
       // is nearly solid now, and what shows around the gem is unmistakable at
       // a glance.
       const doubled = jelly > 1;
-      ctx.fillStyle = doubled ? 'rgba(232,250,255,0.72)' : 'rgba(160,230,255,0.16)';
+      ctx.fillStyle = doubled ? 'rgba(232,250,255,0.52)' : 'rgba(160,230,255,0.16)';
       roundRect(ctx, pad + c * cell + inset, pad + r * cell + inset, cell - inset * 2, cell - inset * 2, cell * 0.18);
       ctx.fill();
-      ctx.strokeStyle = doubled ? 'rgba(255,255,255,0.9)' : 'rgba(200,245,255,0.4)';
-      ctx.lineWidth = Math.max(1, cell * (doubled ? 0.045 : 0.03));
+      ctx.strokeStyle = doubled ? 'rgba(255,255,255,0.72)' : 'rgba(200,245,255,0.4)';
+      ctx.lineWidth = Math.max(1, cell * (doubled ? 0.04 : 0.03));
       ctx.stroke();
     }
 
