@@ -23,9 +23,8 @@ use twiddlygems::board::{Pos, Special};
 use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
-use twiddlygems::progression::{
-    Inventory, Item, LONGEST_CHAIN, MOVES_PER_LEVEL, SHORTEST_CHAIN, UNLOCKS,
-};
+use twiddlygems::options::Options;
+use twiddlygems::progression::{Inventory, Item, LONGEST_CHAIN, SHORTEST_CHAIN, UNLOCKS};
 
 /// The ladder as the unluckiest run meets it: nothing in hand at all.
 ///
@@ -51,8 +50,13 @@ fn bare() -> Vec<LevelSpec> {
 /// for, so it is the state to read the tier numbers against. A level narrowed
 /// to whatever one run happened to be holding would only ever measure that
 /// run's luck.
+///
+/// Set up the way a fresh run is set up, since that is the game most people
+/// will play. A run that turned its settings down is a different measurement
+/// and would want its own table.
 fn equipped() -> Vec<LevelSpec> {
     let all = levels();
+    let moves = Options::default().moves_per_level;
     all.into_iter()
         .enumerate()
         .map(|(index, mut spec)| {
@@ -60,7 +64,7 @@ fn equipped() -> Vec<LevelSpec> {
             for special in UNLOCKS {
                 held.receive(Item::Unlock(special));
             }
-            for _ in 0..MOVES_PER_LEVEL {
+            for _ in 0..moves {
                 held.receive(Item::Moves { level: index });
             }
             held.apply(index, &mut spec);

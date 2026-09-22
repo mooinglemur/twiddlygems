@@ -20,30 +20,25 @@ use std::fs;
 use std::path::Path;
 
 use twiddlygems::level::levels;
+use twiddlygems::options::{
+    Kind, Options, Setting, MOVES_PER_LEVEL as MOVES_SETTING, SETTINGS,
+};
 use twiddlygems::progression::{
-    item_name, item_pool, items, location_name, locations, requirement, Item, Location,
-    Requirement, AP_ID_BASE, LONGEST_CHAIN, MOVES_PER_LEVEL, RELIABLE_CHAIN, SHORTEST_CHAIN,
+    goal, item_name, item_pool, items, location_name, locations, requirement, Count, Item,
+    Requirement, AP_ID_BASE, LONGEST_CHAIN, RELIABLE_CHAIN, SHORTEST_CHAIN,
 };
 
 /// What the game is called wherever Archipelago says its name.
 const GAME: &str = "Twiddly Gems";
 
-/// The goal, for this first pass: gold on the last level of the ladder.
+/// Where the Python package lives, which is how a rule names the option class
+/// it depends on.
 ///
-/// Not merely clearing it, and the difference is the whole point. Clearing a
-/// level asks for nothing but having reached it, so a goal of "clear the last
-/// one" is a goal a player already has in hand the moment they connect: the
-/// generator sees a game beatable out of an empty inventory, the playthrough
-/// comes back with no spheres in it, and every item in the world is
-/// effectively optional.
-///
-/// Gold on it asks for all five unlocks and that level's own moves, so
-/// finishing means actually collecting things, and the spheres mean something.
-/// It also reads as the ending it is: beat the last level as well as it can be
-/// beaten. Fixed rather than an option, like everything else here so far.
-fn goal(levels: usize) -> Requirement {
-    Requirement::Reached(Location::LevelGold(levels - 1))
-}
+/// Archipelago's option filters and field resolvers carry a dotted import path
+/// and import it, so the engine has to know where the classes it is pointing
+/// at will be. The package checks this against its own `__name__` when it
+/// loads, so a rename fails loudly here rather than subtly at generation.
+const AP_MODULE: &str = "worlds.twiddlygems";
 
 fn main() {
     let into = std::env::args().nth(1).unwrap_or_else(|| {
@@ -60,6 +55,74 @@ fn main() {
     write(into, "game.json", &world(&ladder, count));
     write(into, "items.json", &item_table(count));
     write(into, "locations.json", &location_table(count));
+    write(into, "options.json", &option_table());
+}
+
+/// Everything a player can set, as the yaml and the solo screen both read it.
+///
+/// The Python turns each of these into a real `Option` class, which is what
+/// the option filters in the rules point at. Nothing here is a Python
+/// decision: a setting added to the engine's table appears in the yaml, in the
+/// generated documentation and on the solo screen without anybody editing
+/// three places.
+fn option_table() -> Json {
+    Json::Arr(
+        SETTINGS
+            .iter()
+            .map(|setting| {
+                let mut fields = vec![
+                    ("key", Json::Str(setting.key.to_string())),
+                    ("ap_class", Json::Str(ap_class(setting))),
+                    ("label", Json::Str(setting.label.to_string())),
+                    ("about", Json::Str(setting.about.to_string())),
+                    ("default", Json::Num(setting.default)),
+                ];
+                match setting.kind {
+                    Kind::Range { low, high } => {
+                        fields.push(("kind", Json::Str("range".to_string())));
+                        fields.push(("low", Json::Num(low)));
+                        fields.push(("high", Json::Num(high)));
+                    }
+                    Kind::Choice(choices) => {
+                        fields.push(("kind", Json::Str("choice".to_string())));
+                        fields.push((
+                            "choices",
+                            Json::Arr(
+                                choices
+                                    .iter()
+                                    .map(|choice| {
+                                        Json::Obj(vec![
+                                            ("key", Json::Str(choice.key.to_string())),
+                                            ("label", Json::Str(choice.label.to_string())),
+                                            ("value", Json::Num(choice.value)),
+                                        ])
+                                    })
+                                    .collect(),
+                            ),
+                        ));
+                    }
+                }
+                Json::Obj(fields)
+            })
+            .collect(),
+    )
+}
+
+/// What the Python will call one setting's option class, fully qualified.
+///
+/// Worked out here rather than by a convention implemented on both sides:
+/// `moves_per_level` becomes `MovesPerLevel`, and the name travels in the data
+/// so the two cannot disagree about it.
+fn ap_class(setting: &Setting) -> String {
+    let mut name = String::new();
+    for word in setting.key.split('_') {
+        let mut letters = word.chars();
+        if let Some(first) = letters.next() {
+            name.extend(first.to_uppercase());
+            name.push_str(letters.as_str());
+        }
+    }
+    format!("{AP_MODULE}.{name}")
 }
 
 /// What the world is, apart from its items and the places they hide.
@@ -73,7 +136,6 @@ fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
             "levels",
             Json::Arr(ladder.iter().map(|level| Json::Str(level.name.to_string())).collect()),
         ),
-        ("moves_per_level", Json::Num(MOVES_PER_LEVEL as u32)),
         ("shortest_chain", Json::Num(SHORTEST_CHAIN)),
         ("longest_chain", Json::Num(LONGEST_CHAIN)),
         ("reliable_chain", Json::Num(RELIABLE_CHAIN)),
@@ -90,17 +152,29 @@ fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
 /// still needs its name and number, since a seed can hand one over from
 /// another world.
 fn item_table(levels: usize) -> Json {
-    let pool = item_pool(levels);
+    // The pool is built here too, at the default settings, only to be checked
+    // against: how many of an item there are is written as a rule rather than
+    // as a number, because it can depend on a setting, and the two ways of
+    // saying it must not drift.
+    let fresh = Options::default();
+    let pool = item_pool(levels, &fresh);
     Json::Arr(
         items(levels)
             .into_iter()
             .map(|item| {
-                let copies = pool.iter().filter(|other| **other == item).count() as u32;
+                let counted = pool.iter().filter(|other| **other == item).count() as u32;
+                assert_eq!(
+                    copies(item).resolve(&fresh),
+                    counted,
+                    "the pool holds {counted} of {} at the default settings, which is not \
+                     what the table says",
+                    item_name(item),
+                );
                 Json::Obj(vec![
                     ("name", Json::Str(item_name(item))),
                     ("id", Json::Num(AP_ID_BASE + item.id())),
                     ("classification", Json::Str(classification(item).to_string())),
-                    ("count", Json::Num(copies)),
+                    ("count", count_json(copies(item))),
                     ("top_up", Json::Bool(tops_up(item))),
                 ])
             })
@@ -122,6 +196,19 @@ fn location_table(levels: usize) -> Json {
             })
             .collect(),
     )
+}
+
+/// How many of an item the pool holds.
+///
+/// A number for the unlocks, because five is five. A setting for the move
+/// items, because a player can ask for more or fewer, and the apworld is
+/// generated once and read by everybody: a number baked in here would be
+/// whatever the engine was built with.
+fn copies(item: Item) -> Count {
+    match item {
+        Item::Unlock(_) => Count::Exactly(1),
+        Item::Moves { .. } => Count::Setting(MOVES_SETTING),
+    }
 }
 
 /// How much Archipelago should care about an item going missing.
@@ -164,9 +251,12 @@ fn tops_up(item: Item) -> bool {
 /// settings, and nothing here varies yet.
 fn rule(requirement: &Requirement) -> Json {
     match requirement {
-        Requirement::Always => ap_rule("True_", ("args", Json::Obj(vec![]))),
+        Requirement::Always => ap_rule("True_", ("args", Json::Obj(vec![])), &[]),
         Requirement::All(parts) => {
-            ap_rule("And", ("children", Json::Arr(parts.iter().map(rule).collect())))
+            ap_rule("And", ("children", Json::Arr(parts.iter().map(rule).collect())), &[])
+        }
+        Requirement::Any(parts) => {
+            ap_rule("Or", ("children", Json::Arr(parts.iter().map(rule).collect())), &[])
         }
         Requirement::Has { item, count } => ap_rule(
             "Has",
@@ -174,9 +264,10 @@ fn rule(requirement: &Requirement) -> Json {
                 "args",
                 Json::Obj(vec![
                     ("item_name", Json::Str(item_name(*item))),
-                    ("count", Json::Num(*count)),
+                    ("count", count_json(*count)),
                 ]),
             ),
+            &[],
         ),
         Requirement::Reached(at) => ap_rule(
             "CanReachLocation",
@@ -184,15 +275,62 @@ fn rule(requirement: &Requirement) -> Json {
                 "args",
                 Json::Obj(vec![("location_name", Json::Str(location_name(*at)))]),
             ),
+            &[],
         ),
+        // The filter rides on the rule it guards rather than being a rule of
+        // its own, which is how Archipelago models this: every rule can carry
+        // one, and a rule whose filter does not match resolves to false.
+        Requirement::When { setting, is, then } => {
+            let mut filtered = rule(then);
+            if let Json::Obj(fields) = &mut filtered {
+                for (name, value) in fields.iter_mut() {
+                    if *name == "options" {
+                        *value = Json::Arr(vec![option_filter(setting, *is)]);
+                    }
+                }
+            }
+            filtered
+        }
     }
 }
 
+/// How many of an item a rule asks for: a number, or a pointer at the setting
+/// that decides.
+fn count_json(count: Count) -> Json {
+    match count {
+        Count::Exactly(count) => Json::Num(count),
+        Count::Setting(key) => Json::Obj(vec![
+            ("resolver", Json::Str("FromOption".to_string())),
+            ("option", Json::Str(class_of(key))),
+            ("field", Json::Str("value".to_string())),
+        ]),
+    }
+}
+
+/// One entry in a rule's `options` list: this rule counts only when that
+/// setting has that value.
+fn option_filter(setting: &str, is: u32) -> Json {
+    Json::Obj(vec![
+        ("option", Json::Str(class_of(setting))),
+        ("value", Json::Num(is)),
+        ("operator", Json::Str("eq".to_string())),
+    ])
+}
+
+/// The class path for a setting named by key, for the rules to point at.
+fn class_of(key: &str) -> String {
+    SETTINGS
+        .iter()
+        .find(|setting| setting.key == key)
+        .map(ap_class)
+        .unwrap_or_else(|| panic!("a rule names the setting '{key}', which does not exist"))
+}
+
 /// The wrapper every serialized rule carries, whatever it is.
-fn ap_rule(name: &str, rest: (&'static str, Json)) -> Json {
+fn ap_rule(name: &str, rest: (&'static str, Json), filters: &[Json]) -> Json {
     Json::Obj(vec![
         ("rule", Json::Str(name.to_string())),
-        ("options", Json::Arr(vec![])),
+        ("options", Json::Arr(filters.to_vec())),
         ("filtered_resolution", Json::Bool(false)),
         rest,
     ])
@@ -214,6 +352,7 @@ fn write(into: &Path, name: &str, value: &Json) {
 // shapes, and `make apworld-test` parses every one of them with a real parser
 // before believing any of it.
 
+#[derive(Clone)]
 enum Json {
     Str(String),
     Num(u32),

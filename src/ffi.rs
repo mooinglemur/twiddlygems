@@ -257,6 +257,59 @@ pub unsafe extern "C" fn tg_location_names_len(handle: *const Handle) -> u32 {
     session!(handle, 0).session.location_names().len() as u32
 }
 
+// ---- how the run is set up -----------------------------------------------
+
+/// The settings table as text: one line per setting, tab separated fields.
+///
+/// The front end builds its options screen by walking this rather than by
+/// knowing what the settings are, so a setting added to the engine appears on
+/// the screen, in the yaml and in the generated apworld together. See
+/// [`crate::session::Session::option_table`] for the fields.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_options_ptr(handle: *const Handle) -> *const u8 {
+    session!(handle, std::ptr::null()).session.option_table().as_ptr()
+}
+
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_options_len(handle: *const Handle) -> u32 {
+    session!(handle, 0).session.option_table().len() as u32
+}
+
+/// What one setting is set to. `u32::MAX` for a setting that does not exist.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_option_value(handle: *const Handle, at: u32) -> u32 {
+    session!(handle, u32::MAX).session.options().get(at as usize).unwrap_or(u32::MAX)
+}
+
+/// The value one step along, which the engine works out because a range stops
+/// at its ends and a choice goes round.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_option_step(handle: *const Handle, at: u32, by: i32) -> u32 {
+    session!(handle, 0).session.step_option(at as usize, by)
+}
+
+/// Sets one setting, which starts the run over on the same seed. Returns 1 if
+/// it took, 0 for a value the setting does not allow.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_set_option(handle: *mut Handle, at: u32, value: u32) -> u32 {
+    let Some(handle) = handle.as_mut() else { return 0 };
+    u32::from(handle.session.set_option(at as usize, value))
+}
+
 // ---- reading the board ---------------------------------------------------
 
 /// # Safety
@@ -559,6 +612,7 @@ fn pack_events(handle: &mut Handle) {
 mod tests {
     use super::*;
     use crate::game::EV_SWAP;
+    use crate::options::SETTINGS;
 
     /// Drives the ABI the way the front end does, to catch a mismatch between
     /// what the engine knows and what it is willing to say.
@@ -679,6 +733,59 @@ mod tests {
             let names: Vec<&str> = std::str::from_utf8(bytes).unwrap().split('\n').collect();
             assert_eq!(names.len(), tg_level_count(handle) as usize);
             assert_eq!(names[0], "First Light");
+            tg_destroy(handle);
+        }
+    }
+
+    #[test]
+    fn the_options_screen_can_read_the_whole_table() {
+        // The front end builds its controls out of this text and nothing
+        // else, so every setting has to come through it with enough to draw
+        // one: what it is called, what it does, and either two bounds or a
+        // list of labelled values.
+        unsafe {
+            let handle = tg_create(5, 0);
+            let bytes = std::slice::from_raw_parts(
+                tg_options_ptr(handle),
+                tg_options_len(handle) as usize,
+            );
+            let lines: Vec<&str> = std::str::from_utf8(bytes).unwrap().split('\n').collect();
+            assert_eq!(lines.len(), SETTINGS.len());
+            for (at, line) in lines.iter().enumerate() {
+                let fields: Vec<&str> = line.split('\t').collect();
+                assert_eq!(fields[0], SETTINGS[at].key);
+                assert!(!fields[1].is_empty(), "{} has no label", fields[0]);
+                assert!(!fields[2].is_empty(), "{} says nothing about itself", fields[0]);
+                match fields[3] {
+                    "range" => assert_eq!(fields.len(), 7, "a range wants two bounds"),
+                    "choice" => assert!(fields.len() > 5, "a choice wants values"),
+                    other => panic!("{} is a {other}, which the screen cannot draw", fields[0]),
+                }
+                assert_eq!(fields[4].parse::<u32>().unwrap(), SETTINGS[at].default);
+            }
+            tg_destroy(handle);
+        }
+    }
+
+    #[test]
+    fn setting_an_option_deals_the_run_again_and_a_bad_value_does_not() {
+        unsafe {
+            let handle = tg_create(5, 0);
+            let goal = 0;
+            let was = tg_option_value(handle, goal);
+            let next = tg_option_step(handle, goal, 1);
+            assert_ne!(next, was, "stepping a setting did not move it");
+
+            assert_eq!(tg_set_option(handle, goal, next), 1);
+            assert_eq!(tg_option_value(handle, goal), next);
+            // Back to the first level, because a setting changes what the run
+            // is rather than what is happening in it.
+            assert_eq!(tg_level_index(handle), 0);
+            assert_eq!(tg_unlocked(handle), 1);
+
+            assert_eq!(tg_set_option(handle, goal, 9_999), 0, "a value no setting allows took");
+            assert_eq!(tg_option_value(handle, goal), next, "and it changed things anyway");
+            assert_eq!(tg_option_value(handle, 99), u32::MAX);
             tg_destroy(handle);
         }
     }

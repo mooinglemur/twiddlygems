@@ -126,6 +126,7 @@ for (const id of [
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons', 'level-grid',
   'levels-button', 'hint-button', 'retry-button', 'sound-button',
   'title', 'solo-button', 'solo-note', 'archipelago-button',
+  'setup', 'setup-options', 'setup-start', 'setup-back',
 ]) {
   elements.set(id, stubElement(id));
 }
@@ -294,8 +295,38 @@ function overlayButton(label) {
   store.delete(SAVE_KEY);
   dispatch('solo-button', 'click', {});
   assert.ok(title.classList.contains('hidden'), 'choosing Solo Play left the title screen up');
+
+  // A fresh run is set up before it starts, because the settings are fixed
+  // for its whole length the way a multiworld's yaml is.
+  const setup = elements.get('setup');
+  assert.ok(!setup.classList.contains('hidden'), 'Solo Play did not offer to set the run up');
+  const rows = elements.get('setup-options').children;
+  assert.ok(rows.length > 0, 'the setup screen has no settings on it');
+
+  // Every control is built by walking the engine's table, so each row should
+  // have a way to move the setting and something showing where it is. Tapping
+  // one has to change what it says, or the control is decoration.
+  const first = rows[0];
+  const steps = first.children.find((child) => child.className === 'setup-controls');
+  assert.ok(steps, 'a setting has no controls');
+  const reading = steps.children.find((child) => child.className === 'setup-value');
+  assert.ok(reading && reading.textContent, 'a setting does not say what it is set to');
+  const before = reading.textContent;
+  click(
+    steps.children.find((child) => child.className === 'setup-step'),
+    'a setting has no button to move it',
+  );
+  assert.notEqual(reading.textContent, before, 'tapping a setting changed nothing');
+
+  dispatch('setup-start', 'click', {});
+  assert.ok(setup.classList.contains('hidden'), 'starting the run left the setup screen up');
   assert.equal(elements.get('app').getAttribute('aria-hidden'), null);
   assert.ok(store.has(SAVE_KEY), 'starting a run did not pin its seed');
+  const saved = JSON.parse(store.get(SAVE_KEY));
+  assert.ok(
+    saved.options && Object.keys(saved.options).length > 0,
+    'the run was saved without what it was set to',
+  );
 }
 
 pump(FRAMES);

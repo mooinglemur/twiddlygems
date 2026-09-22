@@ -302,6 +302,70 @@ button[disabled] { opacity: 0.4; cursor: default; }
 .title-note { margin: 0 0 18px; color: var(--ink-dim); font-size: 0.74rem; min-height: 1em; }
 .title-note:last-child { margin-bottom: 0; }
 
+/* Setting a run up, which happens once, before it starts. Phone first: every
+   control is a tap target, there is nothing to drag, and no native picker to
+   fight with. */
+#setup {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px 16px;
+  z-index: 21;
+  background: radial-gradient(120% 80% at 50% 0%, #2c2552 0%, var(--bg-deep) 70%);
+  overflow-y: auto;
+}
+#setup-card { width: min(420px, 100%); }
+#setup-heading { margin: 0; font-size: 1.4rem; text-align: center; }
+#setup-note {
+  margin: 6px 0 20px;
+  color: var(--ink-dim);
+  font-size: 0.78rem;
+  text-align: center;
+}
+#setup-options { display: flex; flex-direction: column; gap: 14px; }
+/* The name, then the control across the full width, then the sentence. Stacked
+   rather than side by side because a choice's label can be a short phrase: in
+   a column the value has room to be read and the two buttons stay in the same
+   place from one setting to the next, which is what makes them tappable
+   without looking. */
+.setup-option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--panel);
+}
+.setup-label { font-weight: 600; }
+.setup-about { color: var(--ink-dim); font-size: 0.74rem; }
+.setup-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.setup-value {
+  flex: 1;
+  text-align: center;
+  font-size: 0.9rem;
+  color: var(--accent);
+}
+.setup-step {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 1.2rem;
+  line-height: 1;
+  border-radius: 12px;
+}
+#setup-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 22px;
+}
+#setup-buttons button { padding: 14px; font-size: 1.05rem; }
+
 @media (prefers-reduced-motion: reduce) {
   .objective-fill { transition: none; }
 }

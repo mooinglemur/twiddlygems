@@ -249,6 +249,72 @@ export class Hud {
     return engine.status === Status.WON && next < engine.levelCount ? next : engine.levelIndex;
   }
 
+  /**
+   * The screen where a run is set up, built by walking the engine's table.
+   *
+   * Nothing here knows what the settings are. A range gets a pair of buttons
+   * that stop at its ends and a choice gets one that cycles, and which it is
+   * comes from the engine, along with the label and the sentence underneath.
+   * A setting added to the engine appears here, in the yaml and in the
+   * apworld together, which is the whole point of the table being one table.
+   *
+   * Buttons rather than a slider or a select, because this is a phone screen
+   * first: a tap target, no dragging, and no native picker to fight with.
+   */
+  showSetup() {
+    const { engine, dom } = this;
+    const rows = engine.options.map((option) => {
+      const row = document.createElement('div');
+      row.className = 'setup-option';
+
+      const label = document.createElement('div');
+      label.className = 'setup-label';
+      label.textContent = option.label;
+
+      const about = document.createElement('div');
+      about.className = 'setup-about';
+      about.textContent = option.about;
+
+      const value = document.createElement('div');
+      value.className = 'setup-value';
+      value.setAttribute('aria-live', 'polite');
+
+      const show = () => {
+        const now = engine.optionValue(option.index);
+        value.textContent =
+          option.kind === 'choice'
+            ? option.choices.find((choice) => choice.value === now)?.label ?? String(now)
+            : String(now);
+      };
+
+      const nudge = (by) => {
+        const next = engine.stepOption(option.index, by);
+        engine.setOption(option.index, next);
+        show();
+      };
+
+      const controls = document.createElement('div');
+      controls.className = 'setup-controls';
+      const back = button('−', () => nudge(-1), false);
+      back.className = 'setup-step';
+      back.setAttribute('aria-label', `${option.label}: previous`);
+      const on = button('+', () => nudge(1), false);
+      on.className = 'setup-step';
+      on.setAttribute('aria-label', `${option.label}: next`);
+      controls.append(back, value, on);
+
+      show();
+      row.append(label, controls, about);
+      return row;
+    });
+    dom.setupOptions.replaceChildren(...rows);
+    dom.setup.classList.remove('hidden');
+  }
+
+  hideSetup() {
+    this.dom.setup.classList.add('hidden');
+  }
+
   /** The level picker. */
   showLevels(actions) {
     const { engine, dom } = this;

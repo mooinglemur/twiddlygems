@@ -189,6 +189,16 @@ for (const [name, metrics] of [
   // The game opens on its menu now, so that gets photographed and then
   // dismissed: nothing below can reach the board until a mode is chosen.
   await shoot(`${name}-00-title`);
+
+  // The screen where a run is set up. A saved run goes straight past it, and
+  // these shots are of a run well along, so it is opened directly rather than
+  // by clearing the save and reloading. It is the real screen either way:
+  // built by walking the engine's table, from the same call the button makes.
+  await evaluate(`window.twiddlygems.hud.showSetup()`);
+  await sleep(200);
+  await shoot(`${name}-01-setup`);
+  await evaluate(`window.twiddlygems.hud.hideSetup()`);
+
   await evaluate(`document.getElementById('solo-button').click()`);
   await sleep(400);
 

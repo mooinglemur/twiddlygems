@@ -15,6 +15,7 @@
 
 use crate::board::Special;
 use crate::level::LevelSpec;
+use crate::options::{Goal, Options, GOAL as GOAL_SETTING, MOVES_PER_LEVEL as MOVES_SETTING};
 use crate::rng::Rng;
 use crate::rules::SpecialSet;
 
@@ -227,32 +228,73 @@ pub const NO_LOCATION: u16 = u16::MAX;
 ///
 /// Shaped to Archipelago's own rule vocabulary rather than to anything of
 /// ours, so it goes over to the apworld as the rules its builder already reads
-/// back: [`Requirement::All`] is `And`, [`Requirement::Has`] is `Has`, and
-/// [`Requirement::Reached`] is `CanReachLocation`. The engine evaluates the
-/// same trees for the solo run, so neither side translates the other and
-/// neither can drift.
+/// back: [`Requirement::All`] is `And`, [`Requirement::Any`] is `Or`,
+/// [`Requirement::Has`] is `Has`, [`Requirement::Reached`] is
+/// `CanReachLocation`, and [`Requirement::When`] is the option filter every
+/// rule can carry. The engine evaluates the same trees for the solo run, so
+/// neither side translates the other and neither can drift.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Requirement {
     /// Nothing at all: reachable from the start.
     Always,
     /// Every one of these.
     All(Vec<Requirement>),
+    /// Any one of these. What a setting with several values comes to: one
+    /// branch per value, each true only under its own.
+    Any(Vec<Requirement>),
     /// At least `count` of an item.
-    Has { item: Item, count: u32 },
+    Has { item: Item, count: Count },
     /// Somewhere else has to be checkable first. What gates the ladder: a
     /// level can only be played once the one below it has been cleared.
     Reached(Location),
+    /// This, but only when a setting is set a particular way. Under any other
+    /// value it is simply false, which is what makes a list of these behave
+    /// like a switch when they are gathered under an [`Requirement::Any`].
+    When { setting: &'static str, is: u32, then: Box<Requirement> },
+}
+
+/// How many of an item a rule asks for.
+///
+/// A literal for most, and a setting for the ones a player can turn up or
+/// down. The difference matters because the apworld is generated once and read
+/// by everybody: a count baked in at emit time would be whatever the engine
+/// was built with rather than what that player asked for. Archipelago resolves
+/// the same thing the same way, with `FromOption`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Count {
+    Exactly(u32),
+    Setting(&'static str),
+}
+
+impl Count {
+    pub fn resolve(self, options: &Options) -> u32 {
+        match self {
+            Count::Exactly(count) => count,
+            // A setting that no longer exists asks for nothing rather than
+            // failing: a rule is a promise about what is enough, and the
+            // safest reading of a missing one is not to gate on it.
+            Count::Setting(key) => options.value_of(key).unwrap_or(0),
+        }
+    }
 }
 
 impl Requirement {
-    /// Whether a run holding `inventory`, having reached `reached`, may check
-    /// this.
-    pub fn met(&self, inventory: &Inventory, reached: &Reached) -> bool {
+    /// Whether a run holding `inventory`, having reached `reached`, set up the
+    /// way `options` says, may check this.
+    pub fn met(&self, inventory: &Inventory, reached: &Reached, options: &Options) -> bool {
         match self {
             Requirement::Always => true,
-            Requirement::All(parts) => parts.iter().all(|part| part.met(inventory, reached)),
-            Requirement::Has { item, count } => inventory.count(*item) >= *count,
+            Requirement::All(parts) => {
+                parts.iter().all(|part| part.met(inventory, reached, options))
+            }
+            Requirement::Any(parts) => {
+                parts.iter().any(|part| part.met(inventory, reached, options))
+            }
+            Requirement::Has { item, count } => inventory.count(*item) >= count.resolve(options),
             Requirement::Reached(location) => reached.has(*location),
+            Requirement::When { setting, is, then } => {
+                options.value_of(setting) == Some(*is) && then.met(inventory, reached, options)
+            }
         }
     }
 }
@@ -318,7 +360,10 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
         Requirement::All(
             UNLOCKABLE
                 .iter()
-                .map(|special| Requirement::Has { item: Item::Unlock(*special), count: 1 })
+                .map(|special| Requirement::Has {
+                    item: Item::Unlock(*special),
+                    count: Count::Exactly(1),
+                })
                 .collect(),
         )
     };
@@ -334,13 +379,42 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
             tools(),
             Requirement::Has {
                 item: Item::Moves { level: index },
-                count: MOVES_PER_LEVEL as u32,
+                // However many that player asked for, rather than however many
+                // this build was compiled with. The apworld is generated once
+                // and read by everybody.
+                count: Count::Setting(MOVES_SETTING),
             },
         ]),
         // A chain is made on whatever board is in front of you, and the
         // opening one is in front of everybody.
         Location::Chain(_) => Requirement::Always,
     }
+}
+
+/// What finishing the game takes, as a rule.
+///
+/// One rule covering every goal a run can be set to rather than four rules to
+/// choose between, because the apworld is generated once and read by
+/// everybody: which branch is live is decided when the rule is evaluated, by
+/// the setting, on both sides. Each branch is false under any other value, so
+/// gathering them under [`Requirement::Any`] makes the list behave as a
+/// switch.
+pub fn goal(levels: usize) -> Requirement {
+    let last = levels.saturating_sub(1);
+    let every = |at: fn(usize) -> Location| {
+        Requirement::All((0..levels).map(|index| Requirement::Reached(at(index))).collect())
+    };
+    let when = |goal: Goal, then: Requirement| Requirement::When {
+        setting: GOAL_SETTING,
+        is: goal.value(),
+        then: Box::new(then),
+    };
+    Requirement::Any(vec![
+        when(Goal::GoldOnLastLevel, Requirement::Reached(Location::LevelGold(last))),
+        when(Goal::ClearLastLevel, Requirement::Reached(Location::LevelClear(last))),
+        when(Goal::ClearEveryLevel, every(Location::LevelClear)),
+        when(Goal::GoldOnEveryLevel, every(Location::LevelGold)),
+    ])
 }
 
 /// Every distinct item in the game, in a stable order.
@@ -420,21 +494,6 @@ pub fn location_index(location: Location, levels: usize) -> Option<usize> {
             .then_some(3 * levels + (length - SHORTEST_CHAIN) as usize),
     }
 }
-
-/// How many times each level can be improved, which is how many of its move
-/// items the placement has to find a home for.
-///
-/// Two, because three has no slack. A ladder of `L` levels offers `3L`
-/// locations on the levels themselves and five chains short enough to count
-/// on, and three move items each makes a pool of `5 + 3L` against exactly
-/// `3L + 5` places to put it. A fill with nothing spare deadlocks on the last
-/// item, and there would be nowhere at all for the traps and the usable items
-/// to go. Two leaves a level's worth of slack and still makes every level
-/// worth returning to twice.
-///
-/// Going back up wants more locations rather than a cleverer fill: the
-/// Archipelago gem is the one that would pay for it.
-pub const MOVES_PER_LEVEL: usize = 2;
 
 /// The five unlocks, in the order a solo run is given them.
 ///
@@ -584,15 +643,20 @@ pub fn move_step(base: u32) -> u32 {
 ///
 /// Builds the whole placement to answer, so it is for a one-off question. Hold
 /// a [`solo_placement`] and index it if you are asking repeatedly.
-pub fn solo_item_at(location: Location, levels: usize, seed: u64) -> Option<Item> {
-    let placed = solo_placement(levels, seed);
+pub fn solo_item_at(
+    location: Location,
+    levels: usize,
+    seed: u64,
+    options: &Options,
+) -> Option<Item> {
+    let placed = solo_placement(levels, seed, options);
     location_index(location, levels).and_then(|at| placed[at])
 }
 
 /// The whole pool a run has to find, in the order a solo placement lays it
 /// out: the unlocks first, because everything else waits on them, then each
 /// level's move items.
-pub fn item_pool(levels: usize) -> Vec<Item> {
+pub fn item_pool(levels: usize, options: &Options) -> Vec<Item> {
     UNLOCKS
         .iter()
         .map(|special| Item::Unlock(*special))
@@ -603,7 +667,10 @@ pub fn item_pool(levels: usize) -> Vec<Item> {
             // keeps them opening ahead of the fill. Bottom upward leaves the
             // last few items with nowhere but the chains.
             (0..levels).rev().flat_map(|level| {
-                std::iter::repeat_n(Item::Moves { level }, MOVES_PER_LEVEL)
+                std::iter::repeat_n(
+                    Item::Moves { level },
+                    options.moves_per_level as usize,
+                )
             }),
         )
         .collect()
@@ -634,15 +701,15 @@ pub fn item_pool(levels: usize) -> Vec<Item> {
 /// is the same game. That matters beyond variety: a save records the ids of
 /// the locations it checked and looks the items back up here, so the run seed
 /// has to be saved alongside them, and it is.
-pub fn solo_placement(levels: usize, seed: u64) -> Vec<Option<Item>> {
+pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option<Item>> {
     let places = locations(levels);
     let mut held: Vec<Option<Item>> = vec![None; places.len()];
     let mut reached = Reached::none(levels);
     let mut inventory = Inventory::empty();
 
     let mut rng = Rng::new(seed);
-    for item in item_pool(levels) {
-        expand(&places, levels, &inventory, &mut reached);
+    for item in item_pool(levels, options) {
+        expand(&places, levels, &inventory, &mut reached, options);
         let open: Vec<usize> = places
             .iter()
             .enumerate()
@@ -666,7 +733,7 @@ pub fn solo_placement(levels: usize, seed: u64) -> Vec<Option<Item>> {
     // More moves is the filler we have: harmless wherever it lands, and it can
     // only ever open golds rather than close them, so dropping it in after the
     // pool is placed cannot strand anything.
-    expand(&places, levels, &inventory, &mut reached);
+    expand(&places, levels, &inventory, &mut reached, options);
     for (index, at) in places.iter().enumerate() {
         if held[index].is_none() && reached.has(*at) && worth_using(*at) {
             // Never a gold's own level, even though by now it would be
@@ -701,13 +768,19 @@ fn worth_using(location: Location) -> bool {
 
 /// Adds every location the run can now reach, and everything that opens in
 /// turn, until nothing more does.
-fn expand(places: &[Location], levels: usize, inventory: &Inventory, reached: &mut Reached) {
+fn expand(
+    places: &[Location],
+    levels: usize,
+    inventory: &Inventory,
+    reached: &mut Reached,
+    options: &Options,
+) {
     loop {
         let opened: Vec<Location> = places
             .iter()
             .copied()
             .filter(|at| !reached.has(*at))
-            .filter(|at| requirement(*at, levels).met(inventory, reached))
+            .filter(|at| requirement(*at, levels).met(inventory, reached, options))
             .collect();
         if opened.is_empty() {
             return;
@@ -722,6 +795,7 @@ fn expand(places: &[Location], levels: usize, inventory: &Inventory, reached: &m
 mod tests {
     use super::*;
     use crate::level::Objective;
+    use crate::options::{setting_index, Kind, SETTINGS};
     use crate::rules::Rules;
 
     /// A level with a move budget, for the arithmetic below.
@@ -831,38 +905,83 @@ mod tests {
         (0..32u64).map(fill_seed)
     }
 
+    /// Every way a run can be set up.
+    ///
+    /// Built out of the settings table rather than written here, so a setting
+    /// added later is swept without anybody remembering to come back. What has
+    /// to hold about a placement has to hold for all of these: a fill that
+    /// only works at the default is a fill that breaks for the first player
+    /// who changes anything.
+    /// Every ladder, seed and setup worth walking a placement over.
+    ///
+    /// One iterator rather than three nested loops in every test, because the
+    /// three multiply and the nesting was already two deep. A failure names
+    /// all three, which is what makes a case out of a sweep.
+    fn every_run() -> impl Iterator<Item = (usize, u64, Options)> {
+        LADDERS.into_iter().flat_map(|levels| {
+            fills().flat_map(move |seed| {
+                setups().into_iter().map(move |options| (levels, seed, options))
+            })
+        })
+    }
+
+    fn setups() -> Vec<Options> {
+        let mut all = vec![Options::default()];
+        for (at, setting) in SETTINGS.iter().enumerate() {
+            // A choice is swept in full, since there are a handful of each. A
+            // range is sampled at its two ends and its default, because these
+            // multiply: one range of a few thousand values would turn this
+            // from a sweep into a sit-down. The ends are where a range goes
+            // wrong anyway.
+            let mut values: Vec<u32> = match setting.kind {
+                Kind::Range { low, high } => vec![low, setting.default, high],
+                Kind::Choice(choices) => choices.iter().map(|choice| choice.value).collect(),
+            };
+            values.sort_unstable();
+            values.dedup();
+            all = all
+                .iter()
+                .flat_map(|base| {
+                    values.iter().map(move |value| {
+                        let mut one = *base;
+                        assert!(one.set(at, *value), "the table offers a value it refuses");
+                        one
+                    })
+                })
+                .collect();
+        }
+        all
+    }
+
     #[test]
     fn the_solo_placement_finds_a_home_for_the_whole_pool() {
         // Where each item ends up is the fill's business and changes with the
         // seed. What must hold is that everything gets placed and nothing is
         // invented: an item with nowhere to go is a level that can never be
         // improved as much as the others.
-        for levels in LADDERS {
-            for seed in fills() {
-                let placed = solo_placement(levels, seed);
-                let mut left = item_pool(levels);
-                for held in placed.iter().flatten() {
-                    if let Some(at) = left.iter().position(|wanted| wanted == held) {
-                        left.swap_remove(at);
-                        continue;
-                    }
-                    // Anything beyond the pool is filler, which is only ever
-                    // more moves: an unlock turning up twice would be a real
-                    // fault.
-                    assert!(
-                        matches!(held, Item::Moves { .. }),
-                        "{} was placed but is not in the pool",
-                        item_name(*held),
-                    );
+        for (levels, seed, options) in every_run() {
+            let placed = solo_placement(levels, seed, &options);
+            let mut left = item_pool(levels, &options);
+            for held in placed.iter().flatten() {
+                if let Some(at) = left.iter().position(|wanted| wanted == held) {
+                    left.swap_remove(at);
+                    continue;
                 }
+                // Anything beyond the pool is filler, which is only ever more
+                // moves: an unlock turning up twice would be a real fault.
                 assert!(
-                    left.is_empty(),
-                    "on a ladder of {levels} dealt from {seed:#x}, {} items had nowhere to go, \
-                     starting with {}",
-                    left.len(),
-                    item_name(left[0]),
+                    matches!(held, Item::Moves { .. }),
+                    "{} was placed but is not in the pool",
+                    item_name(*held),
                 );
             }
+            assert!(
+                left.is_empty(),
+                "on a ladder of {levels} dealt from {seed:#x} as {options:?}, {} items had \
+                 nowhere to go, starting with {}",
+                left.len(),
+                item_name(left[0]),
+            );
         }
     }
 
@@ -871,19 +990,18 @@ mod tests {
         // Gold asks for that level's move items, so one of them kept there
         // would be required to reach the place it is kept. Silver asks for no
         // such thing, so silver may hold them quite happily.
-        for levels in LADDERS {
-            for seed in fills() {
-                let placed = solo_placement(levels, seed);
-                for index in 0..levels {
-                    let gold = Location::LevelGold(index);
-                    let at = location_index(gold, levels).unwrap();
-                    assert_ne!(
-                        placed[at],
-                        Some(Item::Moves { level: index }),
-                        "dealt from {seed:#x}, {} holds the very item reaching it would need",
-                        location_name(gold),
-                    );
-                }
+        for (levels, seed, options) in every_run() {
+            let placed = solo_placement(levels, seed, &options);
+            for index in 0..levels {
+                let gold = Location::LevelGold(index);
+                let at = location_index(gold, levels).unwrap();
+                assert_ne!(
+                    placed[at],
+                    Some(Item::Moves { level: index }),
+                    "dealt from {seed:#x} as {options:?}, {} holds the very item reaching it \
+                     would need",
+                    location_name(gold),
+                );
             }
         }
     }
@@ -893,23 +1011,21 @@ mod tests {
         // Each level should be worth going back to as often as any other,
         // whether its own clear carries the items, its neighbor's marks do, or
         // a chain does.
-        for levels in LADDERS {
-            for seed in fills() {
-                let placed = solo_placement(levels, seed);
-                for level in 0..levels {
-                    let found = placed
-                        .iter()
-                        .filter(|held| **held == Some(Item::Moves { level }))
-                        .count();
-                    // At least, not exactly: what is left over once the pool
-                    // is placed becomes filler, and filler is more moves.
-                    assert!(
-                        found >= MOVES_PER_LEVEL,
-                        "dealt from {seed:#x}, level {} of {levels} can be improved \
-                         only {found} times",
-                        level + 1,
-                    );
-                }
+        for (levels, seed, options) in every_run() {
+            let placed = solo_placement(levels, seed, &options);
+            for level in 0..levels {
+                let found = placed
+                    .iter()
+                    .filter(|held| **held == Some(Item::Moves { level }))
+                    .count();
+                // At least, not exactly: what is left over once the pool is
+                // placed becomes filler, and filler is more moves.
+                assert!(
+                    found >= options.moves_per_level as usize,
+                    "dealt from {seed:#x} as {options:?}, level {} of {levels} can be \
+                     improved only {found} times",
+                    level + 1,
+                );
             }
         }
     }
@@ -950,8 +1066,10 @@ mod tests {
     /// Walks a placement the way a generator does: take everything reachable,
     /// see what that opens, repeat until nothing new opens. Returns what was
     /// never reached.
-    fn unreachable(levels: usize, seed: u64) -> Vec<Location> {
-        walk(levels, &solo_placement(levels, seed), |at| requirement(at, levels))
+    fn unreachable(levels: usize, seed: u64, options: &Options) -> Vec<Location> {
+        walk(levels, &solo_placement(levels, seed, options), options, |at| {
+            requirement(at, levels)
+        })
     }
 
     /// Walks a placement under whatever rules are handed in, and says what was
@@ -959,6 +1077,7 @@ mod tests {
     fn walk(
         levels: usize,
         placed: &[Option<Item>],
+        options: &Options,
         rule: impl Fn(Location) -> Requirement,
     ) -> Vec<Location> {
         let all = locations(levels);
@@ -970,7 +1089,7 @@ mod tests {
                 .copied()
                 .enumerate()
                 .filter(|(_, at)| !reached.has(*at))
-                .filter(|(_, at)| rule(*at).met(&held, &reached))
+                .filter(|(_, at)| rule(*at).met(&held, &reached, options))
                 .collect();
             if opened.is_empty() {
                 return all.into_iter().filter(|at| !reached.has(*at)).collect();
@@ -993,17 +1112,15 @@ mod tests {
         // is lost. A fill that is right for one seed and wrong for another is
         // a run somebody cannot finish, so this is the claim that the fill is
         // safe rather than lucky.
-        for levels in LADDERS {
-            for seed in fills() {
-                let stuck = unreachable(levels, seed);
-                assert!(
-                    stuck.is_empty(),
-                    "on a ladder of {levels} dealt from {seed:#x}, {} locations can never be \
-                     checked, starting with {}",
-                    stuck.len(),
-                    location_name(stuck[0]),
-                );
-            }
+        for (levels, seed, options) in every_run() {
+            let stuck = unreachable(levels, seed, &options);
+            assert!(
+                stuck.is_empty(),
+                "on a ladder of {levels} dealt from {seed:#x} as {options:?}, {} locations \
+                 can never be checked, starting with {}",
+                stuck.len(),
+                location_name(stuck[0]),
+            );
         }
     }
 
@@ -1016,19 +1133,17 @@ mod tests {
         // corner. It also means claiming every clear and every short chain
         // hands a run all five, whatever it was dealt, which is how the
         // screenshot runs are set up.
-        for levels in LADDERS {
-            for seed in fills() {
-                let placed = solo_placement(levels, seed);
-                for (at, held) in locations(levels).into_iter().zip(placed) {
-                    let Some(Item::Unlock(_)) = held else { continue };
-                    assert!(
-                        matches!(at, Location::LevelClear(_) | Location::Chain(_)),
-                        "on a ladder of {levels} dealt from {seed:#x}, {} is keeping {}, \
-                         which reaching it would need",
-                        location_name(at),
-                        item_name(held.unwrap()),
-                    );
-                }
+        for (levels, seed, options) in every_run() {
+            let placed = solo_placement(levels, seed, &options);
+            for (at, held) in locations(levels).into_iter().zip(placed) {
+                let Some(Item::Unlock(_)) = held else { continue };
+                assert!(
+                    matches!(at, Location::LevelClear(_) | Location::Chain(_)),
+                    "on a ladder of {levels} dealt from {seed:#x} as {options:?}, {} is \
+                     keeping {}, which reaching it would need",
+                    location_name(at),
+                    item_name(held.unwrap()),
+                );
             }
         }
     }
@@ -1039,9 +1154,10 @@ mod tests {
         // not the same one again. Every seed placing everything in the same
         // order would satisfy every other test here.
         let levels = 13;
-        let first = solo_placement(levels, fill_seed(1));
+        let set_up = Options::default();
+        let first = solo_placement(levels, fill_seed(1), &set_up);
         let differs = fills()
-            .filter(|seed| solo_placement(levels, *seed) != first)
+            .filter(|seed| solo_placement(levels, *seed, &set_up) != first)
             .count();
         assert!(
             differs >= fills().count() - 1,
@@ -1055,7 +1171,12 @@ mod tests {
         // and looks the items back up, so the same seed has to mean the same
         // items or a returning run is handed somebody else's.
         for seed in fills() {
-            assert_eq!(solo_placement(13, seed), solo_placement(13, seed));
+            for options in setups() {
+                assert_eq!(
+                    solo_placement(13, seed, &options),
+                    solo_placement(13, seed, &options),
+                );
+            }
         }
         assert_ne!(fill_seed(7), 7, "the fill should not share the deal's stream");
     }
@@ -1067,13 +1188,16 @@ mod tests {
         // opening level's clear asking for the very unlock it is holding.
         // Nothing opens it, so nothing opens at all.
         let levels = 13;
-        let placed = solo_placement(levels, fill_seed(3));
+        let options = Options::default();
+        let placed = solo_placement(levels, fill_seed(3), &options);
         let held = placed[0].expect("the opening clear holds something");
         let circular = |at: Location| match at {
-            Location::LevelClear(0) => Requirement::Has { item: held, count: 1 },
+            Location::LevelClear(0) => {
+                Requirement::Has { item: held, count: Count::Exactly(1) }
+            }
             other => requirement(other, levels),
         };
-        let stuck = walk(levels, &placed, circular);
+        let stuck = walk(levels, &placed, &options, circular);
         // The chains are open to anyone and stay reachable; the ladder and
         // everything hanging off it is what should be lost.
         assert!(
@@ -1105,21 +1229,19 @@ mod tests {
         // rare: `make balance` reports the share of runs that get there, and
         // it falls off fast. Items live only on the short ones, and the rest
         // wait for the traps and usable items, which nobody has to find.
-        for levels in LADDERS {
-            for seed in fills() {
-                let placed = solo_placement(levels, seed);
-                let deepest = (SHORTEST_CHAIN..=LONGEST_CHAIN)
-                    .filter(|length| {
-                        placed[location_index(Location::Chain(*length), levels).unwrap()].is_some()
-                    })
-                    .max();
-                if let Some(deepest) = deepest {
-                    assert!(
-                        deepest <= RELIABLE_CHAIN,
-                        "on a ladder of {levels} dealt from {seed:#x}, a {deepest} chain is \
-                         holding an item, which few runs would ever reach",
-                    );
-                }
+        for (levels, seed, options) in every_run() {
+            let placed = solo_placement(levels, seed, &options);
+            let deepest = (SHORTEST_CHAIN..=LONGEST_CHAIN)
+                .filter(|length| {
+                    placed[location_index(Location::Chain(*length), levels).unwrap()].is_some()
+                })
+                .max();
+            if let Some(deepest) = deepest {
+                assert!(
+                    deepest <= RELIABLE_CHAIN,
+                    "on a ladder of {levels} dealt from {seed:#x} as {options:?}, a \
+                     {deepest} chain is holding an item, which few runs would ever reach",
+                );
             }
         }
     }
@@ -1130,10 +1252,15 @@ mod tests {
         // to hide them is a generation that cannot be made.
         for levels in LADDERS {
             let places = locations(levels).len();
-            let pool = UNLOCKS.len() + levels * MOVES_PER_LEVEL;
+            // The most any setting can ask for, since that is the one that
+            // has to fit: a range whose top end overflows is a setting nobody
+            // can safely choose.
+            let most = SETTINGS[setting_index(MOVES_SETTING).unwrap()].step(0, i32::MAX);
+            let pool = UNLOCKS.len() + levels * most as usize;
             assert!(
                 pool <= places,
-                "{levels} levels give {pool} items and only {places} places to hide them",
+                "{levels} levels give {pool} items at {most} moves each, and only {places} \
+                 places to hide them",
             );
         }
     }
@@ -1222,26 +1349,72 @@ mod tests {
     }
 
     #[test]
+    fn every_goal_is_a_goal_a_run_can_reach_and_only_under_its_own_setting() {
+        // One rule covers all four goals, and which branch is live is decided
+        // by the setting when the rule is evaluated rather than when it was
+        // written. So two things have to hold: a run that has reached
+        // everything has finished, whichever goal it chose, and a run that has
+        // reached everything the *other* goals want has not finished if its
+        // own is still short.
+        let levels = 13;
+        let finished = goal(levels);
+        let everything = {
+            let mut reached = Reached::none(levels);
+            for at in locations(levels) {
+                reached.add(at);
+            }
+            reached
+        };
+        let nothing = Reached::none(levels);
+        let held = Inventory::empty();
+
+        for options in setups() {
+            assert!(
+                finished.met(&held, &everything, &options),
+                "{options:?} cannot be finished even having reached every location",
+            );
+            assert!(
+                !finished.met(&held, &nothing, &options),
+                "{options:?} counts as finished having reached nothing at all",
+            );
+        }
+
+        // And the branches are not interchangeable: clearing the last level is
+        // not gold on it, whatever the run was set to.
+        let mut cleared = Reached::none(levels);
+        for index in 0..levels {
+            cleared.add(Location::LevelClear(index));
+        }
+        let goal_at = setting_index(GOAL_SETTING).unwrap();
+        let mut options = Options::default();
+        assert!(options.set(goal_at, Goal::ClearLastLevel.value()));
+        assert!(finished.met(&held, &cleared, &options), "a cleared ladder is not the end of it");
+        assert!(options.set(goal_at, Goal::GoldOnLastLevel.value()));
+        assert!(
+            !finished.met(&held, &cleared, &options),
+            "a ladder cleared without golds counted as gold on the last level",
+        );
+    }
+
+    #[test]
     fn a_run_can_end_up_holding_every_unlock() {
         // Which location holds which unlock is the fill's business, so this
         // walks the whole placement rather than assuming any of them sit on
         // the ladder. Whether the ladder can be climbed to get at them is
         // `make balance`'s gate, which asks every level to be clearable by a
         // run that has found none of this.
-        for levels in LADDERS {
-            for seed in fills() {
-                let placed = solo_placement(levels, seed);
-                let mut held = Inventory::empty();
-                for item in placed.iter().flatten() {
-                    held.receive(*item);
-                }
-                assert_eq!(
-                    held.specials(),
-                    SpecialSet::ALL,
-                    "on a ladder of {levels} dealt from {seed:#x}, a run cannot end up \
-                     holding every unlock",
-                );
+        for (levels, seed, options) in every_run() {
+            let placed = solo_placement(levels, seed, &options);
+            let mut held = Inventory::empty();
+            for item in placed.iter().flatten() {
+                held.receive(*item);
             }
+            assert_eq!(
+                held.specials(),
+                SpecialSet::ALL,
+                "on a ladder of {levels} dealt from {seed:#x} as {options:?}, a run cannot \
+                 end up holding every unlock",
+            );
         }
     }
 }

@@ -281,6 +281,56 @@ export class Engine {
   }
 
   /**
+   * What a run can be set to, as the engine describes it.
+   *
+   * Read rather than known: the screen is built by walking this, so a setting
+   * added to the engine turns up on it without the front end being edited.
+   * Cached because the table cannot change while the module is loaded.
+   */
+  get options() {
+    this.optionCache ??= this.blob(this.wasm.tg_options_ptr, this.wasm.tg_options_len).map(
+      (line, index) => {
+        const [key, label, about, kind, fallback, ...rest] = line.split('\t');
+        const option = { index, key, label, about, kind, default: Number(fallback) };
+        if (kind === 'range') {
+          option.low = Number(rest[0]);
+          option.high = Number(rest[1]);
+        } else {
+          option.choices = rest.map((choice) => {
+            const at = choice.indexOf('=');
+            return { value: Number(choice.slice(0, at)), label: choice.slice(at + 1) };
+          });
+        }
+        return option;
+      },
+    );
+    return this.optionCache;
+  }
+
+  /** What one setting is set to. */
+  optionValue(index) {
+    return this.wasm.tg_option_value(this.handle, index) >>> 0;
+  }
+
+  /**
+   * The value one step along. The engine decides what a step means, because a
+   * range stops at its ends and a choice goes round.
+   */
+  stepOption(index, by) {
+    return this.wasm.tg_option_step(this.handle, index, by) >>> 0;
+  }
+
+  /**
+   * Sets one, which deals the run again from the same seed. Only worth doing
+   * before a run starts: a setting decides how many items there are and what
+   * the rules ask for, so changing one part way through is not a run anybody
+   * could describe.
+   */
+  setOption(index, value) {
+    return this.wasm.tg_set_option(this.handle, index, value) === 1;
+  }
+
+  /**
    * Reads one of the engine's newline separated name tables.
    *
    * Takes the two exports themselves rather than their names: `make abi`

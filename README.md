@@ -99,6 +99,7 @@ src/
   level.rs      objectives and the built-in level ladder
   game.rs       input, the phase state machine, scoring, the snapshot
   progression.rs  items, locations, what holding one lets you do, and where solo finds them
+  options.rs    what a run can be set to, and what the settings are
   session.rs    the level ladder, what is unlocked, and dealing each board
   ffi.rs        the C ABI the page calls
 web/
@@ -114,8 +115,8 @@ web/
 worlds/twiddlygems/
   __init__.py     the apworld, which reads that data and adds no logic
   test/           Archipelago's own tests, run against a pinned checkout
-  data/           game.json, items.json, locations.json: written by
-                  bin/apworld, not checked in
+  data/           game, items, locations, options: written by bin/apworld,
+                  not checked in
 tools/
   check_abi.py    engine/front-end ABI consistency
   abi_smoke.mjs   drives the built module from node
@@ -804,6 +805,21 @@ locations with their rules, and the world itself (its name, its ladder, its
 goal). Indented rather than packed, because what a location asks for is a
 nested rule several deep and on one line it cannot be read.
 
+**The settings are one table, read three ways.** `options.rs` holds what a run
+can be set to; the solo screen builds its controls by walking it, the apworld
+turns each entry into a real `Option` class, and the rules point at those
+classes. A setting added to the engine appears on the phone, in the yaml and in
+the generated documentation together, with nothing to keep in step by hand.
+
+That last part is what makes it work rather than merely tidy. A rule can ask
+for "as many as the setting says" instead of a number, and a rule can be true
+only under one value of a setting, because Archipelago's `FromOption` and
+`OptionFilter` both serialize. So the apworld can be generated once and still
+mean something different for each player: gold asks for however many moves that
+player chose, and the goal is one rule with a branch per choice, of which
+exactly one is live. The engine evaluates the same trees the same way for a
+solo run, from its own settings.
+
 **The rules go over as rules.** Archipelago's rule builder serializes to dicts
 and reads them back with `rule_from_dict`, so a `Requirement` written once in
 Rust arrives in Python as the real thing: `All` is its `And`, `Has` is its
@@ -840,14 +856,18 @@ placement is filled from. The tests beside them are this game's own: that the
 opening level asks for nothing, that a score mark wants the unlocks, that a
 gold wants two of that level's moves and is not satisfied by one.
 
-**The goal is gold on the last level**, not clearing it. The difference matters
-more than it looks. Clearing a level asks for nothing but having reached it, so
-a goal of "clear the last one" is one the player holds the moment they connect:
-the generator sees a game already beatable, the playthrough comes back with no
-spheres in it, and every item in the world is effectively optional. That is not
-a guess; it is what the first generated seed did. Gold asks for all five
-unlocks and that level's own moves, so finishing means collecting things and
-the spheres mean something.
+**The goal defaults to gold on the last level**, not clearing it, and the
+difference matters more than it looks. Clearing a level asks for nothing but
+having reached it, so a goal of "clear the last one" is one the player holds
+the moment they connect: the generator sees a game already beatable, the
+playthrough comes back with no spheres in it, and every item in the world is
+effectively optional. That is not a guess; it is what the first generated seed
+did. Gold asks for all five unlocks and that level's own moves, so finishing
+means collecting things and the spheres mean something.
+
+Clearing the last level is still on the menu, along with clearing every level
+and gold on every level, because somebody may want a relaxed slot on purpose.
+What the default should not be is the one that asks for nothing.
 
 A world submits as many items as it has locations, and this game has more
 places to look than things to find: fifty locations against eighteen distinct

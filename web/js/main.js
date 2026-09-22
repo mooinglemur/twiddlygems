@@ -24,6 +24,10 @@ const dom = {
   soloButton: document.getElementById('solo-button'),
   soloNote: document.getElementById('solo-note'),
   archipelagoButton: document.getElementById('archipelago-button'),
+  setup: document.getElementById('setup'),
+  setupOptions: document.getElementById('setup-options'),
+  setupStart: document.getElementById('setup-start'),
+  setupBack: document.getElementById('setup-back'),
   levelNumber: document.getElementById('level-number'),
   levelName: document.getElementById('level-name'),
   score: document.getElementById('score'),
@@ -44,7 +48,7 @@ const dom = {
 
 /** Progress lives in the browser; the engine is told about it on start. */
 function readSave() {
-  const fallback = { seed: freshSeed(), unlocked: 1, level: 0, checked: [] };
+  const fallback = { seed: freshSeed(), unlocked: 1, level: 0, checked: [], options: {} };
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) {
@@ -61,6 +65,10 @@ function readSave() {
       unlocked: Number.isInteger(save.unlocked) ? save.unlocked : 1,
       level: Number.isInteger(save.level) ? save.level : 0,
       checked: seeded && Array.isArray(save.checked) ? save.checked.filter(Number.isInteger) : [],
+      // By key rather than by position, because a setting added later would
+      // shift the positions and quietly hand a returning run somebody else's
+      // settings. A key the engine no longer has is simply skipped.
+      options: save.options && typeof save.options === 'object' ? save.options : {},
     };
   } catch (error) {
     // A corrupt or unavailable store should cost a save, not the game.
@@ -81,6 +89,12 @@ function writeSave(engine, seed) {
         // player unlocked and quietly takes back everything they earned on
         // the way, which is worse than losing both.
         checked: engine.checked,
+        // And what sort of run it is, since the settings decide how many
+        // items there are and what the rules ask for. A reload that forgot
+        // them would rebuild a different game around the same saved finds.
+        options: Object.fromEntries(
+          engine.options.map((option) => [option.key, engine.optionValue(option.index)]),
+        ),
       }),
     );
   } catch (error) {
@@ -121,6 +135,14 @@ async function boot() {
   }
 
   hud.engine = engine;
+  // First of all, because setting one deals the run again: anything restored
+  // before this would be thrown away with the session it was restored into.
+  for (const option of engine.options) {
+    const saved = save.options[option.key];
+    if (Number.isInteger(saved)) {
+      engine.setOption(option.index, saved);
+    }
+  }
   engine.setUnlocked(save.unlocked);
   // Before the level is loaded, so it opens holding what the run had earned
   // rather than being dealt bare and corrected a moment later.
@@ -299,6 +321,7 @@ async function boot() {
   const showTitle = () => {
     mode = 'title';
     hud.hideOverlay();
+    hud.hideSetup();
     dom.title.classList.remove('hidden');
     // The board is still laid out underneath so the canvas keeps its size;
     // hiding it from assistive tech is what stops it being read as content.
@@ -308,8 +331,20 @@ async function boot() {
       engine.unlocked > 1 ? `Continue: ${engine.unlocked} of ${levels} levels unlocked` : `${levels} levels`;
   };
 
+  /// The title screen's Solo button: set the run up before it starts.
+  ///
+  /// A separate step rather than a button that begins immediately, because
+  /// the settings are fixed for the run's whole length, the way a
+  /// multiworld's yaml is. Backing out returns to the title.
+  const setUpSolo = () => {
+    mode = 'setup';
+    dom.title.classList.add('hidden');
+    hud.showSetup();
+  };
+
   const startSolo = () => {
     mode = 'solo';
+    hud.hideSetup();
     dom.title.classList.add('hidden');
     dom.app.removeAttribute('aria-hidden');
     renderer.layout();
@@ -359,7 +394,19 @@ async function boot() {
 
   dom.levelsButton.addEventListener('click', openLevels);
 
-  dom.soloButton.addEventListener('click', startSolo);
+  dom.soloButton.addEventListener('click', () => {
+    // Straight in for a run already under way: the settings it was dealt with
+    // are part of it now, and offering them again would only be offering to
+    // throw it away.
+    if (engine.unlocked > 1 || engine.checked.length > 0) {
+      startSolo();
+      return;
+    }
+    setUpSolo();
+  });
+
+  dom.setupStart.addEventListener('click', startSolo);
+  dom.setupBack.addEventListener('click', showTitle);
 
   dom.hintButton.addEventListener('click', () => {
     renderer.hint = engine.hint();

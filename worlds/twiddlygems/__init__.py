@@ -13,18 +13,21 @@ a requirement written once in Rust arrives here as the real thing: ``And``,
 ``Has``, ``CanReachLocation``, ``True_``. Regenerate the data and the logic here
 follows, with nothing to keep in step by hand.
 
-``data/`` holds three files: the items, the locations with their rules, and the
-world itself (its name, its ladder and its goal). None of them are checked in.
+``data/`` holds four files: the items, the locations with their rules, the
+settings a player can choose, and the world itself (its name, its ladder and
+its goal). None of them are checked in.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import pkgutil
 from typing import Any
 
 from BaseClasses import Item, ItemClassification, Location, Region
-from Options import PerGameCommonOptions
+from Options import Choice, PerGameCommonOptions, Range
+from rule_builder.field_resolvers import FromOption
 from worlds.AutoWorld import World
 
 def _data(name: str) -> Any:
@@ -44,6 +47,7 @@ def _data(name: str) -> Any:
 GAME_DATA: dict[str, Any] = _data("game.json")
 ITEMS: list[dict[str, Any]] = _data("items.json")
 LOCATIONS: list[dict[str, Any]] = _data("locations.json")
+SETTINGS: list[dict[str, Any]] = _data("options.json")
 
 CLASSIFICATIONS = {
     "progression": ItemClassification.progression,
@@ -57,6 +61,50 @@ ITEMS_BY_NAME = {item["name"]: item for item in ITEMS}
 #: The items there may be more of than the pool asks for. The engine says
 #: which, for the same reason it says everything else here.
 TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
+
+
+def _build_options() -> type[PerGameCommonOptions]:
+    """Turns the settings table into real Option classes and a dataclass.
+
+    Generated rather than written out because the rules point at these classes
+    by name: a rule that depends on a setting carries the dotted path to its
+    class and imports it, so the class has to exist here, under exactly the
+    name the engine said it would. Writing them by hand would mean two lists to
+    keep in step, which is the arrangement this whole world exists to avoid.
+    """
+    fields: dict[str, type] = {}
+    for setting in SETTINGS:
+        module, _, name = setting["ap_class"].rpartition(".")
+        if module != __name__:
+            raise RuntimeError(
+                f"the engine expects this package at {module}, but it is {__name__}; "
+                "the dotted paths in the rules will not resolve"
+            )
+        body: dict[str, Any] = {
+            "display_name": setting["label"],
+            "__doc__": setting["about"],
+            "default": setting["default"],
+        }
+        if setting["kind"] == "range":
+            body["range_start"] = setting["low"]
+            body["range_end"] = setting["high"]
+            base: type = Range
+        else:
+            for choice in setting["choices"]:
+                body[f"option_{choice['key']}"] = choice["value"]
+            base = Choice
+        option = type(name, (base,), body)
+        globals()[name] = option
+        fields[setting["key"]] = option
+
+    return dataclasses.make_dataclass(
+        "TwiddlyGemsOptions",
+        [(key, option) for key, option in fields.items()],
+        bases=(PerGameCommonOptions,),
+    )
+
+
+TwiddlyGemsOptions = _build_options()
 
 
 class TwiddlyGemsItem(Item):
@@ -78,7 +126,8 @@ class TwiddlyGemsWorld(World):
     """
 
     game = GAME_DATA["game"]
-    options_dataclass = PerGameCommonOptions
+    options_dataclass = TwiddlyGemsOptions
+    options: TwiddlyGemsOptions  # type: ignore[valid-type]
     # Every location hangs off the one region, so there is no map to speak of:
     # what gates a level is the level below it, expressed as a rule rather than
     # as a connection.
@@ -110,11 +159,22 @@ class TwiddlyGemsWorld(World):
         """
         return self.random.choice(TOP_UP_NAMES)
 
+    def _count(self, count: Any) -> int:
+        """How many of an item this run's pool holds.
+
+        A number for most, and for some a pointer at the setting that decides,
+        which Archipelago's own resolver reads. Either way the engine said it;
+        nothing here knows which items depend on what.
+        """
+        if isinstance(count, dict):
+            return int(FromOption.from_dict(count).resolve(self))
+        return int(count)
+
     def create_items(self) -> None:
         pool = [
             self.create_item(item["name"])
             for item in ITEMS
-            for _ in range(item["count"])
+            for _ in range(self._count(item["count"]))
         ]
         # A world submits as many items as it has locations. The game has more
         # places to look than things to find, which is the shape that leaves

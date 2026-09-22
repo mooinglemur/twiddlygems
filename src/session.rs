@@ -6,6 +6,7 @@
 
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
+use crate::options::{Kind, Options, SETTINGS};
 use crate::progression::{
     fill_seed, item_index, item_name, items, location_index, location_name, locations,
     solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
@@ -43,6 +44,12 @@ pub struct Session {
     /// own seed. Working it out walks the whole ladder by reachability, which
     /// is not something to do on the frame a level is cleared.
     placement: Vec<Option<Item>>,
+    /// What the run was dealt from, kept so changing a setting can deal the
+    /// same run again rather than a different one.
+    seed: u64,
+    /// What sort of run this is. Fixed once it has started: see
+    /// [`Session::set_option`].
+    options: Options,
     /// Things that happened to the run rather than to the board, raised
     /// alongside the board's own so the page has one stream to watch.
     events: Vec<Event>,
@@ -51,6 +58,35 @@ pub struct Session {
     names_blob: Vec<u8>,
     item_names_blob: Vec<u8>,
     location_names_blob: Vec<u8>,
+    option_table_blob: Vec<u8>,
+}
+
+/// The settings table as one line per setting. See [`Session::option_table`].
+fn option_table_text() -> Vec<u8> {
+    let lines = SETTINGS.iter().map(|setting| {
+        let mut fields = vec![
+            setting.key.to_string(),
+            setting.label.to_string(),
+            setting.about.to_string(),
+        ];
+        match setting.kind {
+            Kind::Range { low, high } => {
+                fields.push("range".to_string());
+                fields.push(setting.default.to_string());
+                fields.push(low.to_string());
+                fields.push(high.to_string());
+            }
+            Kind::Choice(choices) => {
+                fields.push("choice".to_string());
+                fields.push(setting.default.to_string());
+                for choice in choices {
+                    fields.push(format!("{}={}", choice.value, choice.label));
+                }
+            }
+        }
+        fields.join("\t")
+    });
+    blob(lines)
 }
 
 /// Joins names into the newline separated blob the ABI hands over.
@@ -59,10 +95,16 @@ fn blob(names: impl Iterator<Item = String>) -> Vec<u8> {
 }
 
 impl Session {
+    /// Opens a run set up however a fresh one is set up.
+    pub fn new(seed: u64) -> Self {
+        Session::set_up(seed, Options::default())
+    }
+
     /// Opens a run. The seed is the whole run: it deals every board, and it
     /// deals the progression, so two players on the same seed play the same
-    /// game and nobody else plays theirs.
-    pub fn new(seed: u64) -> Self {
+    /// game and nobody else plays theirs. The options are what sort of run it
+    /// is, and they are fixed for its whole length.
+    pub fn set_up(seed: u64, options: Options) -> Self {
         let levels = levels();
         let first = levels.first().expect("the ladder is never empty");
         let mut deal = Rng::new(seed);
@@ -77,12 +119,15 @@ impl Session {
             deal,
             inventory,
             checked: Vec::new(),
-            placement: solo_placement(levels.len(), fill_seed(seed)),
+            placement: solo_placement(levels.len(), fill_seed(seed), &options),
+            seed,
+            options,
             events: Vec::new(),
             name_buf: Vec::new(),
             names_blob: Vec::new(),
             item_names_blob: Vec::new(),
             location_names_blob: Vec::new(),
+            option_table_blob: option_table_text(),
         };
         let count = session.levels.len();
         session.names_blob =
@@ -95,6 +140,57 @@ impl Session {
 
     pub fn game(&self) -> &Game {
         &self.game
+    }
+
+    /// What sort of run this is.
+    pub fn options(&self) -> &Options {
+        &self.options
+    }
+
+    /// Changes one setting, which starts the run over.
+    ///
+    /// Not an edit to a game in progress: the settings decide how many items
+    /// there are and what the rules ask for, so a run half played under one
+    /// set and half under another is not a run anybody could describe. What
+    /// this does is deal the same seed again under the new setting, which is
+    /// the only honest reading of changing your mind before you start.
+    ///
+    /// Returns whether it took. A value the setting does not allow leaves
+    /// everything alone.
+    pub fn set_option(&mut self, at: usize, value: u32) -> bool {
+        let mut wanted = self.options;
+        if !wanted.set(at, value) {
+            return false;
+        }
+        if wanted == self.options {
+            return true;
+        }
+        *self = Session::set_up(self.seed, wanted);
+        true
+    }
+
+    /// How many settings there are, for a front end walking the table.
+    pub fn option_count(&self) -> usize {
+        SETTINGS.len()
+    }
+
+    /// The settings table as text, one line per setting, for a front end to
+    /// build a screen out of without knowing what is in it.
+    ///
+    /// Tab separated: key, label, the sentence about it, `range` or `choice`,
+    /// the default, then the two bounds for a range or `value=label` for each
+    /// of a choice's values. The engine writes it for the same reason it
+    /// writes the item names: a screen that knew the settings would need
+    /// editing every time one was added, and would drift when somebody forgot.
+    pub fn option_table(&self) -> &[u8] {
+        &self.option_table_blob
+    }
+
+    /// One step along a setting, which is the engine's business rather than
+    /// the screen's: a range stops at its ends and a choice goes round.
+    pub fn step_option(&self, at: usize, by: i32) -> u32 {
+        let Some(setting) = SETTINGS.get(at) else { return 0 };
+        setting.step(self.options.get(at).unwrap_or(setting.default), by)
     }
 
     pub fn level_count(&self) -> usize {
