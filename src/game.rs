@@ -158,6 +158,16 @@ pub const EV_ITEM: u8 = 15;
 /// that happens once.
 pub const EV_CLEARED: u8 = 16;
 
+/// One leftover move was spent on this cell. `special` is what it left there,
+/// or 0 when it left nothing.
+///
+/// Raised whether or not anything was placed, because the spending is the
+/// event: a run holding none of the eligible unlocks still goes through the
+/// motions, and a cell that flashes and stays a plain gem says that far better
+/// than silence does. Distinct from [`EV_SPECIAL_MADE`], which is a match
+/// earning its reward.
+pub const EV_CASH_IN: u8 = 17;
+
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
 #[derive(Clone, Copy, Debug)]
@@ -1343,14 +1353,27 @@ impl Game {
         self.phase = Phase::Finishing { elapsed: 0.0 };
     }
 
-    /// Turns one plain gem somewhere on the board into a special.
+    /// Spends one leftover move on a plain gem somewhere on the board,
+    /// turning it into a special if the run holds one to give.
     ///
-    /// Only gems: a cell already holding a special is worth more left alone,
-    /// and a brick is not a gem. Only the three that clear a line or a cross
-    /// are eligible, drawn from what the level allows, so this can neither
-    /// hand out something the run has not earned nor fill the board with
-    /// rainbows.
+    /// Only gems are picked: a cell already holding a special is worth more
+    /// left alone, and a brick is not a gem. Only the three that clear a line
+    /// or a cross are eligible, drawn from what the level allows, so this can
+    /// neither hand out something the run has not earned nor fill the board
+    /// with rainbows.
+    ///
+    /// A cell is picked and announced even when there is nothing to put on it,
+    /// so the spending is seen and heard wherever it lands. Only a placement
+    /// that actually happened is worth points.
     fn mint_one(&mut self) {
+        let plain: Vec<Pos> = self
+            .board
+            .positions()
+            .filter(|p| self.board.gem(*p).map_or(false, |gem| !gem.special.is_special()))
+            .collect();
+        let Some(&at) = plain.get(self.rng.below(plain.len() as u32) as usize) else { return };
+        let Some(gem) = self.board.gem(at) else { return };
+
         let allowed: Vec<Special> = self
             .spec
             .rules
@@ -1359,24 +1382,15 @@ impl Game {
             .into_iter()
             .filter(|special| CASH_IN_SPECIALS.contains(special))
             .collect();
-        if allowed.is_empty() {
-            return;
-        }
-        let plain: Vec<Pos> = self
-            .board
-            .positions()
-            .filter(|p| self.board.gem(*p).map_or(false, |gem| !gem.special.is_special()))
-            .collect();
-        if plain.is_empty() {
-            return;
-        }
-
-        let at = plain[self.rng.below(plain.len() as u32) as usize];
-        let special = allowed[self.rng.below(allowed.len() as u32) as usize];
-        let Some(gem) = self.board.gem(at) else { return };
-        self.board.set_gem(at, Some(Gem { special, ..gem }));
-        self.progress.score += SCORE_PER_SPECIAL_MADE;
-        self.events.push(Event::at(EV_SPECIAL_MADE, at, gem.color, special, 1));
+        let placed = match allowed.get(self.rng.below(allowed.len() as u32) as usize) {
+            Some(&special) => {
+                self.board.set_gem(at, Some(Gem { special, ..gem }));
+                self.progress.score += SCORE_PER_SPECIAL_MADE;
+                special
+            }
+            None => Special::None,
+        };
+        self.events.push(Event::at(EV_CASH_IN, at, gem.color, placed, 1));
     }
 
     /// The level is over and won. The beat before this is [`Phase::Finishing`].
@@ -3542,16 +3556,15 @@ mod tests {
 
         assert_eq!(game.status(), Status::Won);
         assert_eq!(game.moves_left, 0, "the moves left over should have been spent");
-        // One per move left over at least. The clears that follow can earn
-        // more of their own, which is the flourish feeding itself.
-        let minted = events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).count();
-        assert!(minted >= 29, "a 29 move surplus minted only {minted} specials");
+        // Exactly one spend per move left over.
+        let spent = events.iter().filter(|e| e.kind == EV_CASH_IN).count();
+        assert_eq!(spent, 29, "a 29 move surplus was spent {spent} times");
 
         let cleared = events.iter().filter(|e| e.kind == EV_CLEARED).count();
         assert_eq!(cleared, 1, "the level said it was cleared {cleared} times");
         assert!(
             events.iter().position(|e| e.kind == EV_CLEARED)
-                < events.iter().position(|e| e.kind == EV_SPECIAL_MADE),
+                < events.iter().position(|e| e.kind == EV_CASH_IN),
             "it should say so before spending anything, not after",
         );
         assert!(
@@ -3576,19 +3589,18 @@ mod tests {
         frames
     }
 
-    /// Everything minted while the leftover moves are being spent, which is
-    /// not the same as everything the clears afterwards go on to earn.
-    fn minted_during_cash_in(game: &mut Game) -> Vec<u8> {
+    /// Every leftover move spent, as the special it left behind, which is 0
+    /// for a move spent with nothing to place.
+    fn cash_in_placements(game: &mut Game) -> Vec<u8> {
         let mut frames = run_to_cash_in(game);
-        let mut made = Vec::new();
+        let mut placed = Vec::new();
         while matches!(game.phase(), Phase::CashingIn { .. }) && frames < 4000 {
             game.update(16.0);
             frames += 1;
-            made.extend(
-                game.events().iter().filter(|e| e.kind == EV_SPECIAL_MADE).map(|e| e.special),
-            );
+            placed
+                .extend(game.events().iter().filter(|e| e.kind == EV_CASH_IN).map(|e| e.special));
         }
-        made
+        placed
     }
 
     #[test]
@@ -3725,14 +3737,52 @@ mod tests {
         let (a, b) = game.hint().expect("a fresh board has a move");
         game.try_swap(a, b);
 
+        let placed = cash_in_placements(&mut game);
+        assert_eq!(placed.len(), 29, "the moves were not all spent");
+        assert!(
+            placed.iter().all(|code| *code == Special::None.code()),
+            "something was placed by a run that holds nothing: {placed:?}",
+        );
+        // Each one still lands somewhere, so the board can be seen and heard
+        // flashing at the cell that missed out.
         let mut frames = 0;
-        while game.phase() != Phase::Finished && frames < 4000 {
+        while game.phase() != Phase::Finished && frames < 400 {
             game.update(16.0);
             frames += 1;
         }
         assert_eq!(game.status(), Status::Won);
-        assert_eq!(game.moves_left, 0, "the moves were not spent");
-        assert!(frames > 500, "it skipped the motions, taking only {frames} frames");
+        assert_eq!(game.moves_left, 0);
+    }
+
+    #[test]
+    fn a_move_spent_with_nothing_to_place_still_says_where_it_landed() {
+        // The cell is what the sparkle and the bell hang off, so a spend that
+        // placed nothing has to name one anyway or it happens invisibly.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        level.rules.specials = SpecialSet::NONE;
+        let mut game = Game::new(level, 510);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let mut frames = run_to_cash_in(&mut game);
+        let mut cells: Vec<(u8, u8)> = Vec::new();
+        while matches!(game.phase(), Phase::CashingIn { .. }) && frames < 4000 {
+            game.update(16.0);
+            frames += 1;
+            cells.extend(
+                game.events().iter().filter(|e| e.kind == EV_CASH_IN).map(|e| (e.r, e.c)),
+            );
+        }
+        assert_eq!(cells.len(), 29, "not every spend named a cell");
+        assert!(
+            cells.iter().all(|(r, c)| *r < 9 && *c < 9),
+            "a spend landed off the board: {cells:?}",
+        );
+        assert!(
+            cells.iter().collect::<std::collections::HashSet<_>>().len() > 10,
+            "they all landed on the same handful of cells: {cells:?}",
+        );
     }
 
     #[test]
@@ -3747,7 +3797,7 @@ mod tests {
         let (a, b) = game.hint().expect("a fresh board has a move");
         game.try_swap(a, b);
 
-        let made = minted_during_cash_in(&mut game);
+        let made = cash_in_placements(&mut game);
         assert!(!made.is_empty(), "nothing was minted at all");
         let eligible: Vec<u8> = CASH_IN_SPECIALS.iter().map(|s| s.code()).collect();
         assert!(
@@ -3767,7 +3817,7 @@ mod tests {
         let (a, b) = game.hint().expect("a fresh board has a move");
         game.try_swap(a, b);
 
-        let made = minted_during_cash_in(&mut game);
+        let made = cash_in_placements(&mut game);
         assert!(!made.is_empty(), "nothing was minted at all");
         assert!(
             made.iter().all(|code| *code == Special::LineH.code()),

@@ -128,6 +128,7 @@ compare(
         ("BRICK", "BRICK"),
         ("ITEM", "ITEM"),
         ("CLEARED", "CLEARED"),
+        ("CASH_IN", "CASH_IN"),
     ],
 )
 

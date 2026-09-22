@@ -64,6 +64,9 @@ export const EventKind = {
   /// The level is won. `value` is how many moves were left over for the
   /// flourish to spend. Raised once, before any of it happens.
   CLEARED: 16,
+  /// A leftover move was spent on this cell. `special` is what it left there,
+  /// or `Special.NONE` when the run had nothing to place.
+  CASH_IN: 17,
 };
 
 /// What sort of item an `EventKind.ITEM` is about. Its parameter is the

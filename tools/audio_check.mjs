@@ -384,6 +384,10 @@ const { result } = await send('Runtime.evaluate', {
         onsets: runs.map((r) => r.onsetMs),
         peaks: runs.map((r) => r.peak),
       })),
+      bell: await render('bell', 1, 2),
+      // At 300ms apart and over a second of ring, this many overlap during
+      // the run down at the end of a level.
+      bellFour: await worst('bell', 4, 2),
       chimeFirst: await render('chime', 1, 0.8, false, { stage: 0 }),
       chimeLast: await render('chime', 1, 0.8, false, { stage: 11 }),
       // Past the end of the progression it should hold, not wrap round.
@@ -440,6 +444,8 @@ for (const [label, key] of [
   ['thud x9', 'thudBoard'],
   ['sparkle', 'sparkle'],
   ['sparkle x20', 'sparkleTwenty'],
+  ['bell', 'bell'],
+  ['bell x4', 'bellFour'],
   ['chime 1/12', 'chimeFirst'],
   ['chime 12/12', 'chimeLast'],
   ['glide plain', 'steadyTone'],

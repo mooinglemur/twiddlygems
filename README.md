@@ -242,6 +242,12 @@ so a run holding none of the three goes through the same motions at the same
 pace and simply leaves the board alone: a count that vanished instead would
 read as the moves being taken away.
 
+Every spend lands on a cell whether or not it places anything, and that cell
+throws its motes and rings its bell either way. The spend is the event; what it
+left behind is a detail. A cell that flashes and stays a plain gem says the run
+had nothing to give, where a cell that does nothing at all says only that
+something is broken.
+
 The rounds reuse the ordinary clear and fall rather than adding a phase,
 because a round is a detonation nobody swapped for. The two phases it does add
 are for the parts that are new: spending the moves one at a time, and the beat

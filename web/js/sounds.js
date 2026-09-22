@@ -419,6 +419,71 @@ export const SOUNDS = {
   /// Plucked rather than sung: a hard attack, a fast decay, and a lowpass
   /// closing as the note falls away, which is what a sawtooth needs to stop
   /// sounding like a buzzer.
+  /// A leftover move being spent at the end of a level: one struck bell per
+  /// gem, whether or not a special lands on it.
+  ///
+  /// Bell-like comes from the partials, not the fundamental. A struck bell
+  /// rings a stack of overtones that fade at different rates, the high ones
+  /// first, so what starts bright settles into a hum. Sines rather than a
+  /// filtered sawtooth because the interesting part is which partials are
+  /// there and how long each lasts, and that is easier to read written out
+  /// than inferred from a filter sweep.
+  ///
+  /// In F, like the rest of the mix. The fifth above sits under the octave
+  /// slightly detuned, which is the wobble a real bell has and the reason two
+  /// struck together never sound like one tone.
+  ///
+  /// Troy has said he will tune the character of this; the numbers below are
+  /// a first pass at the shape rather than a settled sound.
+  bell: {
+    gain: 0.16,
+    // Several are ringing at once: at 300ms apart and a second of decay,
+    // three or four overlap by design.
+    voiceCap: 6,
+    layers: [
+      // The strike itself. Almost nothing, but without it the bell fades up
+      // rather than being hit.
+      {
+        source: 'noise',
+        filters: [{ type: 'highpass', frequency: 3200, q: 0.7 }],
+        env: { attack: 0.001, decay: 0.035 },
+        gain: 0.22,
+      },
+      // The hum: what is left a second later.
+      {
+        source: 'sine',
+        note: 'F4',
+        env: { attack: 0.002, decay: 1.25 },
+        gain: 0.5,
+        jitter: { frequency: 0.004, gain: 0.12 },
+      },
+      // The fifth, detuned enough to beat gently against the octave.
+      {
+        source: 'sine',
+        note: 'C5',
+        env: { attack: 0.002, decay: 0.78 },
+        gain: 0.3,
+        jitter: { frequency: 0.007, gain: 0.15 },
+      },
+      // The octave, and above it the partial that makes it read as metal
+      // rather than as a flute. Both fade first, which is the whole envelope.
+      {
+        source: 'sine',
+        note: 'F5',
+        env: { attack: 0.001, decay: 0.5 },
+        gain: 0.26,
+        jitter: { frequency: 0.006, gain: 0.15 },
+      },
+      {
+        source: 'sine',
+        note: 'C6',
+        env: { attack: 0.001, decay: 0.3 },
+        gain: 0.16,
+        jitter: { frequency: 0.01, gain: 0.2 },
+      },
+    ],
+  },
+
   chime: {
     gain: 0.4,
     voiceCap: 6,

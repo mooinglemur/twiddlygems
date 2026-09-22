@@ -470,6 +470,17 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const phases = new Set();
   const toasts = new Set();
   const counterWhileSpending = new Set();
+  // Counted at the source rather than by looking at the particle list, which
+  // still holds debris from the clear that won the level: that made the check
+  // pass whether or not a single spend threw anything.
+  let sparklesWhileSpending = 0;
+  const realSparkle = renderer.sparkle.bind(renderer);
+  renderer.sparkle = (burst) => {
+    if (engine.phase === Phase.CASHING_IN) {
+      sparklesWhileSpending += 1;
+    }
+    realSparkle(burst);
+  };
   for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
     if (engine.acceptsInput) {
       const move = engine.hint();
@@ -496,6 +507,16 @@ click(overlayButton('Close'), 'the level picker has no way out');
     counterWhileSpending.size > 3,
     `the counter went to zero in one step rather than running down: ${[...counterWhileSpending]}`,
   );
+  // This run holds none of the three eligible unlocks, so nothing is placed
+  // and the board does not change: the motes are the only sign each move was
+  // spent, which is exactly why they fire on a spend that placed nothing.
+  const counts = [...counterWhileSpending];
+  const spent = Math.max(...counts) - Math.min(...counts);
+  assert.ok(
+    sparklesWhileSpending >= spent,
+    `${spent} moves were seen spent but only ${sparklesWhileSpending} threw motes`,
+  );
+  renderer.sparkle = realSparkle;
   assert.ok(
     toasts.has('Level cleared'),
     `the level never said it was cleared, only ${JSON.stringify([...toasts])}`,

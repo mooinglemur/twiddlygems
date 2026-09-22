@@ -121,11 +121,19 @@ export class Renderer {
         this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };
       } else if (event.kind === EventKind.CLEARED) {
         this.toast = { text: 'Level cleared', at: now };
-      } else if (event.kind === EventKind.SPECIAL_MADE) {
+      } else if (event.kind === EventKind.SPECIAL_MADE || event.kind === EventKind.CASH_IN) {
         // A gem gaining something rather than losing it, so motes rather than
-        // debris. The engine raises this for a match's own reward as well as
-        // for the run down at the end, and both are worth marking.
-        this.pendingBursts.push({ at: now, r: event.r, c: event.c, color: event.color, sparkle: true });
+        // debris. A spend that placed nothing gets the same motes: the point
+        // of the run down at the end of a level is watching it happen, and a
+        // cell that flashes and stays a plain gem says the run had nothing to
+        // give far better than a cell that does nothing at all.
+        this.pendingBursts.push({
+          at: now,
+          r: event.r,
+          c: event.c,
+          color: event.color,
+          sparkle: true,
+        });
       }
     }
   }
