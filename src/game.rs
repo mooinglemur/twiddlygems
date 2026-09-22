@@ -437,6 +437,18 @@ impl Game {
         self.status
     }
 
+    /// Whether the level's goals have been met, which is the moment it is
+    /// cleared rather than the moment it is over.
+    ///
+    /// The flourish runs between the two, and it is still play: the score is
+    /// still climbing, so a score mark can be crossed in there, and what
+    /// crossing it pays can still change what the rest of the flourish does.
+    /// Anything asking "has this level been beaten" wants this rather than
+    /// [`Status::Won`], which does not arrive until the board has stopped.
+    pub fn cleared(&self) -> bool {
+        self.announced_clear
+    }
+
     pub fn cascade(&self) -> u32 {
         self.cascade
     }

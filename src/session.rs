@@ -329,11 +329,22 @@ impl Session {
     }
 
     /// Checks whatever the board has earned this frame.
+    ///
+    /// From the moment the level is cleared, not from the moment it is over.
+    /// The flourish in between is still play: the score climbs all the way
+    /// through it, so a mark can be crossed in there, and an unlock that
+    /// crossing it pays for is a special the rest of the flourish can mint.
+    /// Waiting for the board to stop would hand it over after the one thing it
+    /// could have changed. The score only ever climbs, so checking every frame
+    /// reaches the same marks in the end and reaches them sooner.
+    ///
+    /// This is how the multiworld behaves too, which is the reason it has to
+    /// be how this does: items arrive from other worlds whenever they arrive,
+    /// and one that lands during the flourish should land on the board in
+    /// front of the player rather than after it.
     fn check_reached(&mut self) {
-        if self.game.status() == Status::Won {
+        if self.game.cleared() {
             self.check(Location::LevelClear(self.index));
-            // Only once the level is over, because the flourish is still
-            // adding to the score right up until then.
             let (silver, gold) = (self.levels[self.index].silver, self.levels[self.index].gold);
             let score = self.game.progress.score;
             if silver > 0 && score >= silver {
@@ -440,6 +451,38 @@ mod tests {
         assert_eq!(session.game().progress.score, score, "the score did not stay put");
     }
 
+    /// A run whose opening level's clear holds one of the unlocks.
+    ///
+    /// Which item a location holds is the run's own business now, so a test
+    /// about what finding an unlock does has to go looking for a run that
+    /// finds one. Five unlocks are dealt among the eighteen places a run can
+    /// reach holding nothing, so most seeds put one here and a handful is
+    /// plenty to look through.
+    fn run_finding_an_unlock() -> (Session, Special) {
+        for seed in 0..64 {
+            let session = Session::new(seed);
+            if let Some(Item::Unlock(special)) = session.holds(Location::LevelClear(0)) {
+                return (session, special);
+            }
+        }
+        panic!("no run in the first 64 seeds finds an unlock by clearing the opening level");
+    }
+
+    /// The other half: a run whose opening clear pays only moves.
+    ///
+    /// Anything that pins a score needs one. A run that finds an unlock by
+    /// clearing can mint with it straight away, and the flourish then scores
+    /// on top of whatever the score was pinned to.
+    fn run_finding_no_unlock() -> Session {
+        for seed in 0..64 {
+            let session = Session::new(seed);
+            if let Some(Item::Moves { .. }) = session.holds(Location::LevelClear(0)) {
+                return session;
+            }
+        }
+        panic!("no run in the first 64 seeds pays only moves for the opening level");
+    }
+
     fn force_win(session: &mut Session) -> Vec<Announced> {
         let mut seen = Vec::new();
         session.game_mut().progress.score = 1_000_000;
@@ -508,8 +551,11 @@ mod tests {
     fn a_score_past_a_tier_checks_it_and_a_score_short_of_one_does_not() {
         let marks = |session: &Session| (session.level().silver, session.level().gold);
 
-        // Short of silver: the level is cleared and neither tier is.
-        let mut session = Session::new(7);
+        // A run that finds no unlock by clearing, so the flourish has nothing
+        // to mint and the pinned score is the score the marks are read off.
+        // One that found an unlock would score on top of it and sail past the
+        // mark this is checking it stays short of.
+        let mut session = run_finding_no_unlock();
         let (silver, gold) = marks(&session);
         assert!(silver > 0 && gold > silver, "the opener has no tiers to test");
         force_win_at(&mut session, silver - 1);
@@ -520,7 +566,7 @@ mod tests {
         );
 
         // Past silver but short of gold.
-        let mut session = Session::new(7);
+        let mut session = run_finding_no_unlock();
         force_win_at(&mut session, gold - 1);
         assert!(session.checked().contains(&Location::LevelSilver(0).id()), "silver was missed");
         assert!(
@@ -529,10 +575,97 @@ mod tests {
         );
 
         // Past both. Exactly on the mark counts as reaching it.
-        let mut session = Session::new(7);
+        let mut session = run_finding_no_unlock();
         force_win_at(&mut session, gold);
         assert!(session.checked().contains(&Location::LevelSilver(0).id()));
         assert!(session.checked().contains(&Location::LevelGold(0).id()), "gold was missed");
+    }
+
+    #[test]
+    fn an_unlock_found_by_clearing_is_there_for_the_flourish_it_paid_for() {
+        // The flourish turns leftover moves into specials, and which specials
+        // it may mint is what the run holds. An unlock handed over for
+        // clearing the level has to be in hand for the rest of that flourish,
+        // or the one thing it could have changed has already happened by the
+        // time it arrives.
+        let (mut session, special) = run_finding_an_unlock();
+        assert!(
+            !has(session.game().rules().specials, special),
+            "the run was already holding what it is meant to find",
+        );
+
+        let mut during_flourish = None;
+        session.game_mut().progress.score = 1_000_000;
+        while session.game().phase() != Phase::Finished {
+            if let Some((a, b)) = session.game().hint() {
+                session.game_mut().try_swap(a, b);
+            }
+            session.update(16.0);
+            if during_flourish.is_none()
+                && matches!(session.game().phase(), Phase::CashingIn { .. })
+            {
+                during_flourish = Some(session.game().rules().specials);
+            }
+        }
+        let during_flourish = during_flourish.expect("the level never cashed in its moves");
+        assert!(
+            has(during_flourish, special),
+            "the board could not make a {special:?} until after the flourish that paid for it",
+        );
+    }
+
+    /// Whether a set allows one particular special.
+    fn has(set: SpecialSet, special: Special) -> bool {
+        set.list().contains(&special)
+    }
+
+    #[test]
+    fn a_mark_crossed_during_the_flourish_pays_while_it_is_still_running() {
+        // Same reason, from the other end: the score climbs all the way
+        // through the flourish, so a mark can be crossed in there, and what
+        // crossing it pays is only worth anything while there is still
+        // flourish left to spend it on. Waiting for the board to stop would
+        // hand it over one moment too late.
+        let (mut session, _) = run_finding_an_unlock();
+        let silver = session.level().silver;
+        assert!(silver > 0, "the opener has no silver mark to cross");
+
+        let mut paid_while_playing = false;
+        let mut at_clear = None;
+        while session.game().phase() != Phase::Finished {
+            // Held just under silver until the level clears, and let go the
+            // moment it does. A board played out honestly can cross the mark
+            // before it clears, and then there is nothing left for the
+            // flourish to carry it over.
+            if !session.game().cleared() {
+                session.game_mut().progress.score = silver - 500;
+            }
+            if let Some((a, b)) = session.game().hint() {
+                session.game_mut().try_swap(a, b);
+            }
+            session.update(16.0);
+            if at_clear.is_none() && session.game().cleared() {
+                at_clear = Some(session.game().progress.score);
+            }
+            if session.game().status() == Status::Playing
+                && session.checked().contains(&Location::LevelSilver(0).id())
+            {
+                paid_while_playing = true;
+            }
+        }
+
+        assert!(
+            at_clear.expect("the level never cleared") < silver,
+            "it was already past silver when the level cleared, so this proves nothing",
+        );
+        assert!(
+            session.checked().contains(&Location::LevelSilver(0).id()),
+            "the flourish did not carry it over silver, so this proves nothing",
+        );
+        assert!(
+            paid_while_playing,
+            "silver waited for the board to stop before it paid",
+        );
     }
 
     #[test]

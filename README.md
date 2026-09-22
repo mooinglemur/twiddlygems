@@ -290,9 +290,18 @@ and the numbers in the ladder are set so the attentive bot takes gold most of
 the time (or the location is one nobody can check) and the floor bot mostly
 does not (or gold is what clearing the level already pays). As it stands the
 attentive bot takes gold on 56 to 100% of its wins and the floor bot on 8 to
-100% of its far rarer ones. Marks are judged once the
-level is over rather than when its goals were met, because the flourish is
-still adding to the score in between.
+100% of its far rarer ones.
+
+**A mark is checked the moment the score crosses it**, from the clear onward
+rather than once the board has stopped. The flourish in between is still play:
+the score climbs all the way through it, so a mark can be crossed in there, and
+an unlock that crossing it pays for is a special the rest of the flourish can
+mint. Handing it over at the end would deliver it just after the one thing it
+could have changed. The score only ever climbs, so checking every frame reaches
+the same marks it would have reached at the end, and reaches them in time to
+matter. That is also how the multiworld behaves, which is the reason it has to
+be how this behaves: an item arrives when it arrives, and one that lands during
+the flourish lands on the board in front of the player.
 
 How well a level has been beaten is read back off the checked locations rather
 than recorded separately, so what is shown and what the run has found cannot
