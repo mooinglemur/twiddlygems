@@ -201,12 +201,33 @@ cleared for nothing. A location pays once, which is why the run writes down
 which it has checked, and why the save carries that list: reloading has to
 leave a run holding what it held, and still unable to find it again.
 
-**A level's score marks never hold that level's own moves.** Gold means beating
-a level as well as it can be beaten, so its rule wants everything that level's
-progression has to offer; an item for that same level kept there would be
-required to reach the place it is kept, which fill either refuses or strands.
-Handing them to the next level up keeps every mark clear of its own
-requirements.
+**A level's score marks never hold that level's own moves**, and the closing
+level's marks wrap round to pay the opening one. That keeps every mark clear of
+its own requirements, and it keeps every item on a chain short enough that runs
+actually get there: `make balance` reports how deep a chain a playthrough
+reaches, and it falls from every run at three deep to one in ten at twelve.
+Items live on the short ones only.
+
+**What a location asks is a `Requirement`**, shaped to Archipelago's own rule
+vocabulary rather than to anything of ours: `All` is its `And`, `Has` is its
+`Has`, `Reached` its `CanReachLocation`. The engine evaluates the same trees
+the apworld will, so neither side translates the other.
+
+The ladder gates itself, and nothing more is asked to clear a level, which is
+the rule that says every level must be beatable on its own budget. A score mark
+asks for the five unlocks as well: nearly all of a good score comes from the
+flourish, the flourish has nothing to mint without them, and logic should not
+depend on a coin landing. Past level six that asks for nothing extra, since
+getting there already means clearing the levels the unlocks sit on; it bites
+only on the opening levels, which are exactly the ones worth coming back to.
+
+A level's own move items are deliberately **not** required for its marks. They
+are never needed to clear anything, so they are a bonus rather than
+progression, and requiring them would make them progression that partly lives
+behind other marks. A test walks the whole placement in spheres the way a
+generator does and fails if anything can never be reached; another test checks
+that walk can still fail, by giving a location a rule its own item would
+satisfy.
 
 **Items and locations are named by the engine**, because those strings are the
 item's identity everywhere outside it: in the feed, in a tracker, in a spoiler

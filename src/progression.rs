@@ -169,6 +169,80 @@ const GOLD_ID_BASE: u32 = 3_000;
 /// sent rather than one this run found.
 pub const NO_LOCATION: u16 = u16::MAX;
 
+/// What a run must hold, or have reached, before a location can be checked.
+///
+/// Shaped to Archipelago's own rule vocabulary rather than to anything of
+/// ours, so it goes over to the apworld as the rules its builder already reads
+/// back: [`Requirement::All`] is `And`, [`Requirement::Has`] is `Has`, and
+/// [`Requirement::Reached`] is `CanReachLocation`. The engine evaluates the
+/// same trees for the solo run, so neither side translates the other and
+/// neither can drift.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Requirement {
+    /// Nothing at all: reachable from the start.
+    Always,
+    /// Every one of these.
+    All(Vec<Requirement>),
+    /// At least `count` of an item.
+    Has { item: Item, count: u32 },
+    /// Somewhere else has to be checkable first. What gates the ladder: a
+    /// level can only be played once the one below it has been cleared.
+    Reached(Location),
+}
+
+impl Requirement {
+    /// Whether a run holding `inventory`, having reached `reached`, may check
+    /// this.
+    pub fn met(&self, inventory: &Inventory, reached: &[Location]) -> bool {
+        match self {
+            Requirement::Always => true,
+            Requirement::All(parts) => parts.iter().all(|part| part.met(inventory, reached)),
+            Requirement::Has { item, count } => inventory.count(*item) >= *count,
+            Requirement::Reached(location) => reached.contains(location),
+        }
+    }
+}
+
+/// What a location asks before it can be checked.
+///
+/// The ladder gates itself: a level is playable once the one below it has been
+/// cleared, and nothing more is asked to clear it, which is the rule that says
+/// every level must be beatable on its own budget.
+///
+/// A score mark asks for the five unlocks as well. Nearly all of a good score
+/// comes from the flourish at the end of a level, and the flourish has nothing
+/// to mint without them, so a run holding none of them is at best flipping a
+/// coin for a mark. Logic should not depend on a coin landing. For most of the
+/// ladder this asks for nothing extra, since reaching level six already means
+/// having cleared the five levels the unlocks sit on; it bites only on the
+/// opening levels, which are exactly the ones a run comes back to later.
+///
+/// **A level's own move items are deliberately not required.** They are never
+/// needed to clear anything, so they are a bonus rather than progression, and
+/// making a mark depend on them would turn them into progression that partly
+/// lives behind other marks: see the test that walks the placement in spheres.
+pub fn requirement(location: Location, _levels: usize) -> Requirement {
+    let tools = || {
+        Requirement::All(
+            UNLOCKABLE
+                .iter()
+                .map(|special| Requirement::Has { item: Item::Unlock(*special), count: 1 })
+                .collect(),
+        )
+    };
+    match location {
+        Location::LevelClear(0) => Requirement::Always,
+        Location::LevelClear(index) => Requirement::Reached(Location::LevelClear(index - 1)),
+        Location::LevelSilver(index) | Location::LevelGold(index) => Requirement::All(vec![
+            Requirement::Reached(Location::LevelClear(index)),
+            tools(),
+        ]),
+        // A chain is made on whatever board is in front of you, and the
+        // opening one is in front of everybody.
+        Location::Chain(_) => Requirement::Always,
+    }
+}
+
 /// Every distinct item in the game, in a stable order.
 ///
 /// Distinct, not the pool: three of a level's move items are three copies of
@@ -321,6 +395,14 @@ impl Inventory {
         self.moves.get(level).copied().unwrap_or(0)
     }
 
+    /// How many of an item this run holds, which is what a rule asks.
+    pub fn count(&self, item: Item) -> u32 {
+        match item {
+            Item::Unlock(_) => u32::from(self.has(item)),
+            Item::Moves { level } => self.moves_found(level),
+        }
+    }
+
     /// Cuts a level down to what this run may do, and opens it up by what the
     /// run has earned.
     ///
@@ -379,20 +461,19 @@ pub fn solo_item_at(location: Location, levels: usize) -> Option<Item> {
             Some(special) => Some(Item::Unlock(*special)),
             None => Some(Item::Moves { level: index }),
         },
-        // The next level up, never this one.
+        // The next level up, wrapping past the end so the opening level is
+        // paid by the closing one. Never this level: see above.
         Location::LevelSilver(index) | Location::LevelGold(index) => {
-            (index + 1 < levels).then_some(Item::Moves { level: index + 1 })
+            (levels > 1).then_some(Item::Moves { level: (index + 1) % levels })
         }
         Location::Chain(length) => {
-            // The opening levels have no clear of their own to give, so the
-            // short chains cover them. The very first has no level below it to
-            // be paid by either, so it takes two more of its own.
-            let level = match length - SHORTEST_CHAIN {
-                step @ 0..=4 => step as usize,
-                5 | 6 => 0,
-                _ => return None,
-            };
-            Some(Item::Moves { level })
+            // The opening levels have no clear of their own to give, since
+            // theirs hold the unlocks, so the short chains cover them. Only
+            // the short ones: a chain nobody reaches is a place items
+            // disappear into, and `make balance` reports how deep a run
+            // actually gets.
+            let step = (length - SHORTEST_CHAIN) as usize;
+            (step < UNLOCKS.len() && step < levels).then_some(Item::Moves { level: step })
         }
     }
 }
@@ -612,6 +693,121 @@ mod tests {
         by_code.sort_by_key(|special| special.code());
         assert_eq!(unlocks, by_code, "the item table is not in code order");
         assert_eq!(item_index(Item::Unlock(Special::LineH), 13), Some(0));
+    }
+
+    /// Walks a placement the way a generator does: take everything reachable,
+    /// see what that opens, repeat until nothing new opens. Returns what was
+    /// never reached.
+    fn unreachable(levels: usize) -> Vec<Location> {
+        let all = locations(levels);
+        let mut reached: Vec<Location> = Vec::new();
+        let mut held = Inventory::empty();
+        loop {
+            let opened: Vec<Location> = all
+                .iter()
+                .copied()
+                .filter(|at| !reached.contains(at))
+                .filter(|at| requirement(*at, levels).met(&held, &reached))
+                .collect();
+            if opened.is_empty() {
+                return all.into_iter().filter(|at| !reached.contains(at)).collect();
+            }
+            for at in opened {
+                reached.push(at);
+                if let Some(item) = solo_item_at(at, levels) {
+                    held.receive(item);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_location_in_the_solo_placement_can_be_reached() {
+        // The check a generator does, done to the fixed table: if a location
+        // asks for an item that is kept behind it, directly or round a loop of
+        // several, nothing ever opens it and everything inside is lost.
+        for levels in LADDERS {
+            let stuck = unreachable(levels);
+            assert!(
+                stuck.is_empty(),
+                "on a ladder of {levels}, {} locations can never be checked, starting with {}",
+                stuck.len(),
+                location_name(stuck[0]),
+            );
+        }
+    }
+
+    #[test]
+    fn a_location_that_asked_for_what_it_keeps_would_be_caught() {
+        // The sphere walk above is only worth having if it fails on the shape
+        // it exists to find, so here is that shape at its smallest: the
+        // opening level's clear asking for the very unlock it is holding.
+        // Nothing opens it, so nothing opens at all.
+        let levels = 13;
+        let all = locations(levels);
+        let mut reached: Vec<Location> = Vec::new();
+        let mut held = Inventory::empty();
+        let circular = |at: Location| match at {
+            Location::LevelClear(0) => {
+                Requirement::Has { item: Item::Unlock(UNLOCKS[0]), count: 1 }
+            }
+            other => requirement(other, levels),
+        };
+        loop {
+            let opened: Vec<Location> = all
+                .iter()
+                .copied()
+                .filter(|at| !reached.contains(at))
+                .filter(|at| circular(*at).met(&held, &reached))
+                .collect();
+            if opened.is_empty() {
+                break;
+            }
+            for at in opened {
+                reached.push(at);
+                if let Some(item) = solo_item_at(at, levels) {
+                    held.receive(item);
+                }
+            }
+        }
+        assert!(
+            reached.len() < all.len(),
+            "a location asking for the item it holds should have stranded the ladder",
+        );
+    }
+
+    #[test]
+    fn nothing_is_asked_to_clear_a_level_beyond_reaching_it() {
+        // Every level has to be beatable on its own move budget, which is what
+        // lets the ladder be climbed by someone who finds nothing optional.
+        for levels in LADDERS {
+            for index in 0..levels {
+                let asked = requirement(Location::LevelClear(index), levels);
+                let ladder_only = match index {
+                    0 => asked == Requirement::Always,
+                    _ => asked == Requirement::Reached(Location::LevelClear(index - 1)),
+                };
+                assert!(ladder_only, "clearing level {} asks for more than the ladder", index + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn no_item_is_kept_behind_a_chain_hardly_anyone_reaches() {
+        // A chain location exists for every length, but the deep ones are
+        // rare: `make balance` reports the share of runs that get there, and
+        // it falls off fast. Items live only on the short ones, and the rest
+        // wait for the traps and usable items, which nobody has to find.
+        for levels in LADDERS {
+            for length in SHORTEST_CHAIN..=LONGEST_CHAIN {
+                let held = solo_item_at(Location::Chain(length), levels);
+                assert!(
+                    held.is_none() || length <= SHORTEST_CHAIN + UNLOCKS.len() as u32 - 1,
+                    "a {length} chain is holding {:?}, which few runs would ever reach",
+                    held,
+                );
+            }
+        }
     }
 
     #[test]

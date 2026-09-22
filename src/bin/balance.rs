@@ -16,7 +16,7 @@ use twiddlygems::board::{Pos, Special};
 use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
-use twiddlygems::progression::solo_inventory;
+use twiddlygems::progression::{solo_inventory, LONGEST_CHAIN, SHORTEST_CHAIN};
 
 /// The ladder as a solo run actually meets it: every level narrowed to the
 /// specials the levels below it have handed over.
@@ -59,6 +59,8 @@ fn main() {
     tiers(Bot::First, 200);
     println!();
     tiers(Bot::Greedy, 25);
+    println!();
+    chains(Bot::Greedy, 25);
     println!();
     if !in_logic(25) {
         std::process::exit(1);
@@ -107,6 +109,62 @@ fn tiers(bot: Bot, seeds: u64) {
             share(silver),
             spec.gold,
             share(gold),
+        );
+    }
+}
+
+/// How deep a chain a playthrough actually reaches.
+///
+/// Each length is a location, so this says which of them anyone can check. A
+/// length nothing ever reaches is a place items disappear into, and if logic
+/// counted on one the run would dead-end.
+///
+/// Counted per playthrough rather than per chain: what matters is whether a
+/// run ever gets there, not how often.
+fn chains(bot: Bot, seeds: u64) {
+    println!("how deep a chain a playthrough reaches ({seeds} runs per level)");
+    println!("{:<16}  {}", "length", "share of runs reaching it");
+
+    let ladder = ladder();
+    let mut reached = vec![0u64; (LONGEST_CHAIN + 2) as usize];
+    let mut runs = 0u64;
+    for (index, spec) in ladder.iter().enumerate() {
+        for seed in 0..seeds {
+            let mut game = Game::new(spec.clone(), seed * 7919 + index as u64);
+            let mut deepest = 0;
+            for _ in 0..4_000 {
+                if game.status() != Status::Playing {
+                    break;
+                }
+                if game.phase() == Phase::Idle {
+                    let choice = match bot {
+                        Bot::First => game.hint(),
+                        Bot::Greedy => best_move(&game),
+                    };
+                    match choice {
+                        Some((a, b)) => {
+                            game.try_swap(a, b);
+                        }
+                        None => break,
+                    }
+                }
+                game.update(16.0);
+                deepest = deepest.max(game.cascade());
+            }
+            runs += 1;
+            for length in 0..=deepest.min(LONGEST_CHAIN) {
+                reached[length as usize] += 1;
+            }
+        }
+    }
+
+    for length in SHORTEST_CHAIN..=LONGEST_CHAIN {
+        let hits = reached[length as usize];
+        println!(
+            "{:<16}  {:>4}% {}",
+            format!("{length} Chain"),
+            hits * 100 / runs.max(1),
+            if hits == 0 { "  NOBODY EVER GETS HERE" } else { "" },
         );
     }
 }
