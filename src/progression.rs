@@ -28,6 +28,23 @@ pub enum Item {
     Unlock(Special),
 }
 
+impl Item {
+    /// Which sort of item this is, for the event that announces it. See
+    /// [`crate::game::EV_ITEM`].
+    pub fn kind(self) -> u8 {
+        match self {
+            Item::Unlock(_) => 0,
+        }
+    }
+
+    /// The item's one parameter, alongside its kind.
+    pub fn value(self) -> u16 {
+        match self {
+            Item::Unlock(special) => special.code() as u16,
+        }
+    }
+}
+
 /// The five unlocks, in the order a solo run is given them.
 pub const UNLOCKS: [Special; 5] =
     [Special::LineV, Special::LineH, Special::Rocket, Special::Cross, Special::Rainbow];

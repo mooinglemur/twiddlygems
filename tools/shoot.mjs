@@ -103,7 +103,17 @@ const send = (method, params = {}) =>
   });
 
 const evaluate = async (expression) => {
-  const { result } = await send('Runtime.evaluate', { expression, returnByValue: true });
+  const { result, exceptionDetails } = await send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+  });
+  // Without this a script that throws comes back as `undefined` and the run
+  // carries on: the page is never driven, every shot is of whatever was on
+  // screen before, and nothing anywhere says so.
+  if (exceptionDetails) {
+    const thrown = exceptionDetails.exception?.description ?? exceptionDetails.text;
+    throw new Error(`evaluating ${expression.trim().slice(0, 80)}: ${thrown}`);
+  }
   return result.value;
 };
 
@@ -153,7 +163,10 @@ for (const [name, metrics] of [
     // without playing up to it.
     `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL} }))`,
   );
-  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
+  // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
+  // is how the shots below reach past the board to things an ordinary run only
+  // gets to by playing for a while.
+  await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html?debug` });
   await sleep(2200);
 
   // The game opens on its menu now, so that gets photographed and then
@@ -193,9 +206,23 @@ for (const [name, metrics] of [
   await shoot(`${name}-03-played`);
   const state = await readout();
 
+  // The item feed holds its height empty, so the shot above is the case that
+  // matters most. This one is what it looks like with something in it, which
+  // an ordinary run only reaches by clearing a level.
+  await evaluate(`
+    (() => {
+      const { hud } = window.twiddlygems;
+      hud.logItem('Unlocked ', 'Vertical Line Clear');
+      hud.logItem('Unlocked ', 'Rocket');
+      hud.logItem('Received ', 'Level 4 Progressive Moves');
+    })()
+  `);
+  await sleep(200);
+  await shoot(`${name}-04-feed`);
+
   await evaluate(`document.getElementById('levels-button').click()`);
   await sleep(400);
-  await shoot(`${name}-04-levels`);
+  await shoot(`${name}-05-levels`);
 
   // `hidden` is a utility class, and every panel it goes on is an id selector
   // that sets its own `display`, which outweighs a bare class. When that goes

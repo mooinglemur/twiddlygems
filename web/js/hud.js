@@ -1,8 +1,12 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { ObjectiveKind, Special, Status } from './engine.js';
+import { ItemKind, ObjectiveKind, Special, Status } from './engine.js';
 import { PALETTE } from './render.js';
+
+/// How many lines the feed keeps. Well past what fits, so scrolling back a
+/// little works, and far short of a session's worth.
+const FEED_LIMIT = 40;
 
 /// What each special is called, and the match that leaves one behind. The
 /// second half is the point: an unlock is being announced to someone who has
@@ -202,6 +206,44 @@ export class Hud {
       button('End the run', actions.onConfirm, false),
     );
     dom.overlay.classList.remove('hidden');
+  }
+
+  /**
+   * Writes a line into the item feed, newest at the bottom.
+   *
+   * `what` is picked out from the words around it, so a glance finds the item
+   * rather than the sentence. Old lines are dropped rather than kept forever:
+   * this is a feed, and only the recent end of it is ever read.
+   */
+  logItem(said, what) {
+    const { dom } = this;
+    const line = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'what';
+    name.textContent = what;
+    line.append(said, name);
+    dom.feed.append(line);
+
+    while (dom.feed.children.length > FEED_LIMIT) {
+      dom.feed.children[0].remove();
+    }
+    // Follow the newest line. Not smooth: several items can land in one frame
+    // and an animated scroll would be chasing a target that keeps moving.
+    dom.feed.scrollTop = dom.feed.scrollHeight;
+  }
+
+  /** Empties the feed, for a run that is starting over. */
+  clearFeed() {
+    this.dom.feed.replaceChildren();
+  }
+
+  /** Says what an item was, for the feed. Unknown items still get a line. */
+  describeItem(event) {
+    if (event.color === ItemKind.UNLOCK) {
+      const special = SPECIALS[event.value];
+      return special ? ['Unlocked ', special.name] : null;
+    }
+    return null;
   }
 
   /** A load failure has to be visible; the board never appears otherwise. */

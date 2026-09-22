@@ -54,7 +54,13 @@ export const EventKind = {
   LAND: 12,
   LOW_MOVES: 13,
   BRICK: 14,
+  /// An item reached the run. `color` is its `ItemKind`, `value` its one
+  /// parameter. Raised by the session, not the board.
+  ITEM: 15,
 };
+
+/// What sort of item an `EventKind.ITEM` is about.
+export const ItemKind = { UNLOCK: 0 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 

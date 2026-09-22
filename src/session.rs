@@ -4,7 +4,7 @@
 //! level when you clear one, and later the Archipelago layer will answer the
 //! same question (which levels may be played) from received items instead.
 
-use crate::game::{Game, Status};
+use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::progression::{solo_grant, Inventory, Item};
 use crate::rng::Rng;
@@ -32,6 +32,9 @@ pub struct Session {
     /// The item the level just cleared handed over, if it was new. Read by the
     /// front end to say so, and cleared the moment another level is dealt.
     granted: Option<Item>,
+    /// Things that happened to the run rather than to the board, raised
+    /// alongside the board's own so the page has one stream to watch.
+    events: Vec<Event>,
     game: Game,
     name_buf: Vec<u8>,
     names_blob: Vec<u8>,
@@ -53,6 +56,7 @@ impl Session {
             deal,
             inventory,
             granted: None,
+            events: Vec::new(),
             name_buf: Vec::new(),
             names_blob: Vec::new(),
         };
@@ -159,8 +163,15 @@ impl Session {
         let is_new = self.inventory.receive(item);
         if is_new {
             self.refresh_specials();
+            self.events.push(Event::about_item(EV_ITEM, item.kind(), item.value()));
         }
         is_new
+    }
+
+    /// Everything that happened to the run during the last call, which the ABI
+    /// packs alongside the board's own events.
+    pub fn events(&self) -> &[Event] {
+        &self.events
     }
 
     /// Re-derives what the board in play may make, from the level's own answer
@@ -183,13 +194,16 @@ impl Session {
     /// as news.
     fn collect_clear_reward(&mut self) {
         if let Some(item) = solo_grant(self.index) {
-            if self.inventory.receive(item) {
+            if self.receive(item) {
                 self.granted = Some(item);
             }
         }
     }
 
     pub fn update(&mut self, dt_ms: f32) {
+        // Cleared here rather than drained by the reader, to match how the
+        // board reports: everything raised during this call, and nothing else.
+        self.events.clear();
         self.game.update(dt_ms);
         if self.game.status() == Status::Won {
             self.unlocked = self.unlocked.max((self.index + 2).min(self.levels.len()));

@@ -68,8 +68,34 @@ function stubElement(id) {
         return on;
       },
     },
-    append(...nodes) { this.children.push(...nodes); },
-    replaceChildren(...nodes) { this.children = nodes; },
+    append(...nodes) {
+      for (const node of nodes) {
+        if (node && typeof node === 'object') {
+          node.parentNode = this;
+        }
+      }
+      this.children.push(...nodes);
+    },
+    replaceChildren(...nodes) {
+      for (const node of nodes) {
+        if (node && typeof node === 'object') {
+          node.parentNode = this;
+        }
+      }
+      this.children = nodes;
+    },
+    // Really removes. A stub that quietly did nothing would turn the feed's
+    // "drop the oldest line until it fits" loop into a hang.
+    remove() {
+      const siblings = this.parentNode?.children;
+      const at = siblings?.indexOf(this) ?? -1;
+      if (at >= 0) {
+        siblings.splice(at, 1);
+      }
+      this.parentNode = null;
+    },
+    scrollHeight: 0,
+    scrollTop: 0,
     // Kept on the element as well as in the global map: every element the page
     // creates shares the id `created:<tag>`, so a button in the overlay can
     // only be clicked on its own rather than by name.
@@ -95,7 +121,7 @@ function stubElement(id) {
 }
 
 for (const id of [
-  'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'moves', 'objectives',
+  'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'moves', 'objectives', 'feed',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons', 'level-grid',
   'levels-button', 'hint-button', 'retry-button', 'sound-button',
   'title', 'solo-button', 'solo-note', 'archipelago-button',
@@ -452,6 +478,16 @@ click(overlayButton('Close'), 'the level picker has no way out');
     [...engine.unlockedSpecials],
     [Special.LINE_V],
     'and exactly one thing should have opened up',
+  );
+
+  // The feed is the running record of what the run has been given, and where
+  // the Archipelago feed will go. It reads the event stream rather than asking
+  // the engine what it holds, so a multiworld item lands the same way.
+  const feed = elements.get('feed');
+  assert.equal(feed.children.length, 1, 'the unlock never reached the item feed');
+  assert.equal(
+    feed.children[0].children.map((part) => part.textContent ?? part).join(''),
+    'Unlocked Vertical Line Clear',
   );
   assert.ok(
     grid.classList.contains('hidden'),

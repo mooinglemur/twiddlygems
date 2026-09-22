@@ -29,6 +29,7 @@ const dom = {
   score: document.getElementById('score'),
   moves: document.getElementById('moves'),
   objectives: document.getElementById('objectives'),
+  feed: document.getElementById('feed'),
   overlay: document.getElementById('overlay'),
   overlayTitle: document.getElementById('overlay-title'),
   overlayBody: document.getElementById('overlay-body'),
@@ -216,6 +217,23 @@ async function boot() {
     }
   };
 
+  /// Anything the run was given goes in the feed. In solo these come from
+  /// clearing levels; under Archipelago the same events will carry what the
+  /// multiworld sent, which is why this reads the stream rather than asking
+  /// the engine what it happens to be holding.
+  const logItems = (events) => {
+    for (const event of events) {
+      if (event.kind !== EventKind.ITEM) {
+        continue;
+      }
+      const said = hud.describeItem(event);
+      if (said) {
+        hud.logItem(said[0], said[1]);
+        audio.play('sparkle');
+      }
+    }
+  };
+
   let hintAt = performance.now() + HINT_DELAY_MS;
   let resultShown = false;
   /** 'title' while the menu is up, 'solo' once a run is being played. */
@@ -266,6 +284,7 @@ async function boot() {
     renderer.hint = null;
     resultShown = false;
     hud.rebuild();
+    hud.clearFeed();
     showTitle();
   };
 
@@ -333,6 +352,7 @@ async function boot() {
     if (events.length > 0) {
       renderer.addEvents(events, now);
       playEvents(events);
+      logItems(events);
     }
 
     if (engine.phase !== Phase.IDLE) {

@@ -139,6 +139,49 @@ button[disabled] { opacity: 0.4; cursor: default; }
 .text-button { font-weight: 600; }
 .primary { background: var(--accent); color: #2a1f00; font-weight: 700; }
 
+/* ---- item feed ---- */
+
+/* The log of what the run has been given, and where the Archipelago feed will
+   go. It holds its height whether or not there is anything in it, so the board
+   does not jump down the page the first time an item arrives.
+
+   Two lines on a phone and four on a wider screen: enough to see an item
+   arrive without taking room the board wants. */
+#feed {
+  --feed-lines: 2;
+  flex: 0 0 auto;
+  /* An exact number of lines tall, with the breathing room as a transparent
+     border rather than padding. Padding sits inside the scrolled content and
+     offsets it by its own height, so scrolling to the newest line would always
+     leave a sliver of the one above it sliced off along the top edge. A border
+     is outside it, and the lines land where the viewport does. */
+  /* Against the sheet-wide border-box, so this height counts the lines and
+     nothing else: with border-box the transparent border would eat into it
+     and the last line would be cut in half. */
+  box-sizing: content-box;
+  height: calc(var(--feed-lines) * 1.6em);
+  margin: 0;
+  padding: 0 12px;
+  border: 8px solid transparent;
+  background-clip: padding-box;
+  list-style: none;
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: var(--socket);
+  border-radius: var(--radius);
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+#feed::-webkit-scrollbar { display: none; }
+#feed li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* What the item was, picked out of the sentence around it. */
+#feed .what { color: var(--accent); font-weight: 650; }
+
+@media (min-width: 640px) {
+  #feed { --feed-lines: 4; font-size: 0.82rem; }
+}
+
 /* ---- overlay ---- */
 
 #overlay {

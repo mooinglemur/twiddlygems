@@ -126,6 +126,7 @@ compare(
         ("LAND", "LAND"),
         ("LOW_MOVES", "LOW_MOVES"),
         ("BRICK", "BRICK"),
+        ("ITEM", "ITEM"),
     ],
 )
 

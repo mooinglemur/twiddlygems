@@ -112,6 +112,17 @@ pub const LOW_MOVES: u32 = 5;
 /// what it hits. It takes the one cell it was pointed at, and that is all.
 pub const EV_BRICK: u8 = 14;
 
+/// An item reached the run.
+///
+/// Not raised by the board, which knows nothing about items: the session
+/// raises it, and it rides the same stream so the page has one place to watch
+/// for things worth telling the player about.
+///
+/// `color` carries the item's kind and `value` its one parameter, which is the
+/// special's code for an unlock. The page turns that pair into words, because
+/// the event stream carries numbers and an item feed needs names.
+pub const EV_ITEM: u8 = 15;
+
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
 #[derive(Clone, Copy, Debug)]
@@ -140,6 +151,11 @@ impl Event {
 
     fn plain(kind: u8, value: u16) -> Self {
         Event { kind, r: 255, c: 255, color: 255, special: 0, cascade: 0, value }
+    }
+
+    /// An event about the run rather than the board. See [`EV_ITEM`].
+    pub fn about_item(kind: u8, item_kind: u8, value: u16) -> Self {
+        Event { kind, r: 255, c: 255, color: item_kind, special: 0, cascade: 0, value }
     }
 }
 

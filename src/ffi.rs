@@ -436,7 +436,10 @@ pub unsafe extern "C" fn tg_events_ptr(handle: *const Handle) -> *const u8 {
 
 fn pack_events(handle: &mut Handle) {
     handle.events.clear();
-    let events: Vec<Event> = handle.session.game().events().to_vec();
+    // The board's own, then the run's. One stream: the page should not have to
+    // ask two places what just happened.
+    let mut events: Vec<Event> = handle.session.game().events().to_vec();
+    events.extend_from_slice(handle.session.events());
     for event in events {
         handle.events.extend_from_slice(&[
             event.kind,

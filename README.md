@@ -103,7 +103,7 @@ web/
   js/engine.js  the ABI wrapper
   js/render.js  canvas drawing
   js/input.js   tap and swipe
-  js/hud.js     score, objectives, overlays
+  js/hud.js     score, objectives, the item feed, overlays
   js/main.js    bootstrap and the frame loop
   bin/balance.rs  difficulty measurement, see below
 tools/
@@ -179,6 +179,13 @@ run can spend a while able to finish four in a row and not four in a column.
 Levels themselves no longer switch specials off: a level says what belongs on
 it, the run says what it may make, and a match gets whatever survives both.
 That is why coming back to the opening level later plays differently.
+
+Items arrive as events on the same stream the board raises, and the **item
+feed** above the board is what reads them: two lines on a phone, four on a
+wider screen, holding its height whether or not anything has arrived so the
+board does not jump down the page. It reads the stream rather than asking the
+engine what it is holding, which is why an item sent by a multiworld will land
+in it the same way one found by clearing a level does.
 
 Specials are inert against ordinary gems. A line gem or a cross sits where it is
 until a match of its own color sweeps it up; shoving one against a plain gem
