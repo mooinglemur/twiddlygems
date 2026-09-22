@@ -61,6 +61,10 @@ impl Item {
 pub enum Location {
     /// Clearing the level at this index.
     LevelClear(usize),
+    /// Clearing it with a score past its silver mark.
+    LevelSilver(usize),
+    /// Clearing it with a score past its gold mark.
+    LevelGold(usize),
     /// Reaching a chain this long: one clear setting off the next, that many
     /// deep, off a single move.
     Chain(u32),
@@ -80,13 +84,17 @@ impl Location {
         match self {
             Location::LevelClear(_) => 0,
             Location::Chain(_) => 1,
+            Location::LevelSilver(_) => 2,
+            Location::LevelGold(_) => 3,
         }
     }
 
     /// The location's one parameter, alongside its kind.
     pub fn param(self) -> u16 {
         match self {
-            Location::LevelClear(index) => index as u16,
+            Location::LevelClear(index)
+            | Location::LevelSilver(index)
+            | Location::LevelGold(index) => index as u16,
             Location::Chain(length) => length as u16,
         }
     }
@@ -100,6 +108,8 @@ impl Location {
         match self {
             Location::LevelClear(index) => index as u32,
             Location::Chain(length) => CHAIN_ID_BASE + length,
+            Location::LevelSilver(index) => SILVER_ID_BASE + index as u32,
+            Location::LevelGold(index) => GOLD_ID_BASE + index as u32,
         }
     }
 
@@ -109,14 +119,26 @@ impl Location {
         if id < CHAIN_ID_BASE {
             return Some(Location::LevelClear(id as usize));
         }
+        if id >= GOLD_ID_BASE {
+            return Some(Location::LevelGold((id - GOLD_ID_BASE) as usize));
+        }
+        if id >= SILVER_ID_BASE {
+            return Some(Location::LevelSilver((id - SILVER_ID_BASE) as usize));
+        }
         let length = id - CHAIN_ID_BASE;
         (SHORTEST_CHAIN..=LONGEST_CHAIN).contains(&length).then_some(Location::Chain(length))
     }
 }
 
-/// Well clear of any ladder length, so the two kinds never collide however
-/// many levels there come to be.
+/// Each kind gets its own thousand, well clear of any ladder length, so they
+/// never collide however many levels there come to be.
+///
+/// A level clear keeps the bare index it has always had, because these
+/// numbers are written into saves: renumbering them hands a returning player
+/// somebody else's items.
 const CHAIN_ID_BASE: u32 = 1_000;
+const SILVER_ID_BASE: u32 = 2_000;
+const GOLD_ID_BASE: u32 = 3_000;
 
 /// The location kind for an item that came from no location at all: one the
 /// multiworld sent rather than one this run found.
@@ -126,6 +148,8 @@ pub const NO_LOCATION: u8 = 255;
 pub fn locations(level_count: usize) -> Vec<Location> {
     (0..level_count)
         .map(Location::LevelClear)
+        .chain((0..level_count).map(Location::LevelSilver))
+        .chain((0..level_count).map(Location::LevelGold))
         .chain((SHORTEST_CHAIN..=LONGEST_CHAIN).map(Location::Chain))
         .collect()
 }
@@ -237,17 +261,23 @@ pub fn move_step(base: u32) -> u32 {
 /// of a cross take looking for, and five in a line is the one you have to
 /// build.
 ///
-/// Every clear past those is worth more room on that same level, and the short
-/// chains carry the move items for the levels the unlocks took, so nothing on
-/// the ladder is cleared for nothing. The long chains hold nothing yet: they
-/// are hard enough to be worth having somewhere to put, and in a multiworld
-/// they will be holding somebody else's item anyway.
+/// Every clear past those is worth more room on that same level, as are both
+/// of its score tiers, and the short chains carry the third for the levels
+/// whose clear the unlocks took. So every level ends up improvable three
+/// times over and nothing on the ladder is cleared for nothing.
+///
+/// The long chains hold nothing yet. They are hard enough to be worth keeping
+/// somewhere to put the traps and the usable items when those exist, and in a
+/// multiworld they will be holding somebody else's item anyway.
 pub fn solo_item_at(location: Location) -> Option<Item> {
     match location {
         Location::LevelClear(index) => match UNLOCKS.get(index) {
             Some(special) => Some(Item::Unlock(*special)),
             None => Some(Item::Moves { level: index }),
         },
+        Location::LevelSilver(index) | Location::LevelGold(index) => {
+            Some(Item::Moves { level: index })
+        }
         Location::Chain(length) => {
             let level = (length - SHORTEST_CHAIN) as usize;
             (level < UNLOCKS.len()).then_some(Item::Moves { level })
@@ -286,6 +316,8 @@ mod tests {
             rules: Rules::default(),
             moves,
             objectives: vec![Objective::Score(1)],
+            silver: 0,
+            gold: 0,
             layout: None,
         }
     }

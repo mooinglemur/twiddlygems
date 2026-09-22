@@ -76,7 +76,13 @@ export const ItemKind = { UNLOCK: 0, MOVES: 1 };
 /// Where an `EventKind.ITEM` came from. Its parameter is the level for a
 /// clear and the length for a chain. `NONE` is an item that came from no
 /// location here at all, which is what a multiworld sending one looks like.
-export const LocationKind = { LEVEL_CLEAR: 0, CHAIN: 1, NONE: 255 };
+export const LocationKind = {
+  LEVEL_CLEAR: 0,
+  CHAIN: 1,
+  LEVEL_SILVER: 2,
+  LEVEL_GOLD: 3,
+  NONE: 255,
+};
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
@@ -230,6 +236,19 @@ export class Engine {
 
   get levelCount() { return this.wasm.tg_level_count(this.handle); }
   get unlocked() { return this.wasm.tg_unlocked(this.handle); }
+
+  /**
+   * The scores worth coming back for on this level, or 0 for neither.
+   *
+   * Not goals: the level ends on its objectives whatever the score. Each is
+   * somewhere an item is found, so passing one is worth more than the number.
+   */
+  get tiers() {
+    return {
+      silver: this.wasm.tg_level_silver(this.handle),
+      gold: this.wasm.tg_level_gold(this.handle),
+    };
+  }
 
   get levelName() {
     const length = this.wasm.tg_level_name_len(this.handle);

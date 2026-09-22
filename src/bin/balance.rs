@@ -55,8 +55,58 @@ fn main() {
     println!();
     calibrate(Bot::Greedy, 25);
     println!();
+    tiers(Bot::First, 200);
+    println!();
+    tiers(Bot::Greedy, 25);
+    println!();
     if !in_logic(25) {
         std::process::exit(1);
+    }
+}
+
+/// How often each bot reaches a level's two score tiers.
+///
+/// A reading rather than a gate, but the one to set the numbers in the ladder
+/// against. What they are aiming at: the attentive bot should reach gold most
+/// of the time, or the tier is a location nobody can check, and the floor bot
+/// should mostly miss it, or gold is what clearing the level already pays.
+/// Silver sits where a good run lands rather than a lucky one.
+///
+/// Only wins count. A level that was not cleared has no tier, however high the
+/// score got.
+fn tiers(bot: Bot, seeds: u64) {
+    let name = match bot {
+        Bot::First => "first legal move",
+        Bot::Greedy => "greedy",
+    };
+    println!("score tiers reached by the {name} bot ({seeds} seeds per level)");
+    println!(
+        "{:<16} {:>8} {:>9} {:>6} {:>9} {:>6}",
+        "level", "won", "silver", "of won", "gold", "of won"
+    );
+
+    for (index, spec) in ladder().into_iter().enumerate() {
+        let mut won = 0;
+        let (mut silver, mut gold) = (0, 0);
+        for seed in 0..seeds {
+            let game = play(&spec, seed * 7919 + index as u64, bot);
+            if game.status() != Status::Won {
+                continue;
+            }
+            won += 1;
+            silver += u64::from(spec.silver > 0 && game.progress.score >= spec.silver);
+            gold += u64::from(spec.gold > 0 && game.progress.score >= spec.gold);
+        }
+        let share = |n: u64| if won == 0 { "-".to_string() } else { format!("{}%", n * 100 / won) };
+        println!(
+            "{:<16} {:>8} {:>9} {:>6} {:>9} {:>6}",
+            spec.name,
+            won,
+            spec.silver,
+            share(silver),
+            spec.gold,
+            share(gold),
+        );
     }
 }
 

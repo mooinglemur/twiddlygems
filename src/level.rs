@@ -116,13 +116,36 @@ pub struct LevelSpec {
     /// Moves the player gets. 0 means unlimited.
     pub moves: u32,
     pub objectives: Vec<Objective>,
+    /// Scores worth coming back for, over and above simply clearing the level.
+    ///
+    /// Not objectives: the level ends when its objectives are met, whatever
+    /// the score. These are what the end-of-level flourish is chased for, and
+    /// each is somewhere an item can be found, so beating a level well is
+    /// worth something beyond the number. Zero means the level offers no tier.
+    pub silver: u64,
+    pub gold: u64,
     /// Board shape and jelly placement; a plain rectangle when absent.
     pub layout: Option<&'static [&'static str]>,
 }
 
 impl LevelSpec {
     fn new(name: &'static str, moves: u32, objectives: Vec<Objective>) -> Self {
-        LevelSpec { name, rules: Rules::default(), moves, objectives, layout: None }
+        LevelSpec {
+            name,
+            rules: Rules::default(),
+            moves,
+            objectives,
+            silver: 0,
+            gold: 0,
+            layout: None,
+        }
+    }
+
+    /// The two scores worth coming back for. See [`LevelSpec::silver`].
+    fn tiers(mut self, silver: u64, gold: u64) -> Self {
+        self.silver = silver;
+        self.gold = gold;
+        self
     }
 
     fn with_layout(mut self, layout: &'static [&'static str]) -> Self {
@@ -278,10 +301,22 @@ pub fn levels() -> Vec<LevelSpec> {
         // Nothing is switched off here any more: a new run simply holds none
         // of the unlocks yet, so the opener plays as plain matching on its
         // own. Come back to it later and it hands out specials like the rest.
-        LevelSpec::new("First Light", 20, vec![Objective::Score(4_000)]).colors(5),
-        LevelSpec::new("Finding Fours", 22, vec![Objective::Score(7_000)]).colors(5),
+        // The tiers on each level are read off the bots in `make balance`,
+        // roughly the attentive bot's median at 45% and 80%. Silver is what a
+        // good run reaches; gold wants the level beaten briskly, because what
+        // fills the gap is the flourish spending the moves left over. The
+        // opener is the exception: with no unlocks there is no flourish, so
+        // its two sit just above what scraping a win pays.
+        LevelSpec::new("First Light", 20, vec![Objective::Score(4_000)])
+            .colors(5)
+            .tiers(4_600, 5_200),
+        LevelSpec::new("Finding Fours", 22, vec![Objective::Score(7_000)])
+            .colors(5)
+            .tiers(12_000, 22_000),
         // Color goals ask you to aim rather than to clear whatever is nearest.
-        LevelSpec::new("Ruby Hunt", 22, vec![Objective::Color { color: 0, count: 30 }]).colors(5),
+        LevelSpec::new("Ruby Hunt", 22, vec![Objective::Color { color: 0, count: 30 }])
+            .colors(5)
+            .tiers(23_000, 41_000),
         LevelSpec::new(
             "Two Tastes",
             26,
@@ -289,24 +324,37 @@ pub fn levels() -> Vec<LevelSpec> {
                 Objective::Color { color: 1, count: 28 },
                 Objective::Color { color: 3, count: 28 },
             ],
-        ),
+        )
+        .tiers(18_000, 33_000),
         // Jelly arrives: now position matters, not just volume.
-        LevelSpec::new("Sticky Middle", 16, vec![Objective::Jelly]).with_layout(JELLY_PATCH),
+        LevelSpec::new("Sticky Middle", 16, vec![Objective::Jelly])
+            .with_layout(JELLY_PATCH)
+            .tiers(13_000, 24_000),
         LevelSpec::new(
             "Crowded House",
             26,
             vec![Objective::Score(13_000), Objective::Color { color: 4, count: 26 }],
-        ),
+        )
+        .tiers(17_000, 30_000),
         // Walls break the board into tubes and make cascades harder to aim.
         LevelSpec::new("Crossroads", 20, vec![Objective::Jelly, Objective::Score(12_000)])
-            .with_layout(CROSS),
-        LevelSpec::new("Pillars", 32, vec![Objective::Jelly]).with_layout(PILLARS),
-        LevelSpec::new("Hourglass", 40, vec![Objective::Jelly]).with_layout(HOURGLASS),
+            .with_layout(CROSS)
+            .tiers(13_000, 24_000),
+        LevelSpec::new("Pillars", 32, vec![Objective::Jelly])
+            .with_layout(PILLARS)
+            .tiers(14_000, 25_000),
+        LevelSpec::new("Hourglass", 40, vec![Objective::Jelly])
+            .with_layout(HOURGLASS)
+            .tiers(26_000, 47_000),
         // The jelly is under the brick shelves, so it cannot be reached until
         // the bricks come down, and nothing falls into those pockets until the
         // gems above spill around the ends.
-        LevelSpec::new("Quarry", 34, vec![Objective::Jelly]).with_layout(QUARRY),
-        LevelSpec::new("Landslide", 40, vec![Objective::Brick]).with_layout(SLOPE),
+        LevelSpec::new("Quarry", 34, vec![Objective::Jelly])
+            .with_layout(QUARRY)
+            .tiers(13_000, 24_000),
+        LevelSpec::new("Landslide", 40, vec![Objective::Brick])
+            .with_layout(SLOPE)
+            .tiers(25_000, 44_000),
         // A goal per color rather than one lumped total, so the level is about
         // bringing each color to its own seals rather than breaking whichever
         // happened to be easiest to reach.
@@ -321,7 +369,8 @@ pub fn levels() -> Vec<LevelSpec> {
             ],
         )
         .with_layout(VAULT)
-        .palette(&[0, 1, 2, 3]),
+        .palette(&[0, 1, 2, 3])
+        .tiers(310_000, 550_000),
         LevelSpec::new(
             "Last Call",
             30,
@@ -329,7 +378,8 @@ pub fn levels() -> Vec<LevelSpec> {
                 Objective::Score(18_000),
                 Objective::Color { color: 2, count: 32 },
             ],
-        ),
+        )
+        .tiers(27_000, 48_000),
     ]
 }
 

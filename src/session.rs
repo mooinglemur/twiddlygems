@@ -147,6 +147,15 @@ impl Session {
         self.sync_name();
     }
 
+    /// The level being played, as the ladder defines it.
+    ///
+    /// The ladder's own answer, not the narrowed copy the board is running:
+    /// what is wanted from here is the level's design (its score tiers, say),
+    /// which is the same whatever the run happens to hold.
+    pub fn level(&self) -> &LevelSpec {
+        &self.levels[self.index]
+    }
+
     /// What the run may make. The front end shows it; the Archipelago layer
     /// will answer the same question from received items.
     pub fn inventory(&self) -> &Inventory {
@@ -244,10 +253,15 @@ impl Session {
     /// later version looks like from here.
     pub fn restore(&mut self, id: u32) {
         let Some(location) = Location::from_id(id) else { return };
-        if let Location::LevelClear(index) = location {
-            if index >= self.levels.len() {
-                return;
+        match location {
+            Location::LevelClear(index)
+            | Location::LevelSilver(index)
+            | Location::LevelGold(index)
+                if index >= self.levels.len() =>
+            {
+                return
             }
+            _ => {}
         }
         if self.checked.contains(&id) {
             return;
@@ -264,6 +278,16 @@ impl Session {
     fn check_reached(&mut self) {
         if self.game.status() == Status::Won {
             self.check(Location::LevelClear(self.index));
+            // Only once the level is over, because the flourish is still
+            // adding to the score right up until then.
+            let (silver, gold) = (self.levels[self.index].silver, self.levels[self.index].gold);
+            let score = self.game.progress.score;
+            if silver > 0 && score >= silver {
+                self.check(Location::LevelSilver(self.index));
+            }
+            if gold > 0 && score >= gold {
+                self.check(Location::LevelGold(self.index));
+            }
         }
         // A chain that got to five got to two, three and four on the way.
         let reached = self.game.cascade().min(LONGEST_CHAIN);
@@ -341,6 +365,23 @@ mod tests {
     /// ends, because what these tests are about is what a clear leads to, not
     /// whether the level is beatable. Events are collected as they go: the
     /// session clears them every frame, like the board does.
+    /// Wins the level with the score held at exactly `score` the whole way.
+    ///
+    /// Pinned rather than set once, because the board keeps scoring as it
+    /// settles and the flourish keeps scoring after that: a test about a
+    /// score threshold would drift off its own number otherwise.
+    fn force_win_at(session: &mut Session, score: u64) {
+        while session.game().phase() != Phase::Finished {
+            session.game_mut().progress.score = score;
+            if let Some((a, b)) = session.game().hint() {
+                session.game_mut().try_swap(a, b);
+            }
+            session.update(16.0);
+        }
+        assert_eq!(session.game().status(), Status::Won);
+        assert_eq!(session.game().progress.score, score, "the score did not stay put");
+    }
+
     fn force_win(session: &mut Session) -> Vec<Announced> {
         let mut seen = Vec::new();
         session.game_mut().progress.score = 1_000_000;
@@ -409,6 +450,76 @@ mod tests {
     }
 
     #[test]
+    fn a_score_past_a_tier_checks_it_and_a_score_short_of_one_does_not() {
+        let marks = |session: &Session| (session.level().silver, session.level().gold);
+
+        // Short of silver: the level is cleared and neither tier is.
+        let mut session = Session::new(7);
+        let (silver, gold) = marks(&session);
+        assert!(silver > 0 && gold > silver, "the opener has no tiers to test");
+        force_win_at(&mut session, silver - 1);
+        assert!(session.checked().contains(&Location::LevelClear(0).id()));
+        assert!(
+            !session.checked().contains(&Location::LevelSilver(0).id()),
+            "a score short of silver checked it anyway",
+        );
+
+        // Past silver but short of gold.
+        let mut session = Session::new(7);
+        force_win_at(&mut session, gold - 1);
+        assert!(session.checked().contains(&Location::LevelSilver(0).id()), "silver was missed");
+        assert!(
+            !session.checked().contains(&Location::LevelGold(0).id()),
+            "a score short of gold checked it anyway",
+        );
+
+        // Past both. Exactly on the mark counts as reaching it.
+        let mut session = Session::new(7);
+        force_win_at(&mut session, gold);
+        assert!(session.checked().contains(&Location::LevelSilver(0).id()));
+        assert!(session.checked().contains(&Location::LevelGold(0).id()), "gold was missed");
+    }
+
+    #[test]
+    fn a_tier_is_judged_on_the_score_the_flourish_finished_on() {
+        // The flourish keeps adding right up to the end, so a tier read
+        // before it would be read off a smaller number than the player sees.
+        // Run holding an unlock, because with none there is nothing to mint
+        // and so nothing for the flourish to add.
+        let mut session = Session::new(7);
+        session.receive(Item::Unlock(Special::LineH));
+        let gold = session.level().gold;
+        session.game_mut().progress.score = gold - 400;
+
+        // Watched rather than inflated, and the score at the moment the goal
+        // was met is what makes this mean anything: if it were already past
+        // gold there, judging it early would look the same as judging it late.
+        let mut at_goal = None;
+        while session.game().phase() != Phase::Finished {
+            if let Some((a, b)) = session.game().hint() {
+                session.game_mut().try_swap(a, b);
+            }
+            session.update(16.0);
+            let said_cleared =
+                session.game().events().iter().any(|e| e.kind == crate::game::EV_CLEARED);
+            if at_goal.is_none() && said_cleared {
+                at_goal = Some(session.game().progress.score);
+            }
+        }
+        let at_goal = at_goal.expect("the level never said it was cleared");
+
+        assert!(at_goal < gold, "it was already past gold at the goal, so this proves nothing");
+        assert!(
+            session.game().progress.score >= gold,
+            "the flourish did not carry it over, so this proves nothing",
+        );
+        assert!(
+            session.checked().contains(&Location::LevelGold(0).id()),
+            "gold was judged at the goal rather than once the flourish had paid",
+        );
+    }
+
+    #[test]
     fn a_chain_checks_its_location_and_pays_once() {
         // Two deep turns up by itself soon enough: a clear that drops gems
         // into another match.
@@ -433,7 +544,9 @@ mod tests {
         );
 
         // And it is spent. Playing on, chains of two keep happening, and none
-        // of them is worth anything a second time.
+        // of them is worth anything a second time. Counted as visits to the
+        // location rather than as items, because other locations on this same
+        // level hand over moves for it too.
         for _ in 0..2000 {
             if session.game().phase() == Phase::Idle && session.game().status() == Status::Playing {
                 if let Some((a, b)) = session.game().hint() {
@@ -442,7 +555,8 @@ mod tests {
             }
             session.update(16.0);
         }
-        assert_eq!(session.inventory().moves_found(0), 1, "the location paid out twice");
+        let visits = session.checked().iter().filter(|id| **id == chain).count();
+        assert_eq!(visits, 1, "the location was checked {visits} times");
     }
 
     #[test]

@@ -343,6 +343,26 @@ pub unsafe extern "C" fn tg_unlocked_specials(handle: *const Handle) -> u32 {
     held.iter().filter(|(on, _)| *on).map(|(_, s)| 1u32 << s.code()).sum()
 }
 
+/// The current level's silver and gold marks, or 0 when it offers neither.
+///
+/// Scores worth coming back for rather than goals: the level ends on its
+/// objectives whatever the score. Two calls rather than one packed value
+/// because a score does not fit in half a `u32`.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_silver(handle: *const Handle) -> f64 {
+    session!(handle, 0.0).session.level().silver as f64
+}
+
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_gold(handle: *const Handle) -> f64 {
+    session!(handle, 0.0).session.level().gold as f64
+}
+
 /// Which locations this run has already checked, as little-endian `u32` ids.
 ///
 /// Written into the save, so a returning run keeps what it found and stays

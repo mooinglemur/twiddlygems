@@ -1752,6 +1752,8 @@ mod tests {
             rules: Rules { rows, cols, colors, ..Rules::default() },
             moves,
             objectives: vec![Objective::Score(1_000_000)],
+            silver: 0,
+            gold: 0,
             layout: None,
         }
     }

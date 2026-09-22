@@ -122,7 +122,26 @@ export class Hud {
       : 'Out of moves';
     const lines = [];
     if (won) {
-      lines.push(`${Math.round(engine.score).toLocaleString()} points on ${engine.levelName}.`);
+      const score = Math.round(engine.score);
+      // What the level was worth beating well, said before the number, since
+      // the tier is the achievement and the score is only the evidence.
+      const { silver, gold } = engine.tiers;
+      const tier = gold > 0 && score >= gold ? 'Gold' : silver > 0 && score >= silver ? 'Silver' : null;
+      lines.push(
+        tier
+          ? `${tier}: ${score.toLocaleString()} points on ${engine.levelName}.`
+          : `${score.toLocaleString()} points on ${engine.levelName}.`,
+      );
+      // How far off the next mark up is, which is the whole reason to play a
+      // level again once it is cleared. The nearer one first: someone short of
+      // silver wants to hear about silver, not gold.
+      const next = [
+        { name: 'silver', at: silver },
+        { name: 'gold', at: gold },
+      ].find((mark) => mark.at > 0 && score < mark.at);
+      if (next) {
+        lines.push(`${(next.at - score).toLocaleString()} more for ${next.name}.`);
+      }
       if (found) {
         lines.push(found.where ? `${found.said}${found.what} (${found.where}).` : `${found.said}${found.what}.`);
       }
@@ -317,6 +336,12 @@ function itemName({ color, special }) {
 function locationName({ cascade, value }) {
   if (cascade === LocationKind.LEVEL_CLEAR) {
     return `Level ${value + 1} Clear`;
+  }
+  if (cascade === LocationKind.LEVEL_SILVER) {
+    return `Level ${value + 1} Silver`;
+  }
+  if (cascade === LocationKind.LEVEL_GOLD) {
+    return `Level ${value + 1} Gold`;
   }
   if (cascade === LocationKind.CHAIN) {
     return `${value} Chain`;

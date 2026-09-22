@@ -190,18 +190,29 @@ first clear. One arriving mid level goes straight on the counter in front of
 the player, because an item that did nothing for the level it was sent to would
 not be much of an item.
 
-Items are found at **locations**: clearing each level, and reaching a chain of
-each length from two to twelve. The opening level clears hold the unlocks;
-every clear past those is worth more room on that same level, and the short
-chains carry the move items for the levels the unlocks took, so nothing on the
-ladder is cleared for nothing. A location pays once, which is why the run
-writes down which it has checked, and why the save carries that list: reloading
-has to leave a run holding what it held, and still unable to find it again.
+Items are found at **locations**: clearing each level, clearing it past each of
+its two score marks, and reaching a chain of each length from two to twelve.
+The opening level clears hold the unlocks; every clear past those is worth more
+room on that same level, as are both of its score marks, and the short chains
+carry the third for the levels whose clear an unlock took. So every level ends
+up improvable three times over and nothing on the ladder is cleared for
+nothing. A location pays once, which is why the run writes down which it has
+checked, and why the save carries that list: reloading has to leave a run
+holding what it held, and still unable to find it again.
+
+**Silver and gold** are read off the bots. `make balance` reports how often
+each reaches each mark, and the numbers in the ladder are set so the attentive
+bot takes gold most of the time (or the location is one nobody can check) and
+the floor bot mostly does not (or gold is what clearing the level already
+pays). As it stands the attentive bot takes gold on 60 to 96% of its wins and
+the floor bot on 0 to 60% of its far rarer ones. Marks are judged once the
+level is over rather than when its goals were met, because the flourish is
+still adding to the score in between.
 
 Logic counts level clears and nothing else. Reaching a level means clearing
 every level below it, so those items are guaranteed; a chain is not, since
-nobody is owed a five long one. The claim has to hold for the player who never
-made one.
+nobody is owed a five long one, and neither is a score mark. The claim has to
+hold for the player who only ever scrapes a win.
 
 Items arrive as events on the same stream the board raises, and the **item
 feed** above the board is what reads them: two lines on a phone, four on a
@@ -674,11 +685,11 @@ durations and brightness are measurable; character is not. Listen, then edit
 2. **Solo progression gating and Archipelago.** Started. `progression.rs` holds
    the items, the locations and the placement between them, and `Session` walks
    it; the five specials are unlocks and each level's move budget can be topped
-   up, found by clearing levels and making chains in solo and delivered by the
-   multiworld later. Both sides fill the same `Inventory`, so "can this be
-   cleared from here" is one question asked of one thing. Still to come: the
-   score tiers and the endgame scoring phase that makes them worth chasing, the
-   trap and usable items, and emitting the apworld from the same tables.
+   up, found by clearing levels, beating their score marks and making chains in
+   solo, and delivered by the multiworld later. Both sides fill the same
+   `Inventory`, so "can this be cleared from here" is one question asked of one
+   thing. Still to come: the trap and usable items, which need somewhere to
+   keep and spend them; and emitting the apworld from the same tables.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles
