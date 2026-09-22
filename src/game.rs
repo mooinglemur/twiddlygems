@@ -1235,13 +1235,14 @@ impl Game {
     /// The board has come to rest: decide whether the level is over, the board
     /// is stuck, or the player is up.
     fn settle(&mut self) {
-        // A chain ends when the board comes to rest and the player is up
-        // again. On a cleared level the player is never up again: the rounds
-        // of the flourish are one continuous run of clears with nobody moving
-        // between them, so the chain carries on and the music keeps climbing
-        // rather than dropping back to the bottom of its progression every
-        // time the board settles.
-        if !self.objectives_met() {
+        // A chain ends when the board comes to rest. The flourish at the end
+        // of a level is one chain of its own: this is the settle that noticed
+        // the goal was met, so it still ends the player's chain and the
+        // flourish starts again from the bottom of the progression. Every
+        // settle after it is between two rounds of the flourish, with nobody
+        // moving in between, so those do not break the chain and the music
+        // climbs through to the end.
+        if !self.announced_clear {
             self.cascade = 0;
         }
         self.swap = None;
@@ -3634,25 +3635,43 @@ mod tests {
     }
 
     #[test]
-    fn the_chain_keeps_climbing_across_the_rounds_of_a_flourish() {
-        // Nobody moved between the rounds, so they are one long run of
-        // clears. Letting the count start over would drop the music back to
-        // the bottom of its progression every time the board settled, which
-        // is the opposite of what the end of a level should sound like.
+    fn the_flourish_is_one_chain_of_its_own() {
+        // It starts over once, where the player's last chain ended and the
+        // flourish begins, so the music opens at the bottom of its
+        // progression. From there it climbs through every round: nobody moves
+        // between them, and restarting on each would drop the music back to
+        // that first chord over and over.
+        //
+        // The seed is picked for taking three rounds to finish. Most take
+        // one, and on those this passes whatever the rule is, which is how an
+        // earlier version of it sat here proving nothing.
         let mut level = spec(9, 9, 6, 30);
         level.objectives = vec![Objective::Score(1)];
-        let mut game = Game::new(level, 509);
+        let mut game = Game::new(level, 513);
         let (a, b) = game.hint().expect("a fresh board has a move");
         game.try_swap(a, b);
         let events = settle(&mut game);
 
-        let steps: Vec<u16> =
-            events.iter().filter(|e| e.kind == EV_MATCH).map(|e| e.value).collect();
-        assert!(steps.len() >= 3, "only {} matches resolved: {steps:?}", steps.len());
-        assert_eq!(steps[0], 1, "the player's own match is the first link");
+        let at_clear = events
+            .iter()
+            .position(|e| e.kind == EV_CLEARED)
+            .expect("the level never said it was cleared");
+        let flourish: Vec<u16> = events[at_clear..]
+            .iter()
+            .filter(|e| e.kind == EV_MATCH)
+            .map(|e| e.value)
+            .collect();
+
+        // Enough links to span the rounds, or the checks below say nothing.
+        assert!(flourish.len() >= 8, "the flourish resolved only {} matches", flourish.len());
+        assert_eq!(
+            flourish.first().copied(),
+            Some(1),
+            "the flourish should open at the bottom of the progression: {flourish:?}",
+        );
         assert!(
-            steps.windows(2).all(|pair| pair[1] > pair[0]),
-            "the chain stalled or restarted part way through: {steps:?}",
+            flourish.windows(2).all(|pair| pair[1] > pair[0]),
+            "and climb from there without starting over: {flourish:?}",
         );
     }
 

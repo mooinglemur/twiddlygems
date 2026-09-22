@@ -253,14 +253,18 @@ because a round is a detonation nobody swapped for. The two phases it does add
 are for the parts that are new: spending the moves one at a time, and the beat
 at the end.
 
-**The whole flourish is one chain.** A chain ends when the board comes to rest
-and the player is up again, and on a cleared level the player is never up
-again, so the count carries on across the rounds instead of starting over on
-each. That is what the music reads, so the progression keeps climbing to the
-end rather than dropping back to its first chord every time the board settles.
-The score multiplier reads the same count, so it climbs too: the end of a level
-is worth several times what the same clears would be worth mid level, which is
-the difference between a flourish and an afterthought.
+**The whole flourish is one chain.** It starts over once, at the settle that
+noticed the goal was met, so it opens at the bottom of the musical progression
+rather than partway up whatever the player's last chain reached. Every settle
+after that is a boundary between two rounds of the flourish, with nobody moving
+in between, so those do not break the chain: the count climbs through to the
+end instead of dropping back to the first chord each time the board comes to
+rest. The score multiplier reads the same count, so it climbs too.
+
+Most flourishes finish in a single round, which makes this easy to get wrong
+and easy to appear to test. A round boundary only happens when the clears leave
+new specials behind, so a test of it has to be on a seed that actually takes
+several: on a one round board every version of the rule looks correct.
 
 Specials are inert against ordinary gems. A line gem or a cross sits where it is
 until a match of its own color sweeps it up; shoving one against a plain gem
