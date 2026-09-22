@@ -1225,7 +1225,15 @@ impl Game {
     /// The board has come to rest: decide whether the level is over, the board
     /// is stuck, or the player is up.
     fn settle(&mut self) {
-        self.cascade = 0;
+        // A chain ends when the board comes to rest and the player is up
+        // again. On a cleared level the player is never up again: the rounds
+        // of the flourish are one continuous run of clears with nobody moving
+        // between them, so the chain carries on and the music keeps climbing
+        // rather than dropping back to the bottom of its progression every
+        // time the board settles.
+        if !self.objectives_met() {
+            self.cascade = 0;
+        }
         self.swap = None;
         self.progress.jelly_left = self.board.jelly_remaining();
 
@@ -1292,6 +1300,11 @@ impl Game {
     fn begin_finale(&mut self) -> bool {
         let waiting = self.inert_specials();
         if !waiting.is_empty() {
+            // Another link in the same chain, so the music takes its next
+            // step rather than repeating the chord the last round ended on.
+            // `finish_fall` does this for the links inside a round; a round
+            // beginning is one too.
+            self.cascade += 1;
             self.begin_clear(Resolution {
                 seeds: waiting,
                 creations: Vec::new(),
@@ -3606,6 +3619,29 @@ mod tests {
         assert_eq!(game.moves_left, 0);
         // 29 steps at 300ms each, and a frame here is 16ms.
         assert!(frames > 500, "the whole run down took only {frames} frames");
+    }
+
+    #[test]
+    fn the_chain_keeps_climbing_across_the_rounds_of_a_flourish() {
+        // Nobody moved between the rounds, so they are one long run of
+        // clears. Letting the count start over would drop the music back to
+        // the bottom of its progression every time the board settled, which
+        // is the opposite of what the end of a level should sound like.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 509);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+        let events = settle(&mut game);
+
+        let steps: Vec<u16> =
+            events.iter().filter(|e| e.kind == EV_MATCH).map(|e| e.value).collect();
+        assert!(steps.len() >= 3, "only {} matches resolved: {steps:?}", steps.len());
+        assert_eq!(steps[0], 1, "the player's own match is the first link");
+        assert!(
+            steps.windows(2).all(|pair| pair[1] > pair[0]),
+            "the chain stalled or restarted part way through: {steps:?}",
+        );
     }
 
     #[test]
