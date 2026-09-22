@@ -220,6 +220,43 @@ pub unsafe extern "C" fn tg_level_names_len(handle: *const Handle) -> u32 {
     session!(handle, 0).session.level_names().len() as u32
 }
 
+/// Every item's name, newline separated, in the order the engine numbers them.
+/// An item event carries a number into this list rather than any text.
+///
+/// The engine owns these because they are the same strings a tracker and a
+/// spoiler log will show: a front end building its own would drift the first
+/// time either side was edited.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_item_names_ptr(handle: *const Handle) -> *const u8 {
+    session!(handle, std::ptr::null()).session.item_names().as_ptr()
+}
+
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_item_names_len(handle: *const Handle) -> u32 {
+    session!(handle, 0).session.item_names().len() as u32
+}
+
+/// Every location's name, the same way. See [`tg_item_names_ptr`].
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_location_names_ptr(handle: *const Handle) -> *const u8 {
+    session!(handle, std::ptr::null()).session.location_names().as_ptr()
+}
+
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_location_names_len(handle: *const Handle) -> u32 {
+    session!(handle, 0).session.location_names().len() as u32
+}
+
 // ---- reading the board ---------------------------------------------------
 
 /// # Safety

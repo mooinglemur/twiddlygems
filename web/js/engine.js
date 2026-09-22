@@ -58,8 +58,10 @@ export const EventKind = {
   LAND: 12,
   LOW_MOVES: 13,
   BRICK: 14,
-  /// An item reached the run. `color` is its `ItemKind`, `value` its one
-  /// parameter. Raised by the session, not the board.
+  /// An item reached the run. `value` is its place in `itemNames`, and
+  /// `color` and `special` are the low and high bytes of the location's place
+  /// in `locationNames`, or `NO_LOCATION`. Raised by the session, not the
+  /// board.
   ITEM: 15,
   /// The level is won. `value` is how many moves were left over for the
   /// flourish to spend. Raised once, before any of it happens.
@@ -69,24 +71,13 @@ export const EventKind = {
   CASH_IN: 17,
 };
 
-/// What sort of item an `EventKind.ITEM` is about. Its parameter is the
-/// special's code for an unlock, and the level for moves.
-export const ItemKind = { UNLOCK: 0, MOVES: 1 };
+/// The location an item event names when it came from no location here at
+/// all, which is what a multiworld sending one over looks like.
+export const NO_LOCATION = 65535;
 
-/// Where an `EventKind.ITEM` came from. Its parameter is the level for a
-/// clear and the length for a chain. `NONE` is an item that came from no
-/// location here at all, which is what a multiworld sending one looks like.
 /// How well a level has been beaten, at best. Ordered, so the larger number is
 /// always the better result.
 export const Tier = { NONE: 0, CLEAR: 1, SILVER: 2, GOLD: 3 };
-
-export const LocationKind = {
-  LEVEL_CLEAR: 0,
-  CHAIN: 1,
-  LEVEL_SILVER: 2,
-  LEVEL_GOLD: 3,
-  NONE: 255,
-};
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
@@ -263,6 +254,47 @@ export class Engine {
     const length = this.wasm.tg_level_name_len(this.handle);
     const bytes = new Uint8Array(this.memory.buffer, this.wasm.tg_level_name_ptr(this.handle), length);
     return this.decoder.decode(bytes);
+  }
+
+  /**
+   * Every item's name and every location's name, in the order the engine
+   * numbers them, which is what an item event carries.
+   *
+   * Read out of the engine rather than built here: these are the strings a
+   * tracker and a spoiler log show, and a second set assembled on this side
+   * would drift from them silently.
+   *
+   * Cached, because they never change for a session and the feed asks on
+   * every item.
+   */
+  get itemNames() {
+    this.itemNameCache ??= this.blob(this.wasm.tg_item_names_ptr, this.wasm.tg_item_names_len);
+    return this.itemNameCache;
+  }
+
+  get locationNames() {
+    this.locationNameCache ??= this.blob(
+      this.wasm.tg_location_names_ptr,
+      this.wasm.tg_location_names_len,
+    );
+    return this.locationNameCache;
+  }
+
+  /**
+   * Reads one of the engine's newline separated name tables.
+   *
+   * Takes the two exports themselves rather than their names: `make abi`
+   * finds what this file calls by reading it, and a name looked up as a string
+   * is invisible to that, so a rename on the engine side would surface as a
+   * blank feed rather than as a failed build.
+   */
+  blob(ptrCall, lenCall) {
+    const length = lenCall(this.handle);
+    if (length === 0) {
+      return [];
+    }
+    const bytes = new Uint8Array(this.memory.buffer, ptrCall(this.handle), length);
+    return this.decoder.decode(bytes).split('\n');
   }
 
   /** Every level's name, for the level picker. */

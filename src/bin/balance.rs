@@ -26,11 +26,12 @@ use twiddlygems::progression::solo_inventory;
 /// are meant to be short of most of the pool, so those are the numbers that
 /// say whether the ladder can be climbed.
 fn ladder() -> Vec<LevelSpec> {
-    levels()
-        .into_iter()
+    let all = levels();
+    let count = all.len();
+    all.into_iter()
         .enumerate()
         .map(|(index, mut spec)| {
-            solo_inventory(index).apply(index, &mut spec);
+            solo_inventory(index, count).apply(index, &mut spec);
             spec
         })
         .collect()
@@ -129,7 +130,7 @@ fn in_logic(seeds: u64) -> bool {
                 play(&spec, seed * 7919 + index as u64, Bot::Greedy).status() == Status::Won
             })
             .count();
-        let held = solo_inventory(index).specials();
+        let held = solo_inventory(index, levels().len()).specials();
         if wins == 0 {
             ok = false;
         }

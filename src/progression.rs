@@ -165,9 +165,52 @@ const CHAIN_ID_BASE: u32 = 1_000;
 const SILVER_ID_BASE: u32 = 2_000;
 const GOLD_ID_BASE: u32 = 3_000;
 
-/// The location kind for an item that came from no location at all: one the
-/// multiworld sent rather than one this run found.
-pub const NO_LOCATION: u8 = 255;
+/// The location index standing for no location at all: an item the multiworld
+/// sent rather than one this run found.
+pub const NO_LOCATION: u16 = u16::MAX;
+
+/// Every distinct item in the game, in a stable order.
+///
+/// Distinct, not the pool: three of a level's move items are three copies of
+/// one item. This is the list that becomes Archipelago's item name table, so
+/// the order is an identity and appending is the only safe way to change it.
+pub fn items(levels: usize) -> Vec<Item> {
+    UNLOCKABLE
+        .iter()
+        .map(|special| Item::Unlock(*special))
+        .chain((0..levels).map(|level| Item::Moves { level }))
+        .collect()
+}
+
+/// What an item is called.
+///
+/// These strings are the item's identity everywhere outside the engine: in the
+/// feed, in a tracker, in a spoiler log. Renaming one silently breaks every
+/// seed rolled before the change, so they are worth settling rather than
+/// tidying later.
+pub fn item_name(item: Item) -> String {
+    match item {
+        Item::Unlock(special) => match special {
+            Special::LineH => "Horizontal Line Clear".to_string(),
+            Special::LineV => "Vertical Line Clear".to_string(),
+            Special::Cross => "Cross Clear".to_string(),
+            Special::Rainbow => "Rainbow".to_string(),
+            Special::Rocket => "Rocket".to_string(),
+            Special::None => "Nothing".to_string(),
+        },
+        Item::Moves { level } => format!("Level {} Progressive Moves", level + 1),
+    }
+}
+
+/// What a location is called. See [`item_name`] on why these are settled.
+pub fn location_name(location: Location) -> String {
+    match location {
+        Location::LevelClear(index) => format!("Level {} Clear", index + 1),
+        Location::LevelSilver(index) => format!("Level {} Silver", index + 1),
+        Location::LevelGold(index) => format!("Level {} Gold", index + 1),
+        Location::Chain(length) => format!("{length} Chain"),
+    }
+}
 
 /// Every location in the game, which is the list a generator would place over.
 pub fn locations(level_count: usize) -> Vec<Location> {
@@ -179,9 +222,36 @@ pub fn locations(level_count: usize) -> Vec<Location> {
         .collect()
 }
 
+/// Where an item sits in [`items`], which is what an event carries instead of
+/// the name itself: the stream has no room for text.
+pub fn item_index(item: Item, levels: usize) -> Option<usize> {
+    items(levels).iter().position(|other| *other == item)
+}
+
+/// Where a location sits in [`locations`].
+pub fn location_index(location: Location, levels: usize) -> Option<usize> {
+    locations(levels).iter().position(|other| *other == location)
+}
+
+/// How many times each level can be improved, which is how many of its move
+/// items the placement has to find a home for.
+pub const MOVES_PER_LEVEL: usize = 3;
+
 /// The five unlocks, in the order a solo run is given them.
+///
+/// A pacing decision, and re-tunable. Deliberately not the order the item
+/// table uses: see [`UNLOCKABLE`].
 pub const UNLOCKS: [Special; 5] =
     [Special::LineV, Special::LineH, Special::Rocket, Special::Cross, Special::Rainbow];
+
+/// The same five in the order the item table numbers them, which is the order
+/// [`Special`] itself is numbered in.
+///
+/// Separate from [`UNLOCKS`] on purpose. The item table is an identity that
+/// ends up in seeds, so it must not move; the order a run is given them is a
+/// judgment about teaching that we should stay free to change.
+const UNLOCKABLE: [Special; 5] =
+    [Special::LineH, Special::LineV, Special::Cross, Special::Rainbow, Special::Rocket];
 
 /// Everything a run has received.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -286,26 +356,43 @@ pub fn move_step(base: u32) -> u32 {
 /// of a cross take looking for, and five in a line is the one you have to
 /// build.
 ///
-/// Every clear past those is worth more room on that same level, as are both
-/// of its score tiers, and the short chains carry the third for the levels
-/// whose clear the unlocks took. So every level ends up improvable three
-/// times over and nothing on the ladder is cleared for nothing.
+/// Every clear past those is worth more room on that same level, and a level's
+/// two score marks are worth more room on the **next** one, so beating a level
+/// well makes the one after it easier. The short chains carry what is left for
+/// the levels whose own clear an unlock took.
+///
+/// **A level's score marks must never hold that level's own moves.** Gold
+/// means beating a level as well as it can be beaten, so its rule wants
+/// everything that level's progression has to offer; an item for that same
+/// level sitting on it would be required to reach the place it is kept. Fill
+/// either refuses that or strands it. Handing them to the next level up keeps
+/// every mark clear of its own requirements.
 ///
 /// The long chains hold nothing yet. They are hard enough to be worth keeping
 /// somewhere to put the traps and the usable items when those exist, and in a
 /// multiworld they will be holding somebody else's item anyway.
-pub fn solo_item_at(location: Location) -> Option<Item> {
+/// `levels` is how long the ladder is, which the marks on the last level need:
+/// there is no next level for them to pay, so they hold nothing.
+pub fn solo_item_at(location: Location, levels: usize) -> Option<Item> {
     match location {
         Location::LevelClear(index) => match UNLOCKS.get(index) {
             Some(special) => Some(Item::Unlock(*special)),
             None => Some(Item::Moves { level: index }),
         },
+        // The next level up, never this one.
         Location::LevelSilver(index) | Location::LevelGold(index) => {
-            Some(Item::Moves { level: index })
+            (index + 1 < levels).then_some(Item::Moves { level: index + 1 })
         }
         Location::Chain(length) => {
-            let level = (length - SHORTEST_CHAIN) as usize;
-            (level < UNLOCKS.len()).then_some(Item::Moves { level })
+            // The opening levels have no clear of their own to give, so the
+            // short chains cover them. The very first has no level below it to
+            // be paid by either, so it takes two more of its own.
+            let level = match length - SHORTEST_CHAIN {
+                step @ 0..=4 => step as usize,
+                5 | 6 => 0,
+                _ => return None,
+            };
+            Some(Item::Moves { level })
         }
     }
 }
@@ -318,10 +405,10 @@ pub fn solo_item_at(location: Location) -> Option<Item> {
 /// guaranteed. A chain is not: nobody is owed a five long one, so an item
 /// sitting on that location cannot be assumed in hand. Logic has to hold for
 /// the player who never made one.
-pub fn solo_inventory(index: usize) -> Inventory {
+pub fn solo_inventory(index: usize, levels: usize) -> Inventory {
     let mut inventory = Inventory::empty();
     for below in 0..index {
-        if let Some(item) = solo_item_at(Location::LevelClear(below)) {
+        if let Some(item) = solo_item_at(Location::LevelClear(below), levels) {
             inventory.receive(item);
         }
     }
@@ -426,37 +513,117 @@ mod tests {
         assert!(level.rules.specials.rainbow, "and the rest are still on offer");
     }
 
+    /// A ladder length to place over. Anything from a handful of levels to a
+    /// full one, because the table has to hold at both ends.
+    const LADDERS: [usize; 4] = [8, 13, 30, 50];
+
     #[test]
     fn the_solo_placement_puts_every_unlock_somewhere_and_leaves_no_clear_empty() {
-        let places = locations(13);
-        let mut unlocks: Vec<Special> = Vec::new();
-        for location in &places {
-            if let Some(Item::Unlock(special)) = solo_item_at(*location) {
-                assert!(!unlocks.contains(&special), "{special:?} is placed twice");
-                unlocks.push(special);
+        for levels in LADDERS {
+            let mut unlocks: Vec<Special> = Vec::new();
+            for location in locations(levels) {
+                if let Some(Item::Unlock(special)) = solo_item_at(location, levels) {
+                    assert!(!unlocks.contains(&special), "{special:?} is placed twice");
+                    unlocks.push(special);
+                }
             }
-        }
-        assert_eq!(unlocks.len(), UNLOCKS.len(), "an unlock has nowhere to be found");
+            assert_eq!(unlocks.len(), UNLOCKS.len(), "an unlock has nowhere to be found");
 
-        for index in 0..13 {
-            assert!(
-                solo_item_at(Location::LevelClear(index)).is_some(),
-                "clearing level {} is worth nothing",
-                index + 1,
-            );
+            for index in 0..levels {
+                assert!(
+                    solo_item_at(Location::LevelClear(index), levels).is_some(),
+                    "clearing level {} of {levels} is worth nothing",
+                    index + 1,
+                );
+            }
         }
     }
 
     #[test]
-    fn every_level_has_a_move_item_somewhere() {
-        // Each level should be improvable, whether its own clear carries the
-        // item or a chain does.
-        let places = locations(13);
-        for level in 0..13 {
+    fn a_level_never_pays_for_its_own_best_run() {
+        // Gold means beating a level as well as it can be beaten, so its rule
+        // wants everything that level's progression has to offer. An item for
+        // that same level kept there would be required to reach the place it
+        // is kept, and fill either refuses that or strands it.
+        for levels in LADDERS {
+            for index in 0..levels {
+                for mark in [Location::LevelSilver(index), Location::LevelGold(index)] {
+                    assert_ne!(
+                        solo_item_at(mark, levels),
+                        Some(Item::Moves { level: index }),
+                        "{} holds the very item reaching it would need",
+                        location_name(mark),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_level_is_improvable_the_same_number_of_times() {
+        // Each level should be worth going back to as often as any other,
+        // whether its own clear carries the items, its neighbor's marks do, or
+        // a chain does.
+        for levels in LADDERS {
+            let places = locations(levels);
+            for level in 0..levels {
+                let found = places
+                    .iter()
+                    .filter(|at| solo_item_at(**at, levels) == Some(Item::Moves { level }))
+                    .count();
+                assert_eq!(
+                    found,
+                    MOVES_PER_LEVEL,
+                    "level {} of {levels} can be improved {found} times",
+                    level + 1,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_item_table_holds_the_same_unlocks_the_ladder_hands_out() {
+        // Two orders of one set. The table is an identity that ends up in
+        // seeds; the ladder's order is a judgment about teaching. Letting them
+        // fall out of step would leave an unlock nobody can be given, or one
+        // handed out that has no name.
+        let mut table = UNLOCKABLE;
+        let mut given = UNLOCKS;
+        table.sort_by_key(|special| special.code());
+        given.sort_by_key(|special| special.code());
+        assert_eq!(table, given);
+        assert_ne!(UNLOCKABLE, UNLOCKS, "the two are meant to be free to differ");
+    }
+
+    #[test]
+    fn the_item_table_is_numbered_by_something_that_does_not_move() {
+        // Item numbers end up in seeds, so the table is ordered by the
+        // special's own code rather than by the order a run is given them,
+        // which is re-tunable. Reordering the pacing must not renumber items.
+        let table = items(13);
+        let unlocks: Vec<Special> = table
+            .iter()
+            .filter_map(|item| match item {
+                Item::Unlock(special) => Some(*special),
+                Item::Moves { .. } => None,
+            })
+            .collect();
+        let mut by_code = unlocks.clone();
+        by_code.sort_by_key(|special| special.code());
+        assert_eq!(unlocks, by_code, "the item table is not in code order");
+        assert_eq!(item_index(Item::Unlock(Special::LineH), 13), Some(0));
+    }
+
+    #[test]
+    fn the_pool_fits_in_the_locations_there_are() {
+        // Archipelago has to put every item somewhere. More items than places
+        // to hide them is a generation that cannot be made.
+        for levels in LADDERS {
+            let places = locations(levels).len();
+            let pool = UNLOCKS.len() + levels * MOVES_PER_LEVEL;
             assert!(
-                places.iter().any(|at| solo_item_at(*at) == Some(Item::Moves { level })),
-                "nothing anywhere adds moves to level {}",
-                level + 1,
+                pool <= places,
+                "{levels} levels give {pool} items and only {places} places to hide them",
             );
         }
     }
@@ -480,21 +647,21 @@ mod tests {
     #[test]
     fn the_opening_level_is_reached_with_nothing_and_the_ladder_fills_up() {
         assert!(
-            solo_inventory(0).specials().is_empty(),
+            solo_inventory(0, 13).specials().is_empty(),
             "the first level has to be clearable with no items at all",
         );
         // Each rung holds everything the ones below it handed over, and one
         // more of them until the pool runs out.
         for index in 1..=UNLOCKS.len() {
-            let below = solo_inventory(index - 1);
-            let here = solo_inventory(index);
+            let below = solo_inventory(index - 1, 13);
+            let here = solo_inventory(index, 13);
             assert_ne!(here, below, "level {index} handed over nothing new");
             assert!(
                 here.has(Item::Unlock(UNLOCKS[index - 1])),
                 "level {index} did not hand over what the table says",
             );
         }
-        let full = solo_inventory(UNLOCKS.len());
+        let full = solo_inventory(UNLOCKS.len(), 13);
         assert_eq!(full.specials(), SpecialSet::ALL, "the pool should end up complete");
     }
 }

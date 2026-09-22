@@ -1,3 +1,7 @@
 /target
 /web/twiddlygems.wasm
 /shots*
+# The Archipelago tree, checked out to develop and test the apworld against.
+# Not vendored: a pinned clone, the same one CI will make.
+/vendor
+/.venv

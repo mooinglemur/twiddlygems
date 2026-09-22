@@ -193,12 +193,29 @@ not be much of an item.
 Items are found at **locations**: clearing each level, clearing it past each of
 its two score marks, and reaching a chain of each length from two to twelve.
 The opening level clears hold the unlocks; every clear past those is worth more
-room on that same level, as are both of its score marks, and the short chains
-carry the third for the levels whose clear an unlock took. So every level ends
-up improvable three times over and nothing on the ladder is cleared for
-nothing. A location pays once, which is why the run writes down which it has
-checked, and why the save carries that list: reloading has to leave a run
-holding what it held, and still unable to find it again.
+room on that same level; a level's two score marks are worth more room on the
+**next** one, so beating a level well makes the one after it easier; and the
+short chains carry what is left for the levels whose own clear an unlock took.
+Every level ends up improvable three times over and nothing on the ladder is
+cleared for nothing. A location pays once, which is why the run writes down
+which it has checked, and why the save carries that list: reloading has to
+leave a run holding what it held, and still unable to find it again.
+
+**A level's score marks never hold that level's own moves.** Gold means beating
+a level as well as it can be beaten, so its rule wants everything that level's
+progression has to offer; an item for that same level kept there would be
+required to reach the place it is kept, which fill either refuses or strands.
+Handing them to the next level up keeps every mark clear of its own
+requirements.
+
+**Items and locations are named by the engine**, because those strings are the
+item's identity everywhere outside it: in the feed, in a tracker, in a spoiler
+log. The page reads the two tables over the ABI and an item event carries a
+number into them rather than any text, so there is no second set of names on
+the other side to drift. For the same reason the item table is ordered by the
+special's own code rather than by the order a run is given them: the numbers
+end up in seeds and must not move, while the teaching order should stay free to
+re-tune.
 
 **Silver and gold** are read off the bots. `make balance` reports how often
 each reaches each mark, and the numbers in the ladder are set so the attentive

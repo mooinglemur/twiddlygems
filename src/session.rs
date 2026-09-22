@@ -7,7 +7,8 @@
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::progression::{
-    solo_item_at, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
+    item_index, item_name, items, location_index, location_name, locations, solo_item_at,
+    Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
 };
 use crate::rng::Rng;
 
@@ -44,6 +45,13 @@ pub struct Session {
     game: Game,
     name_buf: Vec<u8>,
     names_blob: Vec<u8>,
+    item_names_blob: Vec<u8>,
+    location_names_blob: Vec<u8>,
+}
+
+/// Joins names into the newline separated blob the ABI hands over.
+fn blob(names: impl Iterator<Item = String>) -> Vec<u8> {
+    names.collect::<Vec<_>>().join("\n").into_bytes()
 }
 
 impl Session {
@@ -65,14 +73,14 @@ impl Session {
             events: Vec::new(),
             name_buf: Vec::new(),
             names_blob: Vec::new(),
+            item_names_blob: Vec::new(),
+            location_names_blob: Vec::new(),
         };
-        session.names_blob = session
-            .levels
-            .iter()
-            .map(|level| level.name)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into_bytes();
+        let count = session.levels.len();
+        session.names_blob =
+            blob(session.levels.iter().map(|level| level.name.to_string()));
+        session.item_names_blob = blob(items(count).into_iter().map(item_name));
+        session.location_names_blob = blob(locations(count).into_iter().map(location_name));
         session.sync_name();
         session
     }
@@ -101,6 +109,21 @@ impl Session {
     /// picker without a call per entry.
     pub fn level_names(&self) -> &[u8] {
         &self.names_blob
+    }
+
+    /// Every item's name, in the order [`items`] gives them.
+    ///
+    /// The engine owns these because they are the same strings a tracker and a
+    /// spoiler log will show. A front end that built its own would drift from
+    /// them the first time either side was edited, and the symptom would be a
+    /// player's feed disagreeing with their tracker.
+    pub fn item_names(&self) -> &[u8] {
+        &self.item_names_blob
+    }
+
+    /// Every location's name, in the order [`locations`] gives them.
+    pub fn location_names(&self) -> &[u8] {
+        &self.location_names_blob
     }
 
     /// Switches to a level the player has unlocked. Returns false for one they
@@ -181,12 +204,12 @@ impl Session {
         if is_new {
             self.refresh_specials();
             self.refresh_moves();
-            let place = from.map_or((NO_LOCATION, 0), |at| (at.kind(), at.param()));
-            self.events.push(Event::about_item(
-                EV_ITEM,
-                (item.kind(), item.value() as u8),
-                place,
-            ));
+            let levels = self.levels.len();
+            let at = from
+                .and_then(|location| location_index(location, levels))
+                .map_or(NO_LOCATION, |index| index as u16);
+            let which = item_index(item, levels).unwrap_or(0) as u16;
+            self.events.push(Event::about_item(EV_ITEM, at, which));
         }
         is_new
     }
@@ -234,7 +257,7 @@ impl Session {
             return;
         }
         self.checked.push(id);
-        if let Some(item) = solo_item_at(location) {
+        if let Some(item) = solo_item_at(location, self.levels.len()) {
             self.receive_from(item, Some(location));
         }
     }
@@ -284,7 +307,7 @@ impl Session {
             return;
         }
         self.checked.push(id);
-        if let Some(item) = solo_item_at(location) {
+        if let Some(item) = solo_item_at(location, self.levels.len()) {
             self.inventory.receive(item);
         }
         self.refresh_specials();
@@ -357,21 +380,26 @@ mod tests {
     /// The score is put out of reach and then the board is nudged until it
     /// ends, because what these tests are about is what a clear leads to, not
     /// whether the level is beatable.
-    /// What an item event says, unpacked: the item, then where it came from.
-    type Announced = ((u8, u8), (u8, u16));
+    /// What an item event says, unpacked: which item, and where from.
+    type Announced = (u16, u16);
 
     fn announced(events: &[Event]) -> Vec<Announced> {
         events
             .iter()
             .filter(|e| e.kind == EV_ITEM)
-            .map(|e| ((e.color, e.special), (e.cascade, e.value)))
+            .map(|e| (e.value, e.color as u16 | ((e.special as u16) << 8)))
             .collect()
     }
 
+    /// The same, built from the item and location themselves, so a test can
+    /// say what it expects in those terms rather than in numbers.
     fn says(item: Item, from: Option<Location>) -> Announced {
+        let levels = levels().len();
         (
-            (item.kind(), item.value() as u8),
-            from.map_or((NO_LOCATION, 0), |at| (at.kind(), at.param())),
+            item_index(item, levels).expect("the item is in the table") as u16,
+            from.map_or(NO_LOCATION, |at| {
+                location_index(at, levels).expect("the location is in the table") as u16
+            }),
         )
     }
 
@@ -452,15 +480,15 @@ mod tests {
         // happens, so collecting has to survive being asked repeatedly.
         let mut session = Session::new(7);
         let first = force_win(&mut session);
-        assert!(first.iter().any(|said| said.0 .0 == Item::Unlock(UNLOCKS[0]).kind()));
+        assert!(first.contains(&says(Item::Unlock(UNLOCKS[0]), Some(Location::LevelClear(0)))));
         session.retry();
         let again = force_win(&mut session);
         // Other locations may well pay on the way (the end-of-level flourish
         // can chain, and chains are locations too). What must not happen is
         // this level's own clear paying a second time.
-        let clear = Location::LevelClear(0);
+        let clear = location_index(Location::LevelClear(0), levels().len()).unwrap() as u16;
         assert!(
-            !again.iter().any(|(_, from)| *from == (clear.kind(), clear.param())),
+            !again.iter().any(|(_, from)| *from == clear),
             "clearing the same level paid its location twice",
         );
         assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "and it kept the first");

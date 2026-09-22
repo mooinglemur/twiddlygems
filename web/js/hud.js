@@ -1,7 +1,7 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { ItemKind, LocationKind, ObjectiveKind, Special, Status, Tier } from './engine.js';
+import { NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
 import { PALETTE } from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
@@ -358,11 +358,15 @@ export class Hud {
    * rather than a wrong one.
    */
   describeItem(event) {
-    const name = itemName(event);
+    const { engine } = this;
+    const name = engine.itemNames[event.value];
     if (!name) {
       return null;
     }
-    const where = locationName(event);
+    // The location is two bytes of the event, or 65535 for an item that came
+    // from nowhere here, which a multiworld handing one over looks like.
+    const at = event.color | (event.special << 8);
+    const where = at === NO_LOCATION ? null : (engine.locationNames[at] ?? null);
     // "Found" for something this run turned up itself, the way Archipelago
     // distinguishes it from an item another world sent over.
     return { said: where ? 'Found ' : 'Received ', what: name, where };
@@ -396,37 +400,6 @@ function button(label, onClick, primary) {
   }
   element.addEventListener('click', onClick);
   return element;
-}
-
-/// What the item is called. Unknown kinds get no name, so an engine that grew
-/// a new one does not put a half sentence in the feed.
-function itemName({ color, special }) {
-  if (color === ItemKind.UNLOCK) {
-    return SPECIALS[special]?.name ?? null;
-  }
-  if (color === ItemKind.MOVES) {
-    // Named the way Archipelago will name it, so the feed reads the same
-    // whichever side sent it over.
-    return `Level ${special + 1} Progressive Moves`;
-  }
-  return null;
-}
-
-/// Where it was found, or null for an item that came from no location here.
-function locationName({ cascade, value }) {
-  if (cascade === LocationKind.LEVEL_CLEAR) {
-    return `Level ${value + 1} Clear`;
-  }
-  if (cascade === LocationKind.LEVEL_SILVER) {
-    return `Level ${value + 1} Silver`;
-  }
-  if (cascade === LocationKind.LEVEL_GOLD) {
-    return `Level ${value + 1} Gold`;
-  }
-  if (cascade === LocationKind.CHAIN) {
-    return `${value} Chain`;
-  }
-  return null;
 }
 
 function describe(objective) {

@@ -143,11 +143,15 @@ pub const EV_BRICK: u8 = 14;
 /// raises it, and it rides the same stream so the page has one place to watch
 /// for things worth telling the player about.
 ///
-/// `color` and `special` carry the item's kind and its one parameter, and
-/// `cascade` and `value` the same for the location it came from (with a kind
-/// of 255 for an item that came from no location, which is what a multiworld
-/// handing one over looks like). The page turns those numbers into words: the
-/// stream carries no text, and a feed needs names.
+/// `value` is the item's place in the game's item table, and `color` and
+/// `special` are the low and high bytes of the location's place in its own
+/// table, or 65535 for an item that came from no location here, which is what
+/// a multiworld handing one over looks like.
+///
+/// Indices rather than names because the stream carries no text, and indices
+/// rather than a kind and a parameter because the names have to be the same
+/// strings a tracker shows: the page reads them out of the engine's tables
+/// instead of building its own and hoping they match.
 pub const EV_ITEM: u8 = 15;
 
 /// The level is won. `value` is how many moves were left over, which is what
@@ -199,19 +203,15 @@ impl Event {
     }
 
     /// An event about the run rather than the board. See [`EV_ITEM`].
-    pub fn about_item(
-        kind: u8,
-        item: (u8, u8),
-        from: (u8, u16),
-    ) -> Self {
+    pub fn about_item(kind: u8, from: u16, item: u16) -> Self {
         Event {
             kind,
             r: 255,
             c: 255,
-            color: item.0,
-            special: item.1,
-            cascade: from.0,
-            value: from.1,
+            color: from as u8,
+            special: (from >> 8) as u8,
+            cascade: 0,
+            value: item,
         }
     }
 }
