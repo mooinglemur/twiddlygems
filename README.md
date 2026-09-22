@@ -152,7 +152,10 @@ What a match leaves behind:
 - **Four in a row** leaves a gem that clears *downward*; **four in a column**
   leaves one that clears *across*. They run against the grain on purpose: you
   finish a row by sliding a gem in from above or below, so the gem you are left
-  with clears the way you were moving.
+  with clears the way you were moving. The two are separate switches in
+  `SpecialSet`, because they will be separate unlocks. Mind which run makes
+  which when reading them: `line_h` is the clearer that fires *across*, and it
+  is a run of four down a *column* that earns it.
 - **An L or a T** leaves a gem that takes a row and a column together.
 - **Five in a line** leaves a **rainbow**.
 

@@ -21,10 +21,20 @@ pub enum SwapMode {
 }
 
 /// Which special gems a match can create.
+///
+/// The two line clearers are separate flags rather than one, because they are
+/// unlocked separately. Note which run makes which: a run is finished by
+/// sliding a gem across it, and the gem left behind clears the other way, so a
+/// run of four along a row leaves a clearer that fires down its column. A set
+/// that allows one and not the other is therefore lopsided in a way players
+/// will feel, with four in a row worth a gem and four in a column worth
+/// nothing, or the reverse.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SpecialSet {
-    /// A run of exactly 4 creates a gem that clears across the run.
-    pub line: bool,
+    /// A run of exactly 4 down a column creates a gem that clears a row.
+    pub line_h: bool,
+    /// A run of exactly 4 along a row creates a gem that clears a column.
+    pub line_v: bool,
     /// An L or T shaped match creates a gem that clears a row and a column.
     pub cross: bool,
     /// A run of 5 or more creates a gem that clears a whole color.
@@ -35,9 +45,9 @@ pub struct SpecialSet {
 
 impl SpecialSet {
     pub const ALL: SpecialSet =
-        SpecialSet { line: true, cross: true, rainbow: true, rocket: true };
+        SpecialSet { line_h: true, line_v: true, cross: true, rainbow: true, rocket: true };
     pub const NONE: SpecialSet =
-        SpecialSet { line: false, cross: false, rainbow: false, rocket: false };
+        SpecialSet { line_h: false, line_v: false, cross: false, rainbow: false, rocket: false };
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -37,11 +37,20 @@ impl MatchGroup {
             Special::Rainbow
         } else if specials.cross && self.h_run >= 3 && self.v_run >= 3 {
             Special::Cross
-        } else if specials.line && longest == 4 {
-            if self.h_run >= self.v_run {
-                Special::LineV
+        } else if longest == 4 {
+            // The gem clears across the run rather than along it, so a row of
+            // four leaves a clearer that fires down its column. Each direction
+            // is its own unlock, so one orientation can be worth a gem while
+            // the same run turned ninety degrees is worth nothing.
+            let (made, allowed) = if self.h_run >= self.v_run {
+                (Special::LineV, specials.line_v)
             } else {
-                Special::LineH
+                (Special::LineH, specials.line_h)
+            };
+            if allowed {
+                made
+            } else {
+                Special::None
             }
         } else {
             Special::None
@@ -641,6 +650,43 @@ mod tests {
         let groups = find_matches(&board, &rules_for(&board));
         assert_eq!(groups[0].v_run, 4);
         assert_eq!(groups[0].award(&SpecialSet::ALL), Special::LineH);
+    }
+
+    #[test]
+    fn each_line_clearer_is_its_own_unlock() {
+        // The two are unlocked separately, and which run makes which is the
+        // opposite of what the name suggests: a row of four leaves a clearer
+        // that fires down a column. So a player holding only the horizontal
+        // one is rewarded for stacking four in a column and gets nothing at
+        // all for four along a row.
+        let across = board_of(&["1111", "2345", "6789", "2345"]);
+        let down = board_of(&["1234", "1345", "1456", "1567"]);
+        let row = find_matches(&across, &rules_for(&across));
+        let column = find_matches(&down, &rules_for(&down));
+
+        let only_h = SpecialSet { line_h: true, ..SpecialSet::NONE };
+        assert_eq!(column[0].award(&only_h), Special::LineH, "the one it does hold");
+        assert_eq!(row[0].award(&only_h), Special::None, "and nothing for the other run");
+
+        let only_v = SpecialSet { line_v: true, ..SpecialSet::NONE };
+        assert_eq!(row[0].award(&only_v), Special::LineV);
+        assert_eq!(column[0].award(&only_v), Special::None);
+    }
+
+    #[test]
+    fn a_locked_line_still_leaves_a_square_its_rocket() {
+        // The awards are a chain, and a run that earns nothing has to fall
+        // through it rather than ending the search: this shape is four across
+        // and a 2x2 at once.
+        let board = board_of(&["1111", "1145", "6789", "2345"]);
+        let groups = find_matches(&board, &rules_for(&board));
+        assert!(groups[0].squares > 0, "the shape under test is not a square");
+        assert_eq!(groups[0].award(&SpecialSet::ALL), Special::LineV, "the run wins while held");
+        assert_eq!(
+            groups[0].award(&SpecialSet { rocket: true, ..SpecialSet::NONE }),
+            Special::Rocket,
+            "with the line locked the square should still pay out",
+        );
     }
 
     #[test]
