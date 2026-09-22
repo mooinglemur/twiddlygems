@@ -515,11 +515,17 @@ export class Renderer {
       const r = Math.floor(i / cols);
       const c = i % cols;
       const inset = Math.round(cell * 0.04);
-      ctx.fillStyle = jelly > 1 ? 'rgba(160,230,255,0.28)' : 'rgba(160,230,255,0.14)';
+      // There are two states, so they are drawn as two things rather than as
+      // two steps of one. A faint tint against a slightly less faint one read
+      // as the same cell with a gem sitting on most of it: the double layer
+      // is nearly solid now, and what shows around the gem is unmistakable at
+      // a glance.
+      const doubled = jelly > 1;
+      ctx.fillStyle = doubled ? 'rgba(232,250,255,0.72)' : 'rgba(160,230,255,0.16)';
       roundRect(ctx, pad + c * cell + inset, pad + r * cell + inset, cell - inset * 2, cell - inset * 2, cell * 0.18);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(200,245,255,0.45)';
-      ctx.lineWidth = Math.max(1, cell * 0.03);
+      ctx.strokeStyle = doubled ? 'rgba(255,255,255,0.9)' : 'rgba(200,245,255,0.4)';
+      ctx.lineWidth = Math.max(1, cell * (doubled ? 0.045 : 0.03));
       ctx.stroke();
     }
 

@@ -630,7 +630,10 @@ the frame cheap:
   it used to run once per gem per frame.
 - **The board under the gems is painted once.** The panel and its empty sockets
   never change between resizes, so they live in their own canvas. Only jelly is
-  redrawn, and only where there is jelly.
+  redrawn, and only where there is jelly. There are two layers of it, drawn as
+  two things rather than as two steps of one: a faint tint for a single layer
+  and a nearly solid one for a double. A gem covers most of its cell, so a
+  proportional step between them was invisible in play.
 - **A board at rest is not redrawn at all.** If nothing is animating (no phase
   in progress, no particles, no hint or selection pulsing), the frame is
   skipped, which is most of what the page was previously being asked to do.
