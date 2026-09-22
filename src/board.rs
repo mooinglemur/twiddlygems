@@ -241,8 +241,14 @@ impl Board {
         }
     }
 
-    pub fn jelly_remaining(&self) -> u32 {
-        self.cells.iter().map(|cell| cell.jelly as u32).sum()
+    /// How many cells still have jelly under them.
+    ///
+    /// Cells rather than layers. What a level asks for is that every jellied
+    /// cell be cleared, so a cell with two layers is one thing to finish
+    /// rather than two things to count: softening it is progress the player
+    /// can see on the board, and the counter is for what is left to do.
+    pub fn jelly_cells(&self) -> u32 {
+        self.cells.iter().filter(|cell| cell.jelly > 0).count() as u32
     }
 
     pub fn positions(&self) -> impl Iterator<Item = Pos> + '_ {
@@ -293,17 +299,19 @@ impl Board {
         }
     }
 
-    pub fn bricks_remaining(&self) -> u32 {
-        self.cells.iter().map(|cell| cell.brick as u32).sum()
+    /// How many cells still hold a brick, cracked or whole. See
+    /// [`Board::jelly_cells`] on why cells rather than hits.
+    pub fn brick_cells(&self) -> u32 {
+        self.cells.iter().filter(|cell| cell.brick > 0).count() as u32
     }
 
     /// The same count split by the color each blocker answers to. Plain bricks
     /// belong to no color and are left out.
-    pub fn seals_remaining(&self) -> [u32; MAX_COLORS] {
+    pub fn seal_cells(&self) -> [u32; MAX_COLORS] {
         let mut counts = [0; MAX_COLORS];
         for cell in &self.cells {
             if cell.brick > 0 && (cell.brick_color as usize) < MAX_COLORS {
-                counts[cell.brick_color as usize] += cell.brick as u32;
+                counts[cell.brick_color as usize] += 1;
             }
         }
         counts
@@ -593,7 +601,9 @@ mod tests {
         assert!(board.is_open(Pos::new(0, 0)));
         assert_eq!(board.jelly(Pos::new(1, 0)), 1);
         assert_eq!(board.jelly(Pos::new(1, 1)), 2);
-        assert_eq!(board.jelly_remaining(), 3);
+        // Two cells, three layers between them. What a level counts is the
+        // cells: a double layer is one thing to finish, not two.
+        assert_eq!(board.jelly_cells(), 2);
     }
 
     #[test]

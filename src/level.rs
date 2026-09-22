@@ -74,11 +74,16 @@ impl Objective {
 pub struct Progress {
     pub score: u64,
     pub cleared: [u32; MAX_COLORS],
+    /// Cells with jelly under them, at the start and now.
+    ///
+    /// Cells rather than layers, and the same goes for the bricks and seals
+    /// below. What a level asks for is that every one of them be cleared, so
+    /// the counter says how many are left to clear: softening a double layer
+    /// of jelly or cracking a brick moves nothing, because nothing has been
+    /// finished. The board shows that work happening; the counter is for what
+    /// remains.
     pub jelly_total: u32,
     pub jelly_left: u32,
-    /// Counted in hits rather than in bricks, the way jelly is counted in
-    /// layers: a whole brick is two and a cracked one is one, so the bar moves
-    /// when a brick cracks instead of sitting still until it breaks.
     pub brick_total: u32,
     pub brick_left: u32,
     /// The same split by color, for the seals among them. A plain brick

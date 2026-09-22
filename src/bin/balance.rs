@@ -634,15 +634,27 @@ fn best_move(game: &Game) -> Option<(Pos, Pos)> {
 }
 
 /// How close this board is to clearing the level: each objective counts for the
-/// fraction of itself that is done, with score as a faint tie-break so the bot
-/// prefers a bigger clear when nothing else separates two moves.
+/// fraction of itself that is done, then damage that has not finished anything
+/// yet, then score, each a long way below the one before it.
+///
+/// The counter a player reads moves only when a cell is finished, which is
+/// right for a player and useless as a gradient: softening a double jelly or
+/// cracking a brick would score nothing at all, and the bot could not tell the
+/// move that did it from one that did nothing. So the hits are counted here as
+/// well, far enough below a finished cell that they only ever break a tie. The
+/// bot lost a third of its wins on Landslide before they were.
 fn value(game: &Game) -> f64 {
     let mut total = 0.0;
     for objective in game.objectives() {
         let needed = objective.needed(&game.progress).max(1) as f64;
         total += objective.reached(&game.progress) as f64 / needed;
     }
-    total + game.progress.score as f64 / 1.0e7
+    let left: u32 = game
+        .board
+        .positions()
+        .map(|p| game.board.jelly(p) as u32 + game.board.brick(p) as u32)
+        .sum();
+    total - left as f64 * 1.0e-3 + game.progress.score as f64 / 1.0e7
 }
 
 /// Roughly one frame: sounds starting this close together are heard as one

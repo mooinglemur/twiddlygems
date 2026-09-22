@@ -399,11 +399,11 @@ impl Game {
         };
         self.rng = Rng::new(self.seed);
         self.progress = Progress::default();
-        self.progress.jelly_total = self.board.jelly_remaining();
+        self.progress.jelly_total = self.board.jelly_cells();
         self.progress.jelly_left = self.progress.jelly_total;
-        self.progress.brick_total = self.board.bricks_remaining();
+        self.progress.brick_total = self.board.brick_cells();
         self.progress.brick_left = self.progress.brick_total;
-        self.progress.seals_at_start = self.board.seals_remaining();
+        self.progress.seals_at_start = self.board.seal_cells();
         self.progress.seals_now = self.progress.seals_at_start;
         self.moves_left = self.spec.moves;
         self.phase = Phase::Idle;
@@ -713,8 +713,8 @@ impl Game {
                     cascade,
                 ));
                 self.progress.score += (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
-                self.progress.brick_left = self.board.bricks_remaining();
-                self.progress.seals_now = self.board.seals_remaining();
+                self.progress.brick_left = self.board.brick_cells();
+                self.progress.seals_now = self.board.seal_cells();
                 continue;
             }
 
@@ -756,7 +756,7 @@ impl Game {
             self.progress.score +=
                 (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
         }
-        self.progress.jelly_left = self.board.jelly_remaining();
+        self.progress.jelly_left = self.board.jelly_cells();
     }
 
     /// The last rocket is down and its beat has passed, so the board may
@@ -871,8 +871,8 @@ impl Game {
                 self.events.push(event);
             }
         }
-        self.progress.brick_left = self.board.bricks_remaining();
-        self.progress.seals_now = self.board.seals_remaining();
+        self.progress.brick_left = self.board.brick_cells();
+        self.progress.seals_now = self.board.seal_cells();
     }
 
     /// Runs the next stage of a settle and puts the board into the fall that
@@ -1215,7 +1215,7 @@ impl Game {
             event.value = delay.clamp(0.0, 65_535.0) as u16;
             self.events.push(event);
         }
-        self.progress.jelly_left = self.board.jelly_remaining();
+        self.progress.jelly_left = self.board.jelly_cells();
         self.strike_bricks(&blast, cascade);
 
         for (p, special) in &blast.fired {
@@ -1258,7 +1258,7 @@ impl Game {
             self.cascade = 0;
         }
         self.swap = None;
-        self.progress.jelly_left = self.board.jelly_remaining();
+        self.progress.jelly_left = self.board.jelly_cells();
 
         if self.objectives_met() {
             // Before the flourish, which spends them: afterwards the counter
@@ -3870,6 +3870,64 @@ mod tests {
         game.try_swap(Pos::new(2, 0), Pos::new(2, 1));
         let _ = settle(&mut game);
         assert!(game.progress.jelly_left < 16, "the cleared cells should have lost a layer");
+    }
+
+    #[test]
+    fn softening_a_double_jelly_does_not_move_the_counter() {
+        // What a level asks for is that every jellied cell be cleared, so the
+        // counter says how many are left to clear rather than how many hits
+        // are left to land. Peeling a double layer down to one has finished
+        // nothing, and the board is where that work shows.
+        let mut level = spec(4, 4, 6, 10);
+        level.layout = Some(&["OOOO", "OOOO", "OOOO", "OOOO"]);
+        level.objectives = vec![Objective::Jelly];
+        let mut game = Game::new(level, 23);
+        assert_eq!(game.progress.jelly_total, 16, "sixteen cells, however deep they are");
+
+        paint(&mut game, &["1200", "1300", "2100", "0000"]);
+        game.try_swap(Pos::new(2, 0), Pos::new(2, 1));
+        let _ = settle(&mut game);
+        assert_eq!(game.progress.jelly_left, 16, "softening a layer moved the counter");
+
+        // Down to a single layer everywhere, so the same move finishes cells
+        // rather than softening them.
+        let everywhere: Vec<Pos> = game.board.positions().collect();
+        for p in everywhere {
+            game.board.peel_jelly(p);
+        }
+        paint(&mut game, &["1200", "1300", "2100", "0000"]);
+        game.try_swap(Pos::new(2, 0), Pos::new(2, 1));
+        let _ = settle(&mut game);
+        assert!(
+            game.progress.jelly_left < 16,
+            "clearing the last layer off a cell left it on the counter",
+        );
+    }
+
+    #[test]
+    fn cracking_a_brick_does_not_move_the_counter() {
+        // The same rule for the blockers that take two hits.
+        let mut level = spec(4, 5, 8, 10);
+        level.rules.refill = RefillMode::None;
+        level.layout = Some(&[".....", ".....", ".....", "..=.."]);
+        level.objectives = vec![Objective::Brick];
+        let mut game = Game::new(level, 160);
+        assert_eq!(game.progress.brick_total, 1, "one cell holds a brick");
+
+        clear_beside_the_blocker(&mut game, 1);
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 1, "the hit should have cracked it");
+        assert_eq!(game.progress.brick_left, 1, "cracking it moved the counter");
+
+        // And again from cracked, which is the hit that finishes it.
+        let mut level = spec(4, 5, 8, 10);
+        level.rules.refill = RefillMode::None;
+        level.layout = Some(&[".....", ".....", ".....", "..=.."]);
+        level.objectives = vec![Objective::Brick];
+        let mut game = Game::new(level, 161);
+        game.board.damage_brick(Pos::new(3, 2));
+        clear_beside_the_blocker(&mut game, 1);
+        assert_eq!(game.board.brick(Pos::new(3, 2)), 0, "the second hit should take it");
+        assert_eq!(game.progress.brick_left, 0, "breaking it did not move the counter");
     }
 
     #[test]

@@ -470,10 +470,15 @@ tiers would mean nothing. A rainbow set off this way has no color to answer to,
 so it takes the most populous one, drawn at random between colors that tie.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
-score, clear a number of gems of one color, peel every layer of jelly, break
-every brick, or break every seal of one color. Blockers are counted in hits
-rather than in blockers, the way jelly is counted in layers, so the bar moves
-when one cracks instead of sitting still until it finally goes.
+score, clear a number of gems of one color, clear every cell of jelly, break
+every brick, or break every seal of one color.
+
+**The blockers are counted in cells, not in hits.** A cell of double jelly is
+one thing to finish rather than two things to count, and so is a brick that
+takes two hits. Softening the one or cracking the other moves nothing on the
+counter, because nothing has been finished: what the counter says is how much
+is left to do. The work in between shows on the board, which is where it
+belongs.
 
 Per-color seal goals are not the same puzzle as one lumped total. A single count
 lets a player finish by breaking whichever seals were easiest to reach; a goal
