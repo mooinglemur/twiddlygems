@@ -70,6 +70,31 @@ pub enum Location {
     Chain(u32),
 }
 
+/// How well a level has been beaten, at best.
+///
+/// Read back from the locations a run has checked rather than recorded
+/// separately, so there is one account of what has happened and no way for the
+/// two to disagree.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Tier {
+    /// Never cleared.
+    None,
+    Clear,
+    Silver,
+    Gold,
+}
+
+impl Tier {
+    pub fn code(self) -> u32 {
+        match self {
+            Tier::None => 0,
+            Tier::Clear => 1,
+            Tier::Silver => 2,
+            Tier::Gold => 3,
+        }
+    }
+}
+
 /// The shortest chain worth asking for. A single clear is not a chain.
 pub const SHORTEST_CHAIN: u32 = 2;
 /// The longest chain asked for. Past this a board cannot be relied on to

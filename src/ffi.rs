@@ -363,6 +363,16 @@ pub unsafe extern "C" fn tg_level_gold(handle: *const Handle) -> f64 {
     session!(handle, 0.0).session.level().gold as f64
 }
 
+/// How well the level at `index` has been beaten, at best: 0 never, 1 cleared,
+/// 2 past silver, 3 past gold. See [`Tier`].
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_best(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.best_tier(index as usize).code()
+}
+
 /// Which locations this run has already checked, as little-endian `u32` ids.
 ///
 /// Written into the save, so a returning run keeps what it found and stays

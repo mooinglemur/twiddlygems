@@ -7,7 +7,7 @@
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::progression::{
-    solo_item_at, Inventory, Item, Location, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
+    solo_item_at, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
 };
 use crate::rng::Rng;
 
@@ -242,6 +242,23 @@ impl Session {
     /// Which locations this run has checked, for writing down.
     pub fn checked(&self) -> &[u32] {
         &self.checked
+    }
+
+    /// How well the level at `index` has been beaten, at best.
+    ///
+    /// Read back off the checked locations, so what the level select shows and
+    /// what the run has actually found cannot drift apart.
+    pub fn best_tier(&self, index: usize) -> Tier {
+        let reached = |at: Location| self.checked.contains(&at.id());
+        if reached(Location::LevelGold(index)) {
+            Tier::Gold
+        } else if reached(Location::LevelSilver(index)) {
+            Tier::Silver
+        } else if reached(Location::LevelClear(index)) {
+            Tier::Clear
+        } else {
+            Tier::None
+        }
     }
 
     /// Hands a run back a location it had already checked, rebuilding what it

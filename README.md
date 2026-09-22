@@ -209,6 +209,16 @@ the floor bot on 0 to 60% of its far rarer ones. Marks are judged once the
 level is over rather than when its goals were met, because the flourish is
 still adding to the score in between.
 
+How well a level has been beaten is read back off the checked locations rather
+than recorded separately, so what is shown and what the run has found cannot
+drift apart. The score in the top bar wears that color, green then silver then
+gold, with the nearest mark still out of reach named beside it and nothing at
+all once both are behind. It takes the better of what the level has been beaten
+to before and what this attempt has reached, so it only ever moves up: a gold
+level replayed for a worse score should not look as though the gold had been
+taken away. This attempt counts only from the moment the goals are met, and
+climbs with the flourish. The level picker washes each chip in the same color.
+
 Logic counts level clears and nothing else. Reaching a level means clearing
 every level below it, so those items are guaranteed; a chain is not, since
 nobody is owed a five long one, and neither is a score mark. The claim has to

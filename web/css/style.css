@@ -11,6 +11,13 @@
   --accent: #ffd166;
   --danger: #ff6b6b;
   --ok: #4ade80;
+  /* How well a level has been beaten. Green for a clear, then the two metals.
+     Gold is warmer than --accent so the two read apart when both are on
+     screen, and silver is cool rather than grey so it does not look like
+     disabled text. */
+  --tier-clear: #4ade80;
+  --tier-silver: #cbd7ea;
+  --tier-gold: #ffc233;
   --radius: 14px;
   --gap: clamp(6px, 1.6vw, 12px);
 }
@@ -63,7 +70,24 @@ html, body {
 #level-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 #score-box { display: flex; flex-direction: column; align-items: flex-end; }
+#score-row { display: flex; align-items: baseline; gap: 6px; }
 #score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.15rem; }
+/* The score takes the color of the best this level has been beaten. It only
+   ever moves up, so it reads as something gained. */
+#score.tier-clear { color: var(--tier-clear); }
+#score.tier-silver { color: var(--tier-silver); }
+#score.tier-gold { color: var(--tier-gold); }
+
+/* The next mark up, in the color of the mark it names, so which one it is
+   needs no explaining. Empty once there is none left to reach. */
+#score-target {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+#score-target.tier-silver { color: var(--tier-silver); }
+#score-target.tier-gold { color: var(--tier-gold); }
 .label { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
 
 #moves-box { display: flex; align-items: baseline; gap: 6px; }
@@ -226,6 +250,20 @@ button[disabled] { opacity: 0.4; cursor: default; }
 .level-chip .n { font-size: 0.7rem; color: var(--ink-dim); }
 .level-chip .t { font-weight: 600; font-size: 0.82rem; }
 .level-chip.current { outline: 2px solid var(--accent); }
+
+/* How well each level has been beaten, as a wash of its color across the chip
+   with a brighter edge along the bottom: enough to scan a grid of them and see
+   where the gold is, without the names becoming hard to read. */
+.level-chip.tier-clear,
+.level-chip.tier-silver,
+.level-chip.tier-gold {
+  border-bottom: 2px solid var(--tier);
+  background-image: linear-gradient(155deg, color-mix(in srgb, var(--tier) 26%, transparent), color-mix(in srgb, var(--tier) 6%, transparent));
+}
+.level-chip.tier-clear { --tier: var(--tier-clear); }
+.level-chip.tier-silver { --tier: var(--tier-silver); }
+.level-chip.tier-gold { --tier: var(--tier-gold); }
+.level-chip.tier-silver .t, .level-chip.tier-gold .t { color: var(--tier); }
 
 /* ---- title screen ---- */
 

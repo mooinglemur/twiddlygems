@@ -76,6 +76,10 @@ export const ItemKind = { UNLOCK: 0, MOVES: 1 };
 /// Where an `EventKind.ITEM` came from. Its parameter is the level for a
 /// clear and the length for a chain. `NONE` is an item that came from no
 /// location here at all, which is what a multiworld sending one looks like.
+/// How well a level has been beaten, at best. Ordered, so the larger number is
+/// always the better result.
+export const Tier = { NONE: 0, CLEAR: 1, SILVER: 2, GOLD: 3 };
+
 export const LocationKind = {
   LEVEL_CLEAR: 0,
   CHAIN: 1,
@@ -227,6 +231,11 @@ export class Engine {
       return [];
     }
     return [...new Uint32Array(this.memory.buffer, ptr, count)];
+  }
+
+  /** How well a level has been beaten, at best, as a `Tier`. */
+  levelBest(index) {
+    return this.wasm.tg_level_best(this.handle, index);
   }
 
   /** Hands one back on load, rebuilding what it gave without announcing it. */

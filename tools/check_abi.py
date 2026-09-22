@@ -150,6 +150,18 @@ compare(
 )
 
 compare(
+    "tiers",
+    rust_arms(read(ROOT / "src" / "progression.rs"), "code"),
+    js_object(engine_source, "Tier"),
+    [
+        ("None", "NONE"),
+        ("Clear", "CLEAR"),
+        ("Silver", "SILVER"),
+        ("Gold", "GOLD"),
+    ],
+)
+
+compare(
     "specials",
     rust_arms(read(ROOT / "src" / "board.rs"), "code"),
     js_object(engine_source, "Special"),

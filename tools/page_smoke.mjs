@@ -121,7 +121,8 @@ function stubElement(id) {
 }
 
 for (const id of [
-  'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'moves', 'objectives', 'feed',
+  'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'score-target',
+  'moves', 'objectives', 'feed',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons', 'level-grid',
   'levels-button', 'hint-button', 'retry-button', 'sound-button',
   'title', 'solo-button', 'solo-note', 'archipelago-button',
@@ -311,6 +312,18 @@ assert.equal(
 const objectives = elements.get('objectives');
 assert.ok(objectives.children.length > 0, 'the objective chips were never built');
 assert.equal(elements.get('level-number').textContent, 'Level 1');
+// The mark still out of reach is named beside the score, and the score wears
+// no color yet because the level has never been cleared.
+assert.match(
+  elements.get('score-target').textContent,
+  /^silver [\d,]+$/,
+  'the next score mark is not named beside the score',
+);
+assert.equal(
+  elements.get('score').classList.set.size,
+  0,
+  'an uncleared level is already colored',
+);
 assert.ok(elements.get('level-name').textContent.length > 0, 'the level has no name on screen');
 assert.equal(elements.get('moves').textContent, '20');
 assert.ok(elements.get('overlay').classList.contains('hidden'), 'the overlay is covering the board');
@@ -470,6 +483,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const phases = new Set();
   const toasts = new Set();
   const counterWhileSpending = new Set();
+  const scoreClassesWhileSpending = new Set();
   // Counted at the source rather than by looking at the particle list, which
   // still holds debris from the clear that won the level: that made the check
   // pass whether or not a single spend threw anything.
@@ -495,6 +509,9 @@ click(overlayButton('Close'), 'the level picker has no way out');
     }
     if (engine.phase === Phase.CASHING_IN) {
       counterWhileSpending.add(engine.movesLeft);
+      for (const cls of elements.get('score').classList.set) {
+        scoreClassesWhileSpending.add(cls);
+      }
     }
   }
   assert.equal(engine.status, Status.WON, 'following the hints never finished level one');
@@ -517,6 +534,12 @@ click(overlayButton('Close'), 'the level picker has no way out');
     `${spent} moves were seen spent but only ${sparklesWhileSpending} threw motes`,
   );
   renderer.sparkle = realSparkle;
+  // The score takes the color of what the level has been beaten to, and does
+  // so while the flourish is still adding rather than only at the end.
+  assert.ok(
+    [...scoreClassesWhileSpending].some((cls) => /^tier-/.test(cls)),
+    `the score was never colored during the run down: ${[...scoreClassesWhileSpending]}`,
+  );
   assert.ok(
     toasts.has('Level cleared'),
     `the level never said it was cleared, only ${JSON.stringify([...toasts])}`,
@@ -597,6 +620,23 @@ click(overlayButton('Close'), 'the level picker has no way out');
   click(overlayButton('Levels'), 'the finished-level panel offers no way to the picker');
   const marked = grid.children.findIndex((chip) => chip.classList.contains('current'));
   assert.equal(marked, 1, 'the picker marks the level just finished rather than the next one');
+
+  // And the level just beaten wears how well it was beaten, while a level
+  // nobody has touched wears nothing.
+  const tierOf = (chip) => [...chip.classList.set].find((cls) => /^tier-/.test(cls)) ?? null;
+  assert.ok(tierOf(grid.children[0]), 'the level just cleared is not marked as beaten');
+  assert.equal(tierOf(grid.children[9]), null, 'a level nobody has played is marked as beaten');
+
+  // Coming back to a level already beaten, the score wears the color of the
+  // best it was beaten to from the outset rather than starting plain: the
+  // achievement belongs to the level, not to the attempt.
+  dispatch('retry-button', 'click', {});
+  pump(2);
+  assert.equal(engine.score, 0, 'the retry did not start the level over');
+  assert.ok(
+    [...elements.get('score').classList.set].some((cls) => /^tier-/.test(cls)),
+    'the score forgot what this level had already been beaten to',
+  );
 }
 
 // Ending a run from that same menu asks first, then throws the progress away
@@ -605,6 +645,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const { engine } = window.twiddlygems;
   engine.setUnlocked(5);
 
+  // The retry above closed the panel, so the menu is opened afresh.
+  dispatch('levels-button', 'click', {});
   click(overlayButton('Title screen'), 'the level menu offers no way back to the title');
   click(overlayButton('Keep playing'), 'ending a run is not confirmed first');
   assert.ok(elements.get('title').classList.contains('hidden'), 'backing out still quit the run');

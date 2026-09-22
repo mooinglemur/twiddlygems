@@ -27,6 +27,7 @@ const dom = {
   levelNumber: document.getElementById('level-number'),
   levelName: document.getElementById('level-name'),
   score: document.getElementById('score'),
+  scoreTarget: document.getElementById('score-target'),
   moves: document.getElementById('moves'),
   objectives: document.getElementById('objectives'),
   feed: document.getElementById('feed'),
@@ -228,6 +229,11 @@ async function boot() {
         audio.play('shuffle');
       } else if (event.kind === EventKind.LOW_MOVES) {
         audio.play('ding');
+      } else if (event.kind === EventKind.CLEARED) {
+        // The goals are met, so the score can start wearing the color of what
+        // it has reached. Not the same as the level being over: the flourish
+        // is still adding, and the color climbs with it.
+        hud.cleared = true;
       } else if (event.kind === EventKind.REVERT) {
         audio.play('clack', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.ROCKET_HIT) {

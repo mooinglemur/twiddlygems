@@ -1,12 +1,16 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { ItemKind, LocationKind, ObjectiveKind, Special, Status } from './engine.js';
+import { ItemKind, LocationKind, ObjectiveKind, Special, Status, Tier } from './engine.js';
 import { PALETTE } from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
 /// little works, and far short of a session's worth.
 const FEED_LIMIT = 40;
+
+/// The class marking each tier, matched in the stylesheet. Indexed by `Tier`.
+const TIER_CLASS = [null, 'tier-clear', 'tier-silver', 'tier-gold'];
+const TIER_CLASSES = TIER_CLASS.filter(Boolean);
 
 /// What each special is called, and the match that leaves one behind. The
 /// second half is the point: an unlock is being announced to someone who has
@@ -26,6 +30,37 @@ export class Hud {
     this.shownScore = 0;
     this.objectiveViews = [];
     this.lastMoves = -1;
+    /// Whether this level's goals have been met, which is not the same as the
+    /// level being over: the flourish runs in between, and the score is still
+    /// climbing through it. Set from the `CLEARED` event.
+    this.cleared = false;
+    this.shownTier = -1;
+  }
+
+  /**
+   * How well this level stands, as a `Tier`.
+   *
+   * The better of what the run managed here before and what this attempt has
+   * reached, so it only ever moves up: a gold level replayed for a worse score
+   * should not look as though the gold were taken away. This attempt counts
+   * only once the goals are met, because until then there may be no clear at
+   * all.
+   */
+  tier() {
+    const { engine } = this;
+    const best = engine.levelBest(engine.levelIndex);
+    if (!this.cleared) {
+      return best;
+    }
+    const { silver, gold } = engine.tiers;
+    const score = engine.score;
+    const now =
+      gold > 0 && score >= gold
+        ? Tier.GOLD
+        : silver > 0 && score >= silver
+          ? Tier.SILVER
+          : Tier.CLEAR;
+    return Math.max(best, now);
   }
 
   /** Rebuilds everything that only changes when the level does. */
@@ -35,7 +70,10 @@ export class Hud {
     dom.levelName.textContent = engine.levelName;
     this.shownScore = engine.score;
     this.lastMoves = -1;
+    this.cleared = false;
+    this.shownTier = -1;
     dom.score.textContent = Math.round(this.shownScore).toLocaleString();
+    this.showTier();
 
     dom.objectives.replaceChildren();
     this.objectiveViews = engine.objectives().map((objective) => {
@@ -68,9 +106,45 @@ export class Hud {
     });
   }
 
+  /**
+   * Colors the score by how well the level stands, and names the next mark up
+   * beside it.
+   *
+   * The mark is the nearest one still out of reach, and once both are behind
+   * there is nothing left to aim at, so it says nothing at all rather than
+   * repeating a number already beaten.
+   */
+  showTier() {
+    const { engine, dom } = this;
+    const tier = this.tier();
+    if (tier === this.shownTier) {
+      return;
+    }
+    this.shownTier = tier;
+
+    dom.score.classList.remove(...TIER_CLASSES);
+    if (TIER_CLASS[tier]) {
+      dom.score.classList.add(TIER_CLASS[tier]);
+    }
+
+    const { silver, gold } = engine.tiers;
+    const next =
+      tier < Tier.SILVER && silver > 0
+        ? { at: silver, mark: 'silver', cls: 'tier-silver' }
+        : tier < Tier.GOLD && gold > 0
+          ? { at: gold, mark: 'gold', cls: 'tier-gold' }
+          : null;
+    dom.scoreTarget.classList.remove(...TIER_CLASSES);
+    dom.scoreTarget.textContent = next ? `${next.mark} ${next.at.toLocaleString()}` : '';
+    if (next) {
+      dom.scoreTarget.classList.add(next.cls);
+    }
+  }
+
   /** Per-frame refresh; touches the DOM only where something moved. */
   update() {
     const { engine, dom } = this;
+    this.showTier();
 
     const score = engine.score;
     if (this.shownScore !== score) {
@@ -193,6 +267,12 @@ export class Hud {
       }
       const unlocked = i < engine.unlocked;
       chip.disabled = !unlocked;
+      // How well it has been beaten, so a grid of them can be scanned for
+      // where the gold is and what is still only cleared.
+      const best = TIER_CLASS[engine.levelBest(i)];
+      if (best) {
+        chip.classList.add(best);
+      }
 
       const number = document.createElement('span');
       number.className = 'n';

@@ -164,10 +164,13 @@ for (const [name, metrics] of [
   await evaluate(
     // Unlocked past the end of the ladder, so any level can be photographed
     // without playing up to it, and holding the five unlocks, which are the
-    // items on the first five level clears. Without those the board makes no
-    // specials at all and the shots are of a much plainer game than anyone
-    // past the opening level plays.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, checked: [0, 1, 2, 3, 4] }))`,
+    // items on the first five level clears (locations 0 to 4). Without those
+    // the board makes no specials at all and the shots are of a much plainer
+    // game than anyone past the opening level plays.
+    //
+    // Plus a silver and a gold on a couple of levels (2000 and 3000 up), so
+    // the level picker has one of each to show rather than a grid of green.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, checked: [0, 1, 2, 3, 4, 2001, 3001, 2002] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only
