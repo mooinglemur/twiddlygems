@@ -118,9 +118,11 @@ pub const EV_BRICK: u8 = 14;
 /// raises it, and it rides the same stream so the page has one place to watch
 /// for things worth telling the player about.
 ///
-/// `color` carries the item's kind and `value` its one parameter, which is the
-/// special's code for an unlock. The page turns that pair into words, because
-/// the event stream carries numbers and an item feed needs names.
+/// `color` and `special` carry the item's kind and its one parameter, and
+/// `cascade` and `value` the same for the location it came from (with a kind
+/// of 255 for an item that came from no location, which is what a multiworld
+/// handing one over looks like). The page turns those numbers into words: the
+/// stream carries no text, and a feed needs names.
 pub const EV_ITEM: u8 = 15;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
@@ -154,8 +156,20 @@ impl Event {
     }
 
     /// An event about the run rather than the board. See [`EV_ITEM`].
-    pub fn about_item(kind: u8, item_kind: u8, value: u16) -> Self {
-        Event { kind, r: 255, c: 255, color: item_kind, special: 0, cascade: 0, value }
+    pub fn about_item(
+        kind: u8,
+        item: (u8, u8),
+        from: (u8, u16),
+    ) -> Self {
+        Event {
+            kind,
+            r: 255,
+            c: 255,
+            color: item.0,
+            special: item.1,
+            cascade: from.0,
+            value: from.1,
+        }
     }
 }
 

@@ -206,9 +206,18 @@ made one.
 Items arrive as events on the same stream the board raises, and the **item
 feed** above the board is what reads them: two lines on a phone, four on a
 wider screen, holding its height whether or not anything has arrived so the
-board does not jump down the page. It reads the stream rather than asking the
-engine what it is holding, which is why an item sent by a multiworld will land
-in it the same way one found by clearing a level does.
+board does not jump down the page. Each line names the item and where it came
+from, the way Archipelago does, so a run reads as `Found Horizontal Line Clear
+(5 Chain)`. Item and location are named separately because to a multiworld they
+are separate things: the same unlock can turn up anywhere, and the same
+location can be holding anything. Something the run did not find itself is
+`Received`, with no location to name.
+
+The feed reads the stream rather than asking the engine what it is holding,
+which is why an item sent by a multiworld will land in it the same way one
+found by clearing a level does, and the end-of-level panel takes what it says
+from the same place: the two should never be able to disagree about what was
+found.
 
 Specials are inert against ordinary gems. A line gem or a cross sits where it is
 until a match of its own color sweeps it up; shoving one against a plain gem

@@ -231,6 +231,10 @@ async function boot() {
     }
   };
 
+  /// The last item this level turned up, for the panel that appears when it
+  /// ends. Cleared when another level is dealt.
+  let lastFound = null;
+
   /// Anything the run was given goes in the feed. In solo these come from
   /// clearing levels; under Archipelago the same events will carry what the
   /// multiworld sent, which is why this reads the stream rather than asking
@@ -240,9 +244,13 @@ async function boot() {
       if (event.kind !== EventKind.ITEM) {
         continue;
       }
-      const said = hud.describeItem({ kind: event.color, value: event.value });
+      const said = hud.describeItem(event);
       if (said) {
-        hud.logItem(said[0], said[1]);
+        hud.logItem(said);
+        // Kept for the end-of-level panel, which says what this level turned
+        // up. Taken from the stream rather than asked of the engine, so the
+        // panel and the feed cannot disagree about what was found.
+        lastFound = said;
         audio.play('sparkle');
       }
     }
@@ -261,6 +269,7 @@ async function boot() {
     hud.hideOverlay();
     hintAt = performance.now() + HINT_DELAY_MS;
     resultShown = false;
+    lastFound = null;
     writeSave(engine, seed);
   };
 
@@ -395,7 +404,7 @@ async function boot() {
           onLevelChanged();
         },
         onLevels: openLevels,
-      });
+      }, lastFound);
     }
 
     requestAnimationFrame(frame);

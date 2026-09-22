@@ -59,8 +59,14 @@ export const EventKind = {
   ITEM: 15,
 };
 
-/// What sort of item an `EventKind.ITEM` is about.
+/// What sort of item an `EventKind.ITEM` is about. Its parameter is the
+/// special's code for an unlock, and the level for moves.
 export const ItemKind = { UNLOCK: 0, MOVES: 1 };
+
+/// Where an `EventKind.ITEM` came from. Its parameter is the level for a
+/// clear and the length for a chain. `NONE` is an item that came from no
+/// location here at all, which is what a multiworld sending one looks like.
+export const LocationKind = { LEVEL_CLEAR: 0, CHAIN: 1, NONE: 255 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
@@ -190,17 +196,6 @@ export class Engine {
   get unlockedSpecials() {
     const mask = this.wasm.tg_unlocked_specials(this.handle);
     return new Set(Object.values(Special).filter((code) => (mask >> code) & 1));
-  }
-
-  /**
-   * The item the level just cleared handed over, as `{ kind, value }`, or
-   * null. Same shape as an `EventKind.ITEM` carries, so one description
-   * function serves both.
-   */
-  get granted() {
-    // See `hint` for the `>>> 0`: an i32 comes back signed.
-    const packed = this.wasm.tg_granted(this.handle) >>> 0;
-    return packed === 0xffffffff ? null : { kind: packed >>> 16, value: packed & 0xffff };
   }
 
   /**

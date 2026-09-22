@@ -462,7 +462,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
 // Play the opening level out with the engine's own hints, which is the only
 // way to reach the panel that appears when a level ends.
 {
-  const { Special, Status } = await import(path.resolve('web/js/engine.js'));
+  const { EventKind, Special, Status } = await import(path.resolve('web/js/engine.js'));
   const { engine } = window.twiddlygems;
   for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
     if (engine.acceptsInput) {
@@ -484,7 +484,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // and nothing anywhere says why.
   assert.match(
     elements.get('overlay-body').textContent,
-    /Unlocked Vertical Line Clear, from four in a row\./,
+    /Found Vertical Line Clear \(Level 1 Clear\)\./,
     'clearing the opening level announced no unlock',
   );
   assert.deepEqual(
@@ -501,13 +501,19 @@ click(overlayButton('Close'), 'the level picker has no way out');
     line.children.map((part) => part.textContent ?? part).join(''),
   );
   assert.ok(
-    lines.includes('Unlocked Vertical Line Clear'),
+    lines.includes('Found Vertical Line Clear (Level 1 Clear)'),
     `the unlock never reached the item feed, which holds ${JSON.stringify(lines)}`,
   );
-  // A chain along the way pays too, so the feed is not only ever the unlock.
+  // A chain along the way pays too, and every line has to say where its item
+  // came from: the location is what makes the feed readable when a multiworld
+  // is sending things in from everywhere.
   assert.ok(
-    lines.every((line) => /^(Unlocked|Received) \S/.test(line)),
-    `the feed has a line it cannot name: ${JSON.stringify(lines)}`,
+    lines.every((line) => /^Found \S.*\((Level \d+ Clear|\d+ Chain)\)$/.test(line)),
+    `the feed has a line it cannot place: ${JSON.stringify(lines)}`,
+  );
+  assert.ok(
+    lines.some((line) => / Chain\)$/.test(line)),
+    `nothing was ever found on a chain, which the placement says it should be: ${JSON.stringify(lines)}`,
   );
 
   // What the run has found goes in the save. Without it a reload keeps the
@@ -519,15 +525,17 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
   // Handing those back rebuilds the run, quietly: restoring is not finding.
   const restored = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, 1);
+  let announced = 0;
   for (const id of saved.checked) {
     restored.restore(id);
+    announced += restored.drainEvents().filter((e) => e.kind === EventKind.ITEM).length;
   }
   assert.deepEqual(
     [...restored.unlockedSpecials],
     [...engine.unlockedSpecials],
     'a restored run does not hold what the saved one did',
   );
-  assert.equal(restored.granted, null, 'restoring looked like a fresh find');
+  assert.equal(announced, 0, 'restoring replayed the finds as news');
   assert.ok(
     grid.classList.contains('hidden'),
     'the finished-level panel is showing the level picker underneath its buttons',

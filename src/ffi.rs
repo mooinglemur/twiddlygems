@@ -343,20 +343,6 @@ pub unsafe extern "C" fn tg_unlocked_specials(handle: *const Handle) -> u32 {
     held.iter().filter(|(on, _)| *on).map(|(_, s)| 1u32 << s.code()).sum()
 }
 
-/// The item the current level's clear handed over, packed as
-/// `kind << 16 | value`, or `u32::MAX` when it gave nothing. Cleared as soon
-/// as another level is dealt.
-///
-/// # Safety
-/// `handle` must come from [`tg_create`].
-#[no_mangle]
-pub unsafe extern "C" fn tg_granted(handle: *const Handle) -> u32 {
-    match session!(handle, u32::MAX).session.granted() {
-        Some(item) => ((item.kind() as u32) << 16) | item.value() as u32,
-        None => u32::MAX,
-    }
-}
-
 /// Which locations this run has already checked, as little-endian `u32` ids.
 ///
 /// Written into the save, so a returning run keeps what it found and stays
@@ -394,7 +380,11 @@ pub unsafe extern "C" fn tg_checked_len(handle: *const Handle) -> u32 {
 /// `handle` must come from [`tg_create`].
 #[no_mangle]
 pub unsafe extern "C" fn tg_restore(handle: *mut Handle, id: u32) {
-    session_mut!(handle, ()).session.restore(id);
+    let handle = session_mut!(handle, ());
+    handle.session.restore(id);
+    // Packs like every other call that changes something, so a caller can see
+    // that restoring raised nothing rather than having to take it on trust.
+    pack_events(handle);
 }
 
 /// A legal move packed as `r1 << 24 | c1 << 16 | r2 << 8 | c2`, or `u32::MAX`

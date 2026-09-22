@@ -1,7 +1,7 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { ItemKind, ObjectiveKind, Special, Status } from './engine.js';
+import { ItemKind, LocationKind, ObjectiveKind, Special, Status } from './engine.js';
 import { PALETTE } from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
@@ -102,8 +102,15 @@ export class Hud {
     }
   }
 
-  /** The end-of-level panel. */
-  showResult(status, actions) {
+  /**
+   * The end-of-level panel.
+   *
+   * `found` is whatever the clear turned up, described, or null. It comes from
+   * the caller rather than from the engine because the event stream is the one
+   * place items are announced: the panel and the feed should never be able to
+   * disagree about what was found.
+   */
+  showResult(status, actions, found) {
     const { engine, dom } = this;
     const won = status === Status.WON;
     const lastLevel = engine.levelIndex + 1 >= engine.levelCount;
@@ -116,10 +123,8 @@ export class Hud {
     const lines = [];
     if (won) {
       lines.push(`${Math.round(engine.score).toLocaleString()} points on ${engine.levelName}.`);
-      const granted = engine.granted && this.describeItem(engine.granted);
-      if (granted) {
-        const [said, what, how] = granted;
-        lines.push(how ? `${said}${what}, ${how}.` : `${said}${what}.`);
+      if (found) {
+        lines.push(found.where ? `${found.said}${found.what} (${found.where}).` : `${found.said}${found.what}.`);
       }
     } else {
       lines.push(unmetSummary(engine));
@@ -216,13 +221,19 @@ export class Hud {
    * rather than the sentence. Old lines are dropped rather than kept forever:
    * this is a feed, and only the recent end of it is ever read.
    */
-  logItem(said, what) {
+  logItem({ said, what, where }) {
     const { dom } = this;
     const line = document.createElement('li');
     const name = document.createElement('span');
     name.className = 'what';
     name.textContent = what;
     line.append(said, name);
+    if (where) {
+      const place = document.createElement('span');
+      place.className = 'where';
+      place.textContent = ` (${where})`;
+      line.append(place);
+    }
     dom.feed.append(line);
 
     while (dom.feed.children.length > FEED_LIMIT) {
@@ -239,24 +250,23 @@ export class Hud {
   }
 
   /**
-   * Says what an item was, as the words around it and the item's own name.
+   * Turns an item event into the words for it: what happened, what the item
+   * is, and where it came from.
    *
-   * Takes `{ kind, value }`, which is what both the event stream and the
-   * engine's last grant hand over, so the feed and the end-of-level panel say
-   * the same thing about the same item. Anything unrecognized gets no line
+   * Item and location are named separately because they are separate things
+   * to a multiworld: the same unlock can turn up at any location, and the same
+   * location can be holding anything. Anything unrecognized gets no line
    * rather than a wrong one.
    */
-  describeItem({ kind, value }) {
-    if (kind === ItemKind.UNLOCK) {
-      const special = SPECIALS[value];
-      return special ? ['Unlocked ', special.name, `from ${special.from}`] : null;
+  describeItem(event) {
+    const name = itemName(event);
+    if (!name) {
+      return null;
     }
-    if (kind === ItemKind.MOVES) {
-      // Named the way Archipelago will name it, so the feed reads the same
-      // whichever side sent it.
-      return ['Received ', `Level ${value + 1} Progressive Moves`, null];
-    }
-    return null;
+    const where = locationName(event);
+    // "Found" for something this run turned up itself, the way Archipelago
+    // distinguishes it from an item another world sent over.
+    return { said: where ? 'Found ' : 'Received ', what: name, where };
   }
 
   /** A load failure has to be visible; the board never appears otherwise. */
@@ -287,6 +297,31 @@ function button(label, onClick, primary) {
   }
   element.addEventListener('click', onClick);
   return element;
+}
+
+/// What the item is called. Unknown kinds get no name, so an engine that grew
+/// a new one does not put a half sentence in the feed.
+function itemName({ color, special }) {
+  if (color === ItemKind.UNLOCK) {
+    return SPECIALS[special]?.name ?? null;
+  }
+  if (color === ItemKind.MOVES) {
+    // Named the way Archipelago will name it, so the feed reads the same
+    // whichever side sent it over.
+    return `Level ${special + 1} Progressive Moves`;
+  }
+  return null;
+}
+
+/// Where it was found, or null for an item that came from no location here.
+function locationName({ cascade, value }) {
+  if (cascade === LocationKind.LEVEL_CLEAR) {
+    return `Level ${value + 1} Clear`;
+  }
+  if (cascade === LocationKind.CHAIN) {
+    return `${value} Chain`;
+  }
+  return null;
 }
 
 function describe(objective) {

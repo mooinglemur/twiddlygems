@@ -6,7 +6,9 @@
 
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
-use crate::progression::{solo_item_at, Inventory, Item, Location, LONGEST_CHAIN, SHORTEST_CHAIN};
+use crate::progression::{
+    solo_item_at, Inventory, Item, Location, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
+};
 use crate::rng::Rng;
 
 pub struct Session {
@@ -36,9 +38,6 @@ pub struct Session {
     /// keep handing moves over. Written into the save so a returning run keeps
     /// what it found, and keeps not being able to find it again.
     checked: Vec<u32>,
-    /// The item the level just cleared handed over, if it was new. Read by the
-    /// front end to say so, and cleared the moment another level is dealt.
-    granted: Option<Item>,
     /// Things that happened to the run rather than to the board, raised
     /// alongside the board's own so the page has one stream to watch.
     events: Vec<Event>,
@@ -63,7 +62,6 @@ impl Session {
             deal,
             inventory,
             checked: Vec::new(),
-            granted: None,
             events: Vec::new(),
             name_buf: Vec::new(),
             names_blob: Vec::new(),
@@ -146,7 +144,6 @@ impl Session {
     fn deal_level(&mut self) {
         let seed = self.deal.next_u64();
         self.game = open_level(self.index, &self.levels[self.index], &self.inventory, seed);
-        self.granted = None;
         self.sync_name();
     }
 
@@ -156,11 +153,6 @@ impl Session {
         &self.inventory
     }
 
-    /// What clearing the current level handed over, if it was something new.
-    pub fn granted(&self) -> Option<Item> {
-        self.granted
-    }
-
     /// Takes an item in from outside the ladder, which is how the multiworld
     /// will deliver. Returns whether it was new.
     ///
@@ -168,11 +160,24 @@ impl Session {
     /// next deal: an unlock that arrives mid level should be usable in that
     /// level, which is what receiving it means.
     pub fn receive(&mut self, item: Item) -> bool {
+        self.receive_from(item, None)
+    }
+
+    /// The same, saying where it came from so the announcement can too.
+    ///
+    /// `None` is an item that came from no location on this board, which is
+    /// what a multiworld handing one over looks like.
+    fn receive_from(&mut self, item: Item, from: Option<Location>) -> bool {
         let is_new = self.inventory.receive(item);
         if is_new {
             self.refresh_specials();
             self.refresh_moves();
-            self.events.push(Event::about_item(EV_ITEM, item.kind(), item.value()));
+            let place = from.map_or((NO_LOCATION, 0), |at| (at.kind(), at.param()));
+            self.events.push(Event::about_item(
+                EV_ITEM,
+                (item.kind(), item.value() as u8),
+                place,
+            ));
         }
         is_new
     }
@@ -221,9 +226,7 @@ impl Session {
         }
         self.checked.push(id);
         if let Some(item) = solo_item_at(location) {
-            if self.receive(item) {
-                self.granted = Some(item);
-            }
+            self.receive_from(item, Some(location));
         }
     }
 
@@ -313,15 +316,43 @@ mod tests {
     /// The score is put out of reach and then the board is nudged until it
     /// ends, because what these tests are about is what a clear leads to, not
     /// whether the level is beatable.
-    fn force_win(session: &mut Session) {
+    /// What an item event says, unpacked: the item, then where it came from.
+    type Announced = ((u8, u8), (u8, u16));
+
+    fn announced(events: &[Event]) -> Vec<Announced> {
+        events
+            .iter()
+            .filter(|e| e.kind == EV_ITEM)
+            .map(|e| ((e.color, e.special), (e.cascade, e.value)))
+            .collect()
+    }
+
+    fn says(item: Item, from: Option<Location>) -> Announced {
+        (
+            (item.kind(), item.value() as u8),
+            from.map_or((NO_LOCATION, 0), |at| (at.kind(), at.param())),
+        )
+    }
+
+    /// Wins the level in front of the session without playing it properly,
+    /// gathering whatever it announced along the way.
+    ///
+    /// The score is put out of reach and then the board is nudged until it
+    /// ends, because what these tests are about is what a clear leads to, not
+    /// whether the level is beatable. Events are collected as they go: the
+    /// session clears them every frame, like the board does.
+    fn force_win(session: &mut Session) -> Vec<Announced> {
+        let mut seen = Vec::new();
         session.game_mut().progress.score = 1_000_000;
         while session.game().phase() != Phase::Finished {
             if let Some((a, b)) = session.game().hint() {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
+            seen.extend(announced(session.events()));
         }
         assert_eq!(session.game().status(), Status::Won);
+        seen
     }
 
     #[test]
@@ -334,21 +365,22 @@ mod tests {
             session.game().rules().specials.is_empty(),
             "a run that has been given nothing should make nothing",
         );
-        assert_eq!(session.granted(), None);
+        assert!(session.events().is_empty());
     }
 
     #[test]
     fn clearing_a_level_hands_over_an_unlock_the_next_one_can_use() {
         let mut session = Session::new(7);
-        force_win(&mut session);
-        assert_eq!(
-            session.granted(),
-            Some(Item::Unlock(UNLOCKS[0])),
-            "clearing the opener should hand over the first of the pool",
+        let seen = force_win(&mut session);
+        assert!(
+            seen.contains(&says(
+                Item::Unlock(UNLOCKS[0]),
+                Some(Location::LevelClear(0)),
+            )),
+            "clearing the opener should hand over the first of the pool, and say where from",
         );
 
         assert!(session.next_level());
-        assert_eq!(session.granted(), None, "the news is cleared once it has been acted on");
         assert_eq!(
             session.game().rules().specials,
             SpecialSet { line_v: true, ..SpecialSet::NONE },
@@ -361,11 +393,11 @@ mod tests {
         // `update` sees a won board on every frame until something else
         // happens, so collecting has to survive being asked repeatedly.
         let mut session = Session::new(7);
-        force_win(&mut session);
-        assert_eq!(session.granted(), Some(Item::Unlock(UNLOCKS[0])));
+        let first = force_win(&mut session);
+        assert!(first.iter().any(|said| said.0 .0 == Item::Unlock(UNLOCKS[0]).kind()));
         session.retry();
-        force_win(&mut session);
-        assert_eq!(session.granted(), None, "the second clear had nothing left to give");
+        let again = force_win(&mut session);
+        assert!(again.is_empty(), "the second clear had nothing left to give");
         assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "and it kept the first");
     }
 
@@ -417,7 +449,6 @@ mod tests {
         assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "the unlock did not come back");
         assert_eq!(session.inventory().moves_found(0), 1, "the moves did not come back");
         assert!(session.events().is_empty(), "restoring announced itself");
-        assert_eq!(session.granted(), None, "restoring looked like a fresh find");
         assert_eq!(
             session.game().rules().specials,
             SpecialSet { line_v: true, ..SpecialSet::NONE },

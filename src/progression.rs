@@ -73,6 +73,24 @@ pub const SHORTEST_CHAIN: u32 = 2;
 pub const LONGEST_CHAIN: u32 = 12;
 
 impl Location {
+    /// Which sort of location this is, for the event that names it. A kind of
+    /// [`NO_LOCATION`] means the item came from nowhere on this board, which
+    /// is what a multiworld handing one over looks like.
+    pub fn kind(self) -> u8 {
+        match self {
+            Location::LevelClear(_) => 0,
+            Location::Chain(_) => 1,
+        }
+    }
+
+    /// The location's one parameter, alongside its kind.
+    pub fn param(self) -> u16 {
+        match self {
+            Location::LevelClear(index) => index as u16,
+            Location::Chain(length) => length as u16,
+        }
+    }
+
     /// A stable number for this location.
     ///
     /// Stability is the whole point: these are written into a save so a run
@@ -99,6 +117,10 @@ impl Location {
 /// Well clear of any ladder length, so the two kinds never collide however
 /// many levels there come to be.
 const CHAIN_ID_BASE: u32 = 1_000;
+
+/// The location kind for an item that came from no location at all: one the
+/// multiworld sent rather than one this run found.
+pub const NO_LOCATION: u8 = 255;
 
 /// Every location in the game, which is the list a generator would place over.
 pub fn locations(level_count: usize) -> Vec<Location> {

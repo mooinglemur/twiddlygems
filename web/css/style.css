@@ -175,8 +175,10 @@ button[disabled] { opacity: 0.4; cursor: default; }
 }
 #feed::-webkit-scrollbar { display: none; }
 #feed li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* What the item was, picked out of the sentence around it. */
+/* What the item was, picked out of the sentence around it, and where it came
+   from, kept quieter: the item is the news and the location is the footnote. */
 #feed .what { color: var(--accent); font-weight: 650; }
+#feed .where { opacity: 0.7; }
 
 @media (min-width: 640px) {
   #feed { --feed-lines: 4; font-size: 0.82rem; }
