@@ -221,13 +221,39 @@ depend on a coin landing. Past level six that asks for nothing extra, since
 getting there already means clearing the levels the unlocks sit on; it bites
 only on the opening levels, which are exactly the ones worth coming back to.
 
-A level's own move items are deliberately **not** required for its marks. They
-are never needed to clear anything, so they are a bonus rather than
-progression, and requiring them would make them progression that partly lives
-behind other marks. A test walks the whole placement in spheres the way a
-generator does and fails if anything can never be reached; another test checks
-that walk can still fail, by giving a location a rule its own item would
-satisfy.
+Gold asks for that level's move items on top: it means beating a level as well
+as it can be beaten, so everything that level has to offer should be in hand
+first. That makes the move items progression, and progression can be found
+later than the level it belongs to. Level five's moves behind level ten's clear
+is an ordinary shape; what it cannot be is behind level five's own gold, and
+that is a constraint on the placement rather than on the rule.
+
+**So the solo placement is filled rather than written out.** Every item is
+progression now, and hand-assigning progression is hand-solving a constraint
+problem that has to keep holding as the ladder grows and the settings change. A
+table that is right today quietly stops being right when either moves. So the
+fill does what a generator does, in the plainest way: take everything
+reachable, drop the next item into one of those, go round again. Placing only
+into somewhere already reachable is what makes it safe, since the inventory
+only grows and nothing can end up behind itself. Whatever is left empty
+afterwards gets filler, the way a multiworld would put another world's items
+there, because clearing a level and being handed nothing reads as a bug.
+
+It is dealt from a fixed seed, so a solo run is the same game for everybody. It
+is not Archipelago's fill and does not try to be: the multiworld shuffles
+across worlds and walks itself back out of corners, where this only has to
+produce one honest layout.
+
+A test walks the whole placement in spheres the way a generator does and fails
+if anything can never be reached; another checks that walk can still fail, by
+giving a location a rule its own item would satisfy.
+
+**Two moves per level, not three.** A ladder of `L` levels offers `3L`
+locations on the levels themselves and five chains short enough to count on,
+and three each makes a pool of `5 + 3L` against exactly `3L + 5` places: a fill
+with no slack deadlocks on the last item, and there is nowhere for the traps
+and usable items to go. Going back up wants more locations rather than a
+cleverer fill.
 
 **Items and locations are named by the engine**, because those strings are the
 item's identity everywhere outside it: in the feed, in a tracker, in a spoiler

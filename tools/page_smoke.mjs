@@ -553,18 +553,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const overlay = elements.get('overlay');
   assert.ok(!overlay.classList.contains('hidden'), 'winning raised no panel');
 
-  // Clearing a level hands over an unlock, and the panel is where the player
-  // is told. Without this the board quietly starts making a new kind of gem
-  // and nothing anywhere says why.
+  // Clearing a level hands over whatever is kept there, and the panel is
+  // where the player is told. Which item that is belongs to the placement, so
+  // this asks that it was named and said where it came from, not which one it
+  // was.
   assert.match(
     elements.get('overlay-body').textContent,
-    /Found Vertical Line Clear \(Level 1 Clear\)\./,
-    'clearing the opening level announced no unlock',
-  );
-  assert.deepEqual(
-    [...engine.unlockedSpecials],
-    [Special.LINE_V],
-    'and exactly one thing should have opened up',
+    /Found .+ \(Level 1 (Clear|Silver|Gold)\)\./,
+    'clearing the opening level announced nothing',
   );
 
   // The feed is the running record of what the run has been given, and where
@@ -575,14 +571,16 @@ click(overlayButton('Close'), 'the level picker has no way out');
     line.children.map((part) => part.textContent ?? part).join(''),
   );
   assert.ok(
-    lines.includes('Found Vertical Line Clear (Level 1 Clear)'),
-    `the unlock never reached the item feed, which holds ${JSON.stringify(lines)}`,
+    lines.some((line) => line.endsWith('(Level 1 Clear)')),
+    `clearing the level never reached the item feed, which holds ${JSON.stringify(lines)}`,
   );
   // A chain along the way pays too, and every line has to say where its item
   // came from: the location is what makes the feed readable when a multiworld
   // is sending things in from everywhere.
   assert.ok(
-    lines.every((line) => /^Found \S.*\((Level \d+ Clear|\d+ Chain)\)$/.test(line)),
+    lines.every((line) =>
+      /^Found \S.*\((Level \d+ (Clear|Silver|Gold)|\d+ Chain)\)$/.test(line),
+    ),
     `the feed has a line it cannot place: ${JSON.stringify(lines)}`,
   );
   assert.ok(

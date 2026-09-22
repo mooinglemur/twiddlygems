@@ -7,7 +7,7 @@
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::progression::{
-    item_index, item_name, items, location_index, location_name, locations, solo_item_at,
+    item_index, item_name, items, location_index, location_name, locations, solo_placement,
     Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
 };
 use crate::rng::Rng;
@@ -39,6 +39,10 @@ pub struct Session {
     /// keep handing moves over. Written into the save so a returning run keeps
     /// what it found, and keeps not being able to find it again.
     checked: Vec<u32>,
+    /// What each location holds, worked out once when the run opens. Building
+    /// it walks the whole ladder by reachability, which is not something to do
+    /// on the frame a level is cleared.
+    placement: Vec<Option<Item>>,
     /// Things that happened to the run rather than to the board, raised
     /// alongside the board's own so the page has one stream to watch.
     events: Vec<Event>,
@@ -70,6 +74,7 @@ impl Session {
             deal,
             inventory,
             checked: Vec::new(),
+            placement: solo_placement(levels.len()),
             events: Vec::new(),
             name_buf: Vec::new(),
             names_blob: Vec::new(),
@@ -257,7 +262,7 @@ impl Session {
             return;
         }
         self.checked.push(id);
-        if let Some(item) = solo_item_at(location, self.levels.len()) {
+        if let Some(item) = self.holds(location) {
             self.receive_from(item, Some(location));
         }
     }
@@ -265,6 +270,11 @@ impl Session {
     /// Which locations this run has checked, for writing down.
     pub fn checked(&self) -> &[u32] {
         &self.checked
+    }
+
+    /// What one location is holding in this run.
+    fn holds(&self, location: Location) -> Option<Item> {
+        location_index(location, self.levels.len()).and_then(|at| self.placement[at])
     }
 
     /// How well the level at `index` has been beaten, at best.
@@ -307,7 +317,7 @@ impl Session {
             return;
         }
         self.checked.push(id);
-        if let Some(item) = solo_item_at(location, self.levels.len()) {
+        if let Some(item) = self.holds(location) {
             self.inventory.receive(item);
         }
         self.refresh_specials();
@@ -393,6 +403,12 @@ mod tests {
 
     /// The same, built from the item and location themselves, so a test can
     /// say what it expects in those terms rather than in numbers.
+    /// What the solo placement keeps at a location.
+    fn placed_at(location: Location) -> Option<Item> {
+        let levels = levels().len();
+        location_index(location, levels).and_then(|at| solo_placement(levels)[at])
+    }
+
     fn says(item: Item, from: Option<Location>) -> Announced {
         let levels = levels().len();
         (
@@ -455,32 +471,29 @@ mod tests {
     }
 
     #[test]
-    fn clearing_a_level_hands_over_an_unlock_the_next_one_can_use() {
+    fn clearing_a_level_hands_over_what_it_is_holding_and_says_where_from() {
+        // Which item that is belongs to the placement, not to this test: the
+        // fill decides, and asking for a particular one here would only pin
+        // the fill's current shape rather than the behavior.
         let mut session = Session::new(7);
+        let held = placed_at(Location::LevelClear(0)).expect("the opener holds something");
         let seen = force_win(&mut session);
         assert!(
-            seen.contains(&says(
-                Item::Unlock(UNLOCKS[0]),
-                Some(Location::LevelClear(0)),
-            )),
-            "clearing the opener should hand over the first of the pool, and say where from",
+            seen.contains(&says(held, Some(Location::LevelClear(0)))),
+            "clearing the opener did not hand over {} and say where from",
+            item_name(held),
         );
-
-        assert!(session.next_level());
-        assert_eq!(
-            session.game().rules().specials,
-            SpecialSet { line_v: true, ..SpecialSet::NONE },
-            "and the level after it is played holding exactly that",
-        );
+        assert!(session.inventory().has(held));
     }
 
     #[test]
-    fn a_cleared_level_hands_over_its_unlock_only_the_first_time() {
+    fn a_cleared_level_pays_its_location_only_the_first_time() {
         // `update` sees a won board on every frame until something else
         // happens, so collecting has to survive being asked repeatedly.
         let mut session = Session::new(7);
+        let held = placed_at(Location::LevelClear(0)).expect("the opener holds something");
         let first = force_win(&mut session);
-        assert!(first.contains(&says(Item::Unlock(UNLOCKS[0]), Some(Location::LevelClear(0)))));
+        assert!(first.contains(&says(held, Some(Location::LevelClear(0)))));
         session.retry();
         let again = force_win(&mut session);
         // Other locations may well pay on the way (the end-of-level flourish
@@ -491,7 +504,7 @@ mod tests {
             !again.iter().any(|(_, from)| *from == clear),
             "clearing the same level paid its location twice",
         );
-        assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "and it kept the first");
+        assert!(session.inventory().has(held), "and it kept what it found");
     }
 
     #[test]
@@ -582,11 +595,9 @@ mod tests {
             session.update(16.0);
         }
         assert!(session.checked().contains(&chain), "no chain was ever registered");
-        assert_eq!(
-            session.inventory().moves_found(0),
-            1,
-            "the chain should have paid what the table says",
-        );
+        if let Some(held) = placed_at(Location::Chain(SHORTEST_CHAIN)) {
+            assert!(session.inventory().has(held), "the chain did not pay what it holds");
+        }
 
         // And it is spent. Playing on, chains of two keep happening, and none
         // of them is worth anything a second time. Counted as visits to the
@@ -608,28 +619,47 @@ mod tests {
     fn a_restored_location_rebuilds_what_it_gave_without_announcing_it() {
         // Coming back to a run has to leave it holding what it held. Replaying
         // the finds through the feed would be a wall of news about nothing.
+        // Two locations that hold something, whatever the fill put there.
         let mut session = Session::new(7);
-        session.restore(Location::LevelClear(0).id());
-        session.restore(Location::Chain(SHORTEST_CHAIN).id());
+        let found: Vec<(Location, Item)> = locations(session.level_count())
+            .into_iter()
+            .filter_map(|at| placed_at(at).map(|item| (at, item)))
+            .take(2)
+            .collect();
+        assert_eq!(found.len(), 2, "the placement is too empty to test with");
 
-        assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "the unlock did not come back");
-        assert_eq!(session.inventory().moves_found(0), 1, "the moves did not come back");
+        for (at, _) in &found {
+            session.restore(at.id());
+        }
+        for (at, item) in &found {
+            assert!(
+                session.inventory().has(*item),
+                "{} did not give back {}",
+                location_name(*at),
+                item_name(*item),
+            );
+        }
         assert!(session.events().is_empty(), "restoring announced itself");
-        assert_eq!(
-            session.game().rules().specials,
-            SpecialSet { line_v: true, ..SpecialSet::NONE },
-            "and the board in play should be what the restored run may do",
-        );
+
+        // And the board in play is what the restored run may do.
+        let mut expected = session.level().clone();
+        session.inventory().apply(session.index(), &mut expected);
+        assert_eq!(session.game().rules().specials, expected.rules.specials);
     }
 
     #[test]
     fn a_restored_location_cannot_be_found_again() {
         let mut session = Session::new(7);
-        let chain = Location::Chain(SHORTEST_CHAIN).id();
-        session.restore(chain);
-        session.restore(chain);
-        assert_eq!(session.inventory().moves_found(0), 1, "restoring twice paid twice");
-        assert_eq!(session.checked(), [chain], "and it was written down twice");
+        let at = locations(session.level_count())
+            .into_iter()
+            .find(|at| matches!(placed_at(*at), Some(Item::Moves { .. })))
+            .expect("something in the placement stacks");
+        let Some(Item::Moves { level }) = placed_at(at) else { unreachable!() };
+
+        session.restore(at.id());
+        session.restore(at.id());
+        assert_eq!(session.inventory().moves_found(level), 1, "restoring twice paid twice");
+        assert_eq!(session.checked(), [at.id()], "and it was written down twice");
     }
 
     #[test]
