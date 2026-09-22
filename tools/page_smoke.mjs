@@ -462,8 +462,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
 // Play the opening level out with the engine's own hints, which is the only
 // way to reach the panel that appears when a level ends.
 {
-  const { EventKind, Special, Status } = await import(path.resolve('web/js/engine.js'));
-  const { engine } = window.twiddlygems;
+  const { EventKind, Phase, Special, Status } = await import(path.resolve('web/js/engine.js'));
+  const { engine, renderer } = window.twiddlygems;
+  // Watched as it goes, because both are gone by the time the level ends: the
+  // pop-over fades long before a long run down finishes, and the phases are
+  // only passed through.
+  const phases = new Set();
+  const toasts = new Set();
+  const counterWhileSpending = new Set();
   for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
     if (engine.acceptsInput) {
       const move = engine.hint();
@@ -472,12 +478,32 @@ click(overlayButton('Close'), 'the level picker has no way out');
       }
     }
     pump(1);
+    phases.add(engine.phase);
+    if (renderer.toast) {
+      toasts.add(renderer.toast.text);
+    }
+    if (engine.phase === Phase.CASHING_IN) {
+      counterWhileSpending.add(engine.movesLeft);
+    }
   }
   assert.equal(engine.status, Status.WON, 'following the hints never finished level one');
   // The moves left over when the goal was met are spent on the way out, so a
-  // won level always ends on nothing. This also means the frame loop ran the
-  // whole flourish, pop-over and all, without throwing.
+  // won level always ends on nothing.
   assert.equal(engine.movesLeft, 0, 'the leftover moves were not cashed in');
+
+  assert.ok(phases.has(Phase.CASHING_IN), 'the leftover moves were never spent on screen');
+  assert.ok(
+    counterWhileSpending.size > 3,
+    `the counter went to zero in one step rather than running down: ${[...counterWhileSpending]}`,
+  );
+  assert.ok(
+    toasts.has('Level cleared'),
+    `the level never said it was cleared, only ${JSON.stringify([...toasts])}`,
+  );
+  assert.ok(
+    phases.has(Phase.FINISHING),
+    'the board was not held for a beat before the level was declared over',
+  );
   pump(3);
 
   const overlay = elements.get('overlay');

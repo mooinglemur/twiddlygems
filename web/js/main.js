@@ -196,6 +196,12 @@ async function boot() {
         audio.play('pop', { delay: event.value / 1000, pan });
         // And the shimmer it leaves behind, ringing on after the pop.
         audio.play('sparkle', { delay: event.value / 1000, pan });
+      } else if (event.kind === EventKind.SPECIAL_MADE) {
+        // A voice for the gem turning into something, which the run down at
+        // the end of a level is nothing but. Quiet enough (a single sparkle
+        // peaks around 0.002) that the extra one on an ordinary match, where
+        // the clears are already sparkling, cannot be heard.
+        audio.play('sparkle', { pan: ((event.c / spread) * 2 - 1) * 0.5 });
       } else if (event.kind === EventKind.LAND) {
         // The engine works out when each column touches down, so the thud is
         // scheduled for the moment the gems actually stop rather than for the

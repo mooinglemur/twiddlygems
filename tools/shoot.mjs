@@ -106,6 +106,9 @@ const evaluate = async (expression) => {
   const { result, exceptionDetails } = await send('Runtime.evaluate', {
     expression,
     returnByValue: true,
+    // So an expression can wait on frames going by and hand back what it
+    // found, rather than returning a promise nobody unwraps.
+    awaitPromise: true,
   });
   // Without this a script that throws comes back as `undefined` and the run
   // carries on: the page is never driven, every shot is of whatever was on
@@ -160,8 +163,11 @@ for (const [name, metrics] of [
   await sleep(600);
   await evaluate(
     // Unlocked past the end of the ladder, so any level can be photographed
-    // without playing up to it.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL} }))`,
+    // without playing up to it, and holding the five unlocks, which are the
+    // items on the first five level clears. Without those the board makes no
+    // specials at all and the shots are of a much plainer game than anyone
+    // past the opening level plays.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, checked: [0, 1, 2, 3, 4] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only
@@ -220,9 +226,37 @@ for (const [name, metrics] of [
   await sleep(200);
   await shoot(`${name}-04-feed`);
 
+  // The end of a level: the goal met, the moves left over being spent one at
+  // a time, and each gem turning into a special throwing motes. Played out
+  // through the engine's own hints rather than by gesture, because forty more
+  // swipes is a minute of screenshot run time.
+  const cashingIn = await evaluate(`
+    (async () => {
+      const { engine, Phase } = { ...window.twiddlygems, Phase: { CASHING_IN: 7 } };
+      for (let i = 0; i < 400; i += 1) {
+        if (engine.phase === Phase.CASHING_IN) {
+          return true;
+        }
+        if (engine.acceptsInput) {
+          const move = engine.hint();
+          if (move) { engine.swap(...move); }
+        }
+        await new Promise((done) => requestAnimationFrame(done));
+      }
+      return engine.phase === Phase.CASHING_IN;
+    })()
+  `);
+  if (!cashingIn) {
+    console.error('never reached the end-of-level run down, so there is no shot of it');
+    stop();
+    process.exit(1);
+  }
+  await sleep(600);
+  await shoot(`${name}-05-cashing-in`);
+
   await evaluate(`document.getElementById('levels-button').click()`);
   await sleep(400);
-  await shoot(`${name}-05-levels`);
+  await shoot(`${name}-06-levels`);
 
   // `hidden` is a utility class, and every panel it goes on is an id selector
   // that sets its own `display`, which outweighs a bare class. When that goes

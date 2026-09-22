@@ -219,18 +219,33 @@ found by clearing a level does, and the end-of-level panel takes what it says
 from the same place: the two should never be able to disagree about what was
 found.
 
-**A level does not end the moment its goals are met.** Every move still in hand
-turns a gem into a special, one per move, and then everything inert on the
-board goes off at once. What that clears can leave more specials behind, and
-the board coming to rest sets those off too, round after round until there is
-nothing left to fire. The score climbs the whole way, which is the point: it is
-what makes finishing a level early worth more than merely finishing it, and
-what a score tier will be chased with.
+**A level does not end the moment its goals are met.** It says `Level cleared`,
+once, and then spends what is left: one move per 300ms, the counter visibly
+running down, each one turning a gem somewhere into a special with a ring of
+motes around it. When the counter reaches zero everything inert on the board
+goes off at once. What that clears can leave more specials behind, and the
+board coming to rest sets those off too, round after round until there is
+nothing left to fire. Then a beat to look at the board before the level is
+declared over, rather than a panel sliding straight over it.
 
-It reuses the ordinary clear and fall rather than adding a phase, because a
-round of it is a detonation nobody swapped for. And it can only hand out what
-the run may make, like everything else, so a run that has unlocked nothing has
-nothing to mint and the level just ends.
+The score climbs the whole way, which is the point: it is what makes finishing
+a level early worth more than merely finishing it, and what a score tier will
+be chased with. `Progress::moves_spare` records how many moves were in hand
+when the goals were met, because by the end the counter always reads zero and
+how briskly a level was beaten would otherwise be lost.
+
+Only the three clearers that draw a line or a cross can be minted. A rainbow
+takes a color off the whole board and a rocket flies somewhere else, so a
+boardful of either is a wall of noise rather than a board coming apart in front
+of you. And it can only hand out what the run may make, like everything else,
+so a run holding none of the three goes through the same motions at the same
+pace and simply leaves the board alone: a count that vanished instead would
+read as the moves being taken away.
+
+The rounds reuse the ordinary clear and fall rather than adding a phase,
+because a round is a detonation nobody swapped for. The two phases it does add
+are for the parts that are new: spending the moves one at a time, and the beat
+at the end.
 
 Specials are inert against ordinary gems. A line gem or a cross sits where it is
 until a match of its own color sweeps it up; shoving one against a plain gem

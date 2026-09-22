@@ -127,7 +127,7 @@ compare(
         ("LOW_MOVES", "LOW_MOVES"),
         ("BRICK", "BRICK"),
         ("ITEM", "ITEM"),
-        ("FINALE", "FINALE"),
+        ("CLEARED", "CLEARED"),
     ],
 )
 
@@ -143,6 +143,8 @@ compare(
         ("Falling", "FALLING"),
         ("Shuffling", "SHUFFLING"),
         ("Finished", "FINISHED"),
+        ("CashingIn", "CASHING_IN"),
+        ("Finishing", "FINISHING"),
     ],
 )
 

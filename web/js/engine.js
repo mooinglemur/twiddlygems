@@ -16,6 +16,10 @@ export const Phase = {
   FALLING: 4,
   SHUFFLING: 5,
   FINISHED: 6,
+  /// The goal is met and the leftover moves are being spent, one per step.
+  CASHING_IN: 7,
+  /// A beat on a won board before the level is declared over.
+  FINISHING: 8,
 };
 
 export const Status = { PLAYING: 0, WON: 1, LOST: 2 };
@@ -57,9 +61,9 @@ export const EventKind = {
   /// An item reached the run. `color` is its `ItemKind`, `value` its one
   /// parameter. Raised by the session, not the board.
   ITEM: 15,
-  /// The goal is met and the moves left over are being spent. `value` is how
-  /// many specials are about to go off. Raised once per round.
-  FINALE: 16,
+  /// The level is won. `value` is how many moves were left over for the
+  /// flourish to spend. Raised once, before any of it happens.
+  CLEARED: 16,
 };
 
 /// What sort of item an `EventKind.ITEM` is about. Its parameter is the

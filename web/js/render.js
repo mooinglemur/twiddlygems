@@ -42,6 +42,10 @@ const ROCKET_FIN = '#e5484d';
 const ROCKET_PORT = '#8fd0ff';
 const SHARDS_PER_GEM = 9;
 const PUFFS_PER_GEM = 4;
+/// Motes ringing a gem as it becomes a special. Fewer than a burst's shards:
+/// a couple of dozen of these can be on screen at once during the run down at
+/// the end of a level.
+const MOTES_PER_SPARKLE = 7;
 /// A rocket strike is the loudest thing on the board, so it throws far more.
 const SHARDS_PER_IMPACT = 28;
 const PUFFS_PER_IMPACT = 12;
@@ -57,10 +61,6 @@ const BRICK_DEBRIS = '#b96a4f';
 /// How long a pop-over line of text lives, and the share of that spent fading
 /// in and fading out. It outlasts the shuffle it announces, because a message
 /// that has gone by the time the board settles is one nobody read.
-/// Said when the goal is met and the leftover moves are being spent. Held in
-/// one place because the pop-over checks against it to avoid re-raising itself
-/// on every round of the flourish.
-const FINALE_TOAST = 'Goal! Cashing in';
 const TOAST_MS = 1800;
 const TOAST_IN = 0.18;
 const TOAST_OUT = 0.4;
@@ -119,13 +119,13 @@ export class Renderer {
       } else if (event.kind === EventKind.LOW_MOVES) {
         const left = event.value;
         this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };
-      } else if (event.kind === EventKind.FINALE) {
-        // The goal is met and the board is about to take itself apart. Said
-        // once, on the first round: the later rounds are the same event again
-        // and would keep re-raising the pop-over over its own fade.
-        if (!this.toast || this.toast.text !== FINALE_TOAST) {
-          this.toast = { text: FINALE_TOAST, at: now };
-        }
+      } else if (event.kind === EventKind.CLEARED) {
+        this.toast = { text: 'Level cleared', at: now };
+      } else if (event.kind === EventKind.SPECIAL_MADE) {
+        // A gem gaining something rather than losing it, so motes rather than
+        // debris. The engine raises this for a match's own reward as well as
+        // for the run down at the end, and both are worth marking.
+        this.pendingBursts.push({ at: now, r: event.r, c: event.c, color: event.color, sparkle: true });
       }
     }
   }
@@ -152,7 +152,11 @@ export class Renderer {
       }
       this.pendingBursts = waiting;
       for (const burst of due) {
-        this.burst(burst);
+        if (burst.sparkle) {
+          this.sparkle(burst);
+        } else {
+          this.burst(burst);
+        }
       }
     }
 
@@ -170,6 +174,54 @@ export class Renderer {
       live += 1;
     }
     this.particles.length = live;
+  }
+
+  /// A gem turning into a special: a ring of bright motes drawn inward, and a
+  /// halo. Nothing is being destroyed here, so it throws no debris and no
+  /// smoke: it should read as the cell gaining something rather than losing
+  /// it, which is the opposite of what `burst` says.
+  sparkle({ r, c, color }) {
+    if (this.particles.length > MAX_PARTICLES) {
+      return;
+    }
+    const { cell, pad } = this;
+    const x = pad + (c + 0.5) * cell;
+    const y = pad + (r + 0.5) * cell;
+    const fill = PALETTE[color % PALETTE.length].fill;
+
+    this.particles.push({
+      kind: 'ring',
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      gravity: 0,
+      drag: 1,
+      size: cell * 0.16,
+      color: '#fff4cc',
+      age: 0,
+      life: 420,
+    });
+
+    for (let i = 0; i < MOTES_PER_SPARKLE; i += 1) {
+      const angle = (i / MOTES_PER_SPARKLE) * TAU + Math.random() * 0.5;
+      // Slowly outward and rising, so the motes hang around the gem instead
+      // of being thrown off it.
+      const speed = cell * (0.0004 + Math.random() * 0.0008);
+      this.particles.push({
+        kind: 'shard',
+        x: x + Math.cos(angle) * cell * 0.34,
+        y: y + Math.sin(angle) * cell * 0.34,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - cell * 0.00022,
+        gravity: -cell * 0.0000006,
+        drag: 0.985,
+        size: cell * (0.04 + Math.random() * 0.05),
+        color: Math.random() < 0.6 ? '#fff4cc' : fill,
+        age: 0,
+        life: 420 + Math.random() * 320,
+      });
+    }
   }
 
   /// One cell's worth of debris: shards of the gem, and a puff of smoke. A

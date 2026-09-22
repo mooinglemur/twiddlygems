@@ -67,6 +67,24 @@ const SCORE_PER_SPECIAL_MADE: u64 = 200;
 /// board being taken apart.
 const FINALE_JITTER_MS: f32 = 700.0;
 
+/// One leftover move spent per this long, so the counter can be watched
+/// running down rather than dropping to zero between frames. Slow enough to
+/// follow, brisk enough that a forty move surplus is not a minute of waiting.
+const CASH_IN_STEP_MS: f32 = 300.0;
+
+/// A beat between the board coming to rest on a won level and the level being
+/// declared over, so the last thing the player sees is the board they cleared
+/// rather than a panel sliding over it.
+const WIN_HOLD_MS: f32 = 1_000.0;
+
+/// What a leftover move can be turned into.
+///
+/// The three that clear a line or a cross, and not the other two. A rainbow
+/// takes a color off the whole board and a rocket flies somewhere else, so a
+/// boardful of either is a wall of noise rather than a board coming apart in
+/// front of you.
+const CASH_IN_SPECIALS: [Special; 3] = [Special::LineH, Special::LineV, Special::Cross];
+
 /// Event tags shared with the front end for sound and particles.
 pub const EV_CLEAR: u8 = 1;
 pub const EV_SPECIAL_MADE: u8 = 2;
@@ -132,12 +150,13 @@ pub const EV_BRICK: u8 = 14;
 /// stream carries no text, and a feed needs names.
 pub const EV_ITEM: u8 = 15;
 
-/// The goals are met and the moves left over are being cashed in. `value` is
-/// how many specials are about to go off, which is the size of the bonus.
+/// The level is won. `value` is how many moves were left over, which is what
+/// the flourish that follows has to spend.
 ///
-/// Raised once per round of the finale, so a board that keeps making specials
-/// keeps saying so.
-pub const EV_FINALE: u8 = 16;
+/// Raised once, the moment the goals are met, rather than again for every
+/// round of the flourish: what it announces is the level being beaten, and
+/// that happens once.
+pub const EV_CLEARED: u8 = 16;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -200,6 +219,12 @@ pub enum Phase {
     Launching { elapsed: f32 },
     Falling { elapsed: f32 },
     Shuffling { elapsed: f32 },
+    /// The goals are met and the moves left over are being spent, one at a
+    /// time, so the counter can be watched running down.
+    CashingIn { elapsed: f32 },
+    /// The board has come to rest on a won level. A beat to look at it before
+    /// the level is declared over and a panel covers it.
+    Finishing { elapsed: f32 },
     /// The level is over; nothing advances until it is reloaded.
     Finished,
 }
@@ -214,6 +239,8 @@ impl Phase {
             Phase::Falling { .. } => 4,
             Phase::Shuffling { .. } => 5,
             Phase::Finished => 6,
+            Phase::CashingIn { .. } => 7,
+            Phase::Finishing { .. } => 8,
         }
     }
 }
@@ -314,6 +341,10 @@ pub struct Game {
     /// Whether the short-on-moves warning has already gone out for this stretch
     /// of the level; see [`EV_LOW_MOVES`].
     warned_low_moves: bool,
+    /// Whether the level has already said it was cleared; see [`EV_CLEARED`].
+    /// The board settles several times during the flourish that follows, and
+    /// only the first of those is news.
+    announced_clear: bool,
     events: Vec<Event>,
     cells_buf: Vec<u8>,
     offs_buf: Vec<f32>,
@@ -340,6 +371,7 @@ impl Game {
             swap: None,
             selected: None,
             warned_low_moves: false,
+            announced_clear: false,
             events: Vec::new(),
             cells_buf: Vec::new(),
             offs_buf: Vec::new(),
@@ -376,6 +408,7 @@ impl Game {
         self.swap = None;
         self.selected = None;
         self.warned_low_moves = false;
+        self.announced_clear = false;
         self.events.clear();
         self.deal();
         self.origin = self.settled_origin();
@@ -486,6 +519,8 @@ impl Game {
                 Phase::Launching { elapsed } => (self.launch_ms, elapsed),
                 Phase::Falling { elapsed } => (self.fall_ms, elapsed),
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
+                Phase::CashingIn { elapsed } => (CASH_IN_STEP_MS, elapsed),
+                Phase::Finishing { elapsed } => (WIN_HOLD_MS, elapsed),
             };
             let advanced = elapsed + remaining;
             if let Phase::Launching { .. } = self.phase {
@@ -512,6 +547,8 @@ impl Game {
             Phase::Launching { .. } => Phase::Launching { elapsed },
             Phase::Falling { .. } => Phase::Falling { elapsed },
             Phase::Shuffling { .. } => Phase::Shuffling { elapsed },
+            Phase::CashingIn { .. } => Phase::CashingIn { elapsed },
+            Phase::Finishing { .. } => Phase::Finishing { elapsed },
             other => other,
         };
     }
@@ -523,6 +560,8 @@ impl Game {
             Phase::Launching { .. } => self.finish_launch(),
             Phase::Falling { .. } => self.finish_fall(),
             Phase::Shuffling { .. } => self.finish_shuffle(),
+            Phase::CashingIn { .. } => self.finish_cash_in_step(),
+            Phase::Finishing { .. } => self.declare_won(),
             Phase::Idle | Phase::Finished => {}
         }
     }
@@ -1193,15 +1232,24 @@ impl Game {
         if self.objectives_met() {
             // Before the flourish, which spends them: afterwards the counter
             // always reads zero and how briskly the level was beaten is gone.
-            // Before the flourish, which spends them: afterwards the counter
-            // always reads zero and how briskly the level was beaten is gone.
             self.progress.moves_spare = self.progress.moves_spare.max(self.moves_left);
+            // Said once, the moment the level is won, rather than again on
+            // every round of what follows.
+            if !self.announced_clear {
+                self.announced_clear = true;
+                self.events.push(Event::plain(EV_CLEARED, self.moves_left.min(65_535) as u16));
+            }
+            // Leftover moves are spent one at a time so the counter can be
+            // watched running down; only once it reaches zero does the board
+            // go off.
+            if self.moves_left > 0 {
+                self.phase = Phase::CashingIn { elapsed: 0.0 };
+                return;
+            }
             if self.begin_finale() {
                 return;
             }
-            self.status = Status::Won;
-            self.phase = Phase::Finished;
-            self.events.push(Event::plain(EV_WON, 0));
+            self.phase = Phase::Finishing { elapsed: 0.0 };
             return;
         }
         if self.spec.moves > 0 && self.moves_left == 0 {
@@ -1242,15 +1290,8 @@ impl Game {
     /// quietly does not happen. That is the same rule as everywhere else: the
     /// board can only make what the run may make.
     fn begin_finale(&mut self) -> bool {
-        if self.moves_left > 0 {
-            let spend = self.moves_left;
-            self.moves_left = 0;
-            self.mint_specials(spend);
-        }
-
         let waiting = self.inert_specials();
         if !waiting.is_empty() {
-            self.events.push(Event::plain(EV_FINALE, waiting.len().min(65_535) as u16));
             self.begin_clear(Resolution {
                 seeds: waiting,
                 creations: Vec::new(),
@@ -1260,46 +1301,76 @@ impl Game {
             return true;
         }
 
-        // Nothing inert, but the minting may have left rockets, which fly
-        // rather than detonate where they stand.
+        // Nothing inert, but the board may still hold rockets, which fly at
+        // something rather than going off where they stand.
         let rockets = self.rockets_on_board();
-        if !rockets.is_empty() {
-            self.events.push(Event::plain(EV_FINALE, rockets.len().min(65_535) as u16));
-            if self.begin_launch(&rockets) {
-                return true;
-            }
-        }
-        false
+        !rockets.is_empty() && self.begin_launch(&rockets)
     }
 
-    /// Turns `count` plain gems into specials, one per move left over.
+    /// Spends one leftover move, then either takes the next or sets the board
+    /// off.
     ///
-    /// Only gems: a cell holding a special already is worth more left alone,
-    /// and a brick is not a gem. Which special each becomes is drawn from what
-    /// the level allows, so this cannot hand out something the run has not
-    /// earned.
-    fn mint_specials(&mut self, count: u32) {
-        let allowed = self.spec.rules.specials.list();
+    /// One per step rather than all at once so the counter visibly runs down.
+    /// A step with nothing to place still costs its move and still takes its
+    /// time: a run that has unlocked none of the eligible specials goes
+    /// through the same motions and simply leaves the board alone, which is
+    /// less confusing than the count vanishing.
+    fn finish_cash_in_step(&mut self) {
+        if self.moves_left > 0 {
+            self.moves_left -= 1;
+            self.mint_one();
+        }
+        if self.moves_left > 0 {
+            self.phase = Phase::CashingIn { elapsed: 0.0 };
+            return;
+        }
+        if self.begin_finale() {
+            return;
+        }
+        self.phase = Phase::Finishing { elapsed: 0.0 };
+    }
+
+    /// Turns one plain gem somewhere on the board into a special.
+    ///
+    /// Only gems: a cell already holding a special is worth more left alone,
+    /// and a brick is not a gem. Only the three that clear a line or a cross
+    /// are eligible, drawn from what the level allows, so this can neither
+    /// hand out something the run has not earned nor fill the board with
+    /// rainbows.
+    fn mint_one(&mut self) {
+        let allowed: Vec<Special> = self
+            .spec
+            .rules
+            .specials
+            .list()
+            .into_iter()
+            .filter(|special| CASH_IN_SPECIALS.contains(special))
+            .collect();
         if allowed.is_empty() {
             return;
         }
-        let mut plain: Vec<Pos> = self
+        let plain: Vec<Pos> = self
             .board
             .positions()
             .filter(|p| self.board.gem(*p).map_or(false, |gem| !gem.special.is_special()))
             .collect();
-
-        for _ in 0..count {
-            if plain.is_empty() {
-                break;
-            }
-            let at = plain.swap_remove(self.rng.below(plain.len() as u32) as usize);
-            let special = allowed[self.rng.below(allowed.len() as u32) as usize];
-            let Some(gem) = self.board.gem(at) else { continue };
-            self.board.set_gem(at, Some(Gem { special, ..gem }));
-            self.progress.score += SCORE_PER_SPECIAL_MADE;
-            self.events.push(Event::at(EV_SPECIAL_MADE, at, gem.color, special, 1));
+        if plain.is_empty() {
+            return;
         }
+
+        let at = plain[self.rng.below(plain.len() as u32) as usize];
+        let special = allowed[self.rng.below(allowed.len() as u32) as usize];
+        let Some(gem) = self.board.gem(at) else { return };
+        self.board.set_gem(at, Some(Gem { special, ..gem }));
+        self.progress.score += SCORE_PER_SPECIAL_MADE;
+        self.events.push(Event::at(EV_SPECIAL_MADE, at, gem.color, special, 1));
+    }
+
+    /// The level is over and won. The beat before this is [`Phase::Finishing`].
+    fn declare_won(&mut self) {
+        self.status = Status::Won;
+        self.phase = Phase::Finished;
+        self.events.push(Event::plain(EV_WON, 0));
     }
 
     /// Specials sitting on the board waiting for something to set them off.
@@ -1571,7 +1642,9 @@ impl Game {
                     self.offs_buf[i * 3 + 2] = scale;
                 }
             }
-            Phase::Idle | Phase::Finished => {}
+            // Nothing moves during these: the board sits where it is while the
+            // counter runs down, or while a won board is looked at.
+            Phase::Idle | Phase::CashingIn { .. } | Phase::Finishing { .. } | Phase::Finished => {}
         }
     }
 
@@ -3456,17 +3529,111 @@ mod tests {
 
         assert_eq!(game.status(), Status::Won);
         assert_eq!(game.moves_left, 0, "the moves left over should have been spent");
+        // One per move left over at least. The clears that follow can earn
+        // more of their own, which is the flourish feeding itself.
         let minted = events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).count();
-        assert!(minted >= 20, "a 29 move surplus made only {minted} specials");
+        assert!(minted >= 29, "a 29 move surplus minted only {minted} specials");
+
+        let cleared = events.iter().filter(|e| e.kind == EV_CLEARED).count();
+        assert_eq!(cleared, 1, "the level said it was cleared {cleared} times");
         assert!(
-            events.iter().any(|e| e.kind == EV_FINALE),
-            "the board never said it was cashing anything in",
+            events.iter().position(|e| e.kind == EV_CLEARED)
+                < events.iter().position(|e| e.kind == EV_SPECIAL_MADE),
+            "it should say so before spending anything, not after",
         );
         assert!(
-            events.iter().position(|e| e.kind == EV_FINALE)
+            events.iter().position(|e| e.kind == EV_CLEARED)
                 < events.iter().position(|e| e.kind == EV_WON),
-            "the level ended before the flourish rather than after it",
+            "the level ended before it was announced as cleared",
         );
+    }
+
+    /// Steps until the leftover moves start being spent, and says how many
+    /// frames that took.
+    fn run_to_cash_in(game: &mut Game) -> u32 {
+        let mut frames = 0;
+        while !matches!(game.phase(), Phase::CashingIn { .. }) && frames < 400 {
+            game.update(16.0);
+            frames += 1;
+        }
+        assert!(
+            matches!(game.phase(), Phase::CashingIn { .. }),
+            "the level never started spending its leftover moves",
+        );
+        frames
+    }
+
+    /// Everything minted while the leftover moves are being spent, which is
+    /// not the same as everything the clears afterwards go on to earn.
+    fn minted_during_cash_in(game: &mut Game) -> Vec<u8> {
+        let mut frames = run_to_cash_in(game);
+        let mut made = Vec::new();
+        while matches!(game.phase(), Phase::CashingIn { .. }) && frames < 4000 {
+            game.update(16.0);
+            frames += 1;
+            made.extend(
+                game.events().iter().filter(|e| e.kind == EV_SPECIAL_MADE).map(|e| e.special),
+            );
+        }
+        made
+    }
+
+    #[test]
+    fn the_leftover_moves_are_spent_one_at_a_time() {
+        // Watchable, not instant: the counter running down is the whole of
+        // what tells the player their spare moves were worth something.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 506);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let mut frames = run_to_cash_in(&mut game);
+        assert_eq!(game.moves_left, 29, "nothing should be spent before the run down starts");
+
+        let mut prev = game.moves_left;
+        let mut steps = 0;
+        while matches!(game.phase(), Phase::CashingIn { .. }) && frames < 4000 {
+            game.update(16.0);
+            frames += 1;
+            if game.moves_left != prev {
+                assert_eq!(game.moves_left, prev - 1, "the count jumped rather than stepping");
+                prev = game.moves_left;
+                steps += 1;
+            }
+        }
+        assert_eq!(steps, 29, "29 moves should take 29 steps to spend");
+        assert_eq!(game.moves_left, 0);
+        // 29 steps at 300ms each, and a frame here is 16ms.
+        assert!(frames > 500, "the whole run down took only {frames} frames");
+    }
+
+    #[test]
+    fn a_won_board_is_looked_at_before_the_level_is_declared_over() {
+        // Without the beat, the last thing a player sees is a panel sliding
+        // over the board they just cleared.
+        let mut level = spec(4, 4, 6, 1);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 507);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let mut frames = 0;
+        while !matches!(game.phase(), Phase::Finishing { .. }) && frames < 800 {
+            game.update(16.0);
+            frames += 1;
+        }
+        assert!(matches!(game.phase(), Phase::Finishing { .. }), "the level never held");
+        assert_eq!(game.status(), Status::Playing, "it declared the win before the beat");
+
+        let mut held = 0;
+        while matches!(game.phase(), Phase::Finishing { .. }) && held < 400 {
+            game.update(16.0);
+            held += 1;
+        }
+        assert_eq!(game.status(), Status::Won);
+        assert!(held > 40, "the beat lasted only {held} frames");
+        assert!(held < 100, "the beat lasted {held} frames, which is a wait rather than a beat");
     }
 
     #[test]
@@ -3511,46 +3678,64 @@ mod tests {
     }
 
     #[test]
-    fn a_run_that_has_unlocked_nothing_gets_no_flourish() {
-        // The finale mints specials, so it can only hand out what the run may
-        // make. With nothing unlocked there is nothing to mint and the level
-        // simply ends, which is how the opening level plays.
+    fn a_run_with_nothing_eligible_still_goes_through_the_motions() {
+        // The board does not change, but the level still says it was cleared
+        // and the counter still runs down at the same pace. A count that
+        // vanished instead would read as the moves being taken away.
         let mut level = spec(9, 9, 6, 30);
         level.objectives = vec![Objective::Score(1)];
         level.rules.specials = SpecialSet::NONE;
         let mut game = Game::new(level, 503);
         let (a, b) = game.hint().expect("a fresh board has a move");
         game.try_swap(a, b);
-        let events = settle(&mut game);
 
+        let mut frames = 0;
+        while game.phase() != Phase::Finished && frames < 4000 {
+            game.update(16.0);
+            frames += 1;
+        }
         assert_eq!(game.status(), Status::Won);
+        assert_eq!(game.moves_left, 0, "the moves were not spent");
+        assert!(frames > 500, "it skipped the motions, taking only {frames} frames");
+    }
+
+    #[test]
+    fn only_the_line_and_cross_clearers_can_be_minted() {
+        // A boardful of rainbows takes every color off at once and a boardful
+        // of rockets fires at somewhere else, so neither is a board coming
+        // apart in front of you. The three that draw a line are.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 504);
+        assert_eq!(game.spec.rules.specials, SpecialSet::ALL, "the level offers all five");
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let made = minted_during_cash_in(&mut game);
+        assert!(!made.is_empty(), "nothing was minted at all");
+        let eligible: Vec<u8> = CASH_IN_SPECIALS.iter().map(|s| s.code()).collect();
         assert!(
-            !events.iter().any(|e| e.kind == EV_FINALE),
-            "a run holding nothing still got a flourish",
-        );
-        assert!(
-            !events.iter().any(|e| e.kind == EV_SPECIAL_MADE),
-            "and it should not have minted anything either",
+            made.iter().all(|code| eligible.contains(code)),
+            "the run down minted something ineligible: {made:?}",
         );
     }
 
     #[test]
-    fn the_flourish_only_mints_what_the_run_may_make() {
-        // Whatever it turns gems into has to come from the level's own set.
+    fn the_run_down_only_mints_what_the_run_may_make() {
+        // Eligible is not the same as earned: it can only hand out what the
+        // level, and so the run, allows.
         let mut level = spec(9, 9, 6, 30);
         level.objectives = vec![Objective::Score(1)];
-        level.rules.specials = SpecialSet { rocket: true, ..SpecialSet::NONE };
-        let mut game = Game::new(level, 504);
+        level.rules.specials = SpecialSet { line_h: true, ..SpecialSet::NONE };
+        let mut game = Game::new(level, 508);
         let (a, b) = game.hint().expect("a fresh board has a move");
         game.try_swap(a, b);
-        let events = settle(&mut game);
 
-        let made: Vec<u8> =
-            events.iter().filter(|e| e.kind == EV_SPECIAL_MADE).map(|e| e.special).collect();
+        let made = minted_during_cash_in(&mut game);
         assert!(!made.is_empty(), "nothing was minted at all");
         assert!(
-            made.iter().all(|code| *code == Special::Rocket.code()),
-            "the flourish handed out something the run had not earned: {made:?}",
+            made.iter().all(|code| *code == Special::LineH.code()),
+            "it handed out something the run had not earned: {made:?}",
         );
     }
 
