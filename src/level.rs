@@ -533,6 +533,64 @@ mod tests {
     }
 
     #[test]
+    fn every_placed_gem_is_a_color_its_level_deals() {
+        // A digit naming a color the level never deals puts a gem on the board
+        // that nothing can ever match, which is a blocker drawn by accident.
+        for level in levels() {
+            let Some(layout) = level.layout else { continue };
+            for (r, row) in layout.iter().enumerate() {
+                for (c, ch) in row.chars().enumerate() {
+                    let Some(placed) = ch.to_digit(10) else { continue };
+                    let color = (placed as u8).saturating_sub(1);
+                    assert!(
+                        level.rules.deals(color),
+                        "{}: the gem at ({r},{c}) is color {color}, which the level never deals",
+                        level.name,
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn no_level_opens_on_a_match_it_placed_itself() {
+        // A level opening mid-match plays a little of itself before the player
+        // has touched it. The deal avoids that where it can, and accepts it
+        // when a board leaves it no choice, which is the right way round for
+        // something it cannot control. What it cannot avoid at all is a match
+        // written into the layout: those gems are placed every time, on every
+        // seed, so that level opens chaining forever.
+        for level in levels() {
+            let Some(layout) = level.layout else { continue };
+            let board = crate::board::Board::from_layout(layout);
+            let matches = crate::matching::find_matches(&board, &level.rules);
+            assert!(
+                matches.is_empty(),
+                "{}: the gems it places are already a match at {:?}",
+                level.name,
+                matches[0].cells,
+            );
+        }
+    }
+
+    #[test]
+    fn every_level_opens_with_something_to_do() {
+        // The failure a deal may not accept, asked of the real ladder. A level
+        // whose layout leaves too little room would show up here rather than
+        // in front of somebody, as a board they can only stare at.
+        for (index, level) in levels().into_iter().enumerate() {
+            for seed in 0..20 {
+                let game = crate::game::Game::new(level.clone(), seed * 31 + index as u64);
+                assert!(
+                    crate::matching::find_move(&game.board, &level.rules).is_some(),
+                    "{} opens with no legal move on seed {seed}",
+                    level.name,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn every_jelly_cell_can_be_reached() {
         // Gems arrive from off the top of the board or by spilling in from the
         // side, so a cell is only ever fed from the three cells above it. Jelly

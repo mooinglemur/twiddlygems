@@ -60,6 +60,18 @@ const SCORE_PER_GEM: u64 = 50;
 const SCORE_PER_SPECIAL_FIRED: u64 = 120;
 const SCORE_PER_SPECIAL_MADE: u64 = 200;
 
+/// How many boards to deal looking for one that opens quietly, with no match
+/// already on it. Past this an opening match is accepted: it is untidy rather
+/// than broken, and a level whose placed gems make one unavoidable should
+/// still be playable.
+const QUIET_DEAL_TRIES: u32 = 64;
+
+/// How many more to deal looking for one with a legal move on it, which is not
+/// optional. Bounded only so that a layout nothing can be played on cannot
+/// hang the page; anything approaching this many is a level design fault, and
+/// `every_level_opens_with_something_to_do` is what catches it.
+const PLAYABLE_DEAL_TRIES: u32 = 4_096;
+
 /// How far apart the specials minted at the end of a level go off.
 ///
 /// Wider than a match's own spread: this is a dozen of them at once, and
@@ -1466,31 +1478,69 @@ impl Game {
 
     // ---- board generation ------------------------------------------------
 
-    /// Fills every open cell, avoiding matches that would resolve before the
-    /// player has touched anything, and guaranteeing at least one legal move.
+    /// Fills every empty cell, avoiding matches that would resolve before the
+    /// player has touched anything, and never leaving a board with no move on
+    /// it.
+    ///
+    /// Empty, not every cell: a layout can place gems, and those are the
+    /// opening board rather than a property of their cells, so the deal fills
+    /// around them and the first clear refills them like anywhere else. A
+    /// caller that wants the whole board dealt again empties it first.
+    ///
+    /// The two failures are not the same failure. A board that opens mid-match
+    /// plays a little of itself before the player has touched it, which is
+    /// untidy; a board with no legal move on it is not a game at all. So the
+    /// first is worth a budget of attempts and is accepted when that runs out,
+    /// and the second is not accepted.
     fn deal(&mut self) {
-        for _ in 0..64 {
-            // Brick cells are open ground with something already standing on
-            // it, so they are dealt around rather than into.
-            let cells: Vec<Pos> =
-                self.board.positions().filter(|p| self.board.brick(*p) == 0 && self.board.is_open(*p)).collect();
-            for p in cells {
-                let mut color = 0;
-                // A handful of tries is enough to dodge a starting match; if
-                // the colors run out we accept it and let the shuffle catch it.
-                for _ in 0..12 {
-                    color = self.spec.rules.draw_color(&mut self.rng);
-                    if !self.would_start_a_shape(p, color) {
-                        break;
-                    }
-                }
-                self.board.set_gem(p, Some(Gem::plain(color)));
-            }
+        // Brick cells are open ground with something already standing on it,
+        // so they are dealt around rather than into.
+        let mine: Vec<Pos> = self
+            .board
+            .positions()
+            .filter(|p| {
+                self.board.brick(*p) == 0
+                    && self.board.is_open(*p)
+                    && self.board.gem(*p).is_none()
+            })
+            .collect();
+
+        for _ in 0..QUIET_DEAL_TRIES {
+            self.fill(&mine);
             if matching::find_matches(&self.board, &self.spec.rules).is_empty()
                 && matching::find_move(&self.board, &self.spec.rules).is_some()
             {
                 return;
             }
+        }
+        // The budget is spent, so an opening match is accepted: a level whose
+        // placed gems make one unavoidable should still be playable, and the
+        // board resolves it and carries on. A board with nothing to do is
+        // dealt again until there is something, which takes a pathological
+        // layout to need twice and is bounded so that one cannot hang the
+        // page. `every_level_opens_with_something_to_do` is what would catch
+        // such a layout, at build time rather than in front of a player.
+        for _ in 0..PLAYABLE_DEAL_TRIES {
+            if matching::find_move(&self.board, &self.spec.rules).is_some() {
+                return;
+            }
+            self.fill(&mine);
+        }
+    }
+
+    /// Deals a color into each of `cells`, in reading order.
+    fn fill(&mut self, cells: &[Pos]) {
+        for p in cells.iter().copied() {
+            let mut color = 0;
+            // A handful of tries is enough to dodge a starting match; if the
+            // colors run out we accept it and let the caller decide.
+            for _ in 0..12 {
+                color = self.spec.rules.draw_color(&mut self.rng);
+                if !self.would_start_a_shape(p, color) {
+                    break;
+                }
+            }
+            self.board.set_gem(p, Some(Gem::plain(color)));
         }
     }
 
@@ -1534,7 +1584,13 @@ impl Game {
             }
         }
         // Shuffling this set of gems cannot produce a playable board, so deal
-        // a fresh one rather than leaving the player stuck.
+        // a fresh one rather than leaving the player stuck. Emptied first,
+        // because a deal fills what is empty: this is the whole board being
+        // dealt again, and anything a layout placed belonged to the opening
+        // board rather than to this one.
+        for p in self.board.occupied() {
+            self.board.set_gem(p, None);
+        }
         self.deal();
     }
 
@@ -3870,6 +3926,69 @@ mod tests {
         game.try_swap(Pos::new(2, 0), Pos::new(2, 1));
         let _ = settle(&mut game);
         assert!(game.progress.jelly_left < 16, "the cleared cells should have lost a layer");
+    }
+
+    #[test]
+    fn a_layout_can_place_gems_and_the_deal_fills_around_them() {
+        // What a placed gem is for: an opening arrangement the level is
+        // designed around. The deal has to leave them where they are, or the
+        // arrangement is only whatever the seed felt like.
+        let mut level = spec(4, 4, 6, 10);
+        level.layout = Some(&["1.2.", "....", "....", "3.4."]);
+        for seed in 0..20 {
+            let game = Game::new(level.clone(), seed);
+            assert_eq!(game.board.gem(Pos::new(0, 0)).map(|g| g.color), Some(0));
+            assert_eq!(game.board.gem(Pos::new(0, 2)).map(|g| g.color), Some(1));
+            assert_eq!(game.board.gem(Pos::new(3, 0)).map(|g| g.color), Some(2));
+            assert_eq!(game.board.gem(Pos::new(3, 2)).map(|g| g.color), Some(3));
+            assert!(
+                game.board.positions().all(|p| game.board.gem(p).is_some()),
+                "the deal left a hole around the placed gems",
+            );
+        }
+    }
+
+    #[test]
+    fn a_placed_gem_is_the_opening_board_and_not_the_cell() {
+        // Once its cell is cleared it refills like any other. A cell that kept
+        // dealing one color would be a different thing entirely, and this is
+        // not that.
+        let mut level = spec(4, 4, 6, 10);
+        level.layout = Some(&["1111", "....", "....", "...."]);
+        let mut game = Game::new(level, 7);
+        for p in game.board.occupied() {
+            game.board.set_gem(p, None);
+        }
+        let rules = game.spec.rules.clone();
+        for _ in 0..16 {
+            if game.board.settle_stage(&rules, &mut game.rng).is_none() {
+                break;
+            }
+        }
+        assert!(
+            game.board.positions().all(|p| game.board.gem(p).is_some()),
+            "the board did not refill",
+        );
+        let top: Vec<u8> =
+            (0..4).filter_map(|c| game.board.gem(Pos::new(0, c)).map(|g| g.color)).collect();
+        assert!(
+            top.iter().any(|color| *color != 0),
+            "the placed row dealt itself again, so it is a property of the cells",
+        );
+    }
+
+    #[test]
+    fn a_board_is_never_dealt_without_a_move_on_it() {
+        // The one failure a deal may not accept. An opening match resolves
+        // itself and the level carries on; a board with nothing to do is not
+        // a game, and the player has no way out of it.
+        for seed in 0..200 {
+            let game = Game::new(spec(6, 6, 4, 20), seed);
+            assert!(
+                matching::find_move(&game.board, game.rules()).is_some(),
+                "seed {seed} opened with no legal move",
+            );
+        }
     }
 
     #[test]

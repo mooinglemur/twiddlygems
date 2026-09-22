@@ -583,6 +583,23 @@ that do the work, since a beam goes through brick rather than stopping at it.
 The top row is whole brick and the rest cracked, so breaking into the top row
 opens a new way in, that being where gems enter.
 
+**A layout is an ASCII sketch**, one string per row: `.` open and `#` wall,
+`o` and `O` for one layer of jelly and two, `=` and `-` for a whole brick and a
+cracked one, `A` to `H` and `a` to `h` for seals of a color, and `1` to `8` for
+a gem of a color placed before anything is dealt. Colors count from one in a
+sketch so that no digit can be misread as the `o` beside it.
+
+A placed gem is an opening arrangement and nothing more. The deal fills around
+it, but the first clear refills its cell at random like any other, because a
+cell that kept dealing one color would be a different feature wearing the same
+mark. Two tests hold the design side of it: a placed color the level never
+deals is a gem nothing can ever match, and a layout whose own gems already form
+a match opens mid-clear on every seed it will ever be played on. What the deal
+cannot control it accepts: if the placed gems leave it no way to avoid an
+opening match it takes one, since that resolves itself and the level carries
+on. A board with no legal move on it is the one thing it will not accept, and
+it deals again until there is one.
+
 That makes a constraint for anyone drawing a level: a cell is only ever fed from
 the three cells above it, so a solid block of wall three wide leaves the middle
 of the row beneath it fed by nothing at all. Put jelly there and the level
