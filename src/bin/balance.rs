@@ -16,6 +16,25 @@ use twiddlygems::board::{Pos, Special};
 use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
+use twiddlygems::progression::solo_inventory;
+
+/// The ladder as a solo run actually meets it: every level narrowed to the
+/// specials the levels below it have handed over.
+///
+/// Measuring it with everything switched on measures a game nobody plays. The
+/// opener is meant to leave nothing behind at all, and the rungs just above it
+/// are meant to be short of most of the pool, so those are the numbers that
+/// say whether the ladder can be climbed.
+fn ladder() -> Vec<LevelSpec> {
+    levels()
+        .into_iter()
+        .enumerate()
+        .map(|(index, mut spec)| {
+            solo_inventory(index).apply(&mut spec.rules);
+            spec
+        })
+        .collect()
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Bot {
@@ -35,6 +54,66 @@ fn main() {
     calibrate(Bot::First, 200);
     println!();
     calibrate(Bot::Greedy, 25);
+    println!();
+    if !in_logic(25) {
+        std::process::exit(1);
+    }
+}
+
+/// Whether the ladder can be climbed at all with what it hands over.
+///
+/// This is the completability check, and it is the one number here that is a
+/// gate rather than a reading. Every level has to be clearable holding only
+/// what the levels below it gave, or a run dead-ends with nothing to do. The
+/// greedy bot standing in for a player is generous, so a level it never wins
+/// is one nobody can, whatever the rest of the table says about difficulty.
+///
+/// The same claim has to hold on the Archipelago side, where it will be asked
+/// of received items rather than of the ladder. Both read the same inventory.
+fn in_logic(seeds: u64) -> bool {
+    println!("completable in logic: every level, with only what the ones below it gave");
+    let mut ok = true;
+    for (index, spec) in ladder().into_iter().enumerate() {
+        let wins = (0..seeds)
+            .filter(|seed| {
+                play(&spec, seed * 7919 + index as u64, Bot::Greedy).status() == Status::Won
+            })
+            .count();
+        let held = solo_inventory(index).specials();
+        if wins == 0 {
+            ok = false;
+        }
+        println!(
+            "{:<16} {:>4}/{:<4} {}  {}",
+            spec.name,
+            wins,
+            seeds,
+            if wins == 0 { "UNREACHABLE" } else { "ok         " },
+            describe(held),
+        );
+    }
+    if !ok {
+        println!();
+        println!("a level above cannot be cleared with what the ladder hands over before it");
+    }
+    ok
+}
+
+/// The specials a run holds, for the logic table.
+fn describe(held: twiddlygems::rules::SpecialSet) -> String {
+    let names = [
+        (held.line_h, "lineH"),
+        (held.line_v, "lineV"),
+        (held.cross, "cross"),
+        (held.rainbow, "rainbow"),
+        (held.rocket, "rocket"),
+    ];
+    let holding: Vec<&str> = names.iter().filter(|(on, _)| *on).map(|(_, name)| *name).collect();
+    if holding.is_empty() {
+        "holding nothing".to_string()
+    } else {
+        format!("holding {}", holding.join(" "))
+    }
 }
 
 /// What the greedy bot can reach with the whole move budget, which is the
@@ -55,7 +134,7 @@ fn calibrate(bot: Bot, seeds: u64) {
         "level", "moves", "used p50", "used p90", "reached with the full budget"
     );
 
-    for (index, spec) in levels().into_iter().enumerate() {
+    for (index, spec) in ladder().into_iter().enumerate() {
         let mut used: Vec<u32> = Vec::new();
         for seed in 0..seeds {
             let game = play(&spec, seed * 7919 + index as u64, bot);
@@ -125,7 +204,7 @@ fn specials_made(bot: Bot, seeds: u64) {
     let mut total_moves = 0u32;
     let mut all_spreads: Vec<u32> = Vec::new();
     let mut all_voices: Vec<u32> = Vec::new();
-    for (index, spec) in levels().into_iter().enumerate() {
+    for (index, spec) in ladder().into_iter().enumerate() {
         let mut made = [0u32; 6];
         let mut moves = 0u32;
         let mut spreads: Vec<u32> = Vec::new();
@@ -207,7 +286,7 @@ fn run(bot: Bot, seeds: u64) {
         "level", "moves", "win%", "used", "score", "objectives (reached / needed)"
     );
 
-    for (index, spec) in levels().into_iter().enumerate() {
+    for (index, spec) in ladder().into_iter().enumerate() {
         let moves = spec.moves;
         let mut wins = 0;
         let mut used_when_won: Vec<u32> = Vec::new();

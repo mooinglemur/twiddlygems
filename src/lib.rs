@@ -11,6 +11,7 @@ pub mod ffi;
 pub mod game;
 pub mod level;
 pub mod matching;
+pub mod progression;
 pub mod rng;
 pub mod rules;
 pub mod session;

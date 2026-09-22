@@ -171,6 +171,24 @@ export class Engine {
   get cascade() { return this.wasm.tg_cascade(this.handle); }
   get acceptsInput() { return this.wasm.tg_accepts_input(this.handle) === 1; }
   get levelIndex() { return this.wasm.tg_level_index(this.handle); }
+
+  /**
+   * Which specials this run may make, as a set of `Special` codes.
+   *
+   * Empty on a new run: matching still clears, it just leaves nothing behind.
+   * The unlocks arrive as items, in solo from clearing levels.
+   */
+  get unlockedSpecials() {
+    const mask = this.wasm.tg_unlocked_specials(this.handle);
+    return new Set(Object.values(Special).filter((code) => (mask >> code) & 1));
+  }
+
+  /** The special the level just cleared handed over, or null. */
+  get grantedSpecial() {
+    const code = this.wasm.tg_granted_special(this.handle);
+    return code === 255 ? null : code;
+  }
+
   get levelCount() { return this.wasm.tg_level_count(this.handle); }
   get unlocked() { return this.wasm.tg_unlocked(this.handle); }
 

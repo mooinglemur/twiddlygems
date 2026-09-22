@@ -423,7 +423,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
 // Play the opening level out with the engine's own hints, which is the only
 // way to reach the panel that appears when a level ends.
 {
-  const { Status } = await import(path.resolve('web/js/engine.js'));
+  const { Special, Status } = await import(path.resolve('web/js/engine.js'));
   const { engine } = window.twiddlygems;
   for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
     if (engine.acceptsInput) {
@@ -439,6 +439,20 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
   const overlay = elements.get('overlay');
   assert.ok(!overlay.classList.contains('hidden'), 'winning raised no panel');
+
+  // Clearing a level hands over an unlock, and the panel is where the player
+  // is told. Without this the board quietly starts making a new kind of gem
+  // and nothing anywhere says why.
+  assert.match(
+    elements.get('overlay-body').textContent,
+    /Unlocked: Vertical Line Clear, from four in a row\./,
+    'clearing the opening level announced no unlock',
+  );
+  assert.deepEqual(
+    [...engine.unlockedSpecials],
+    [Special.LINE_V],
+    'and exactly one thing should have opened up',
+  );
   assert.ok(
     grid.classList.contains('hidden'),
     'the finished-level panel is showing the level picker underneath its buttons',

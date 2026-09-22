@@ -34,8 +34,8 @@ through it. Neither knows what the board looks like, but between them they catch
 the faults that leave a blank page. `make shots` goes further and plays the game
 in a real headless Chrome over the DevTools Protocol, at phone and desktop sizes,
 writing screenshots to `shots/` and failing if the page threw anything. Set
-`SHOT_LEVEL` to photograph a later level. Level 1 has specials switched off, so
-it never shows one.
+`SHOT_LEVEL` to photograph a later level. A fresh run holds none of the special
+unlocks, so level 1 never shows one whichever level is photographed.
 
 (If you reach for `chrome --screenshot` instead, note that `--virtual-time-budget`
 freezes the compositor: `requestAnimationFrame` fires two or three times, the
@@ -94,6 +94,7 @@ src/
   matching.rs   run finding, special awards, and chain reactions
   level.rs      objectives and the built-in level ladder
   game.rs       input, the phase state machine, scoring, the snapshot
+  progression.rs  items, what holding one lets you do, and where solo finds them
   session.rs    the level ladder, what is unlocked, and dealing each board
   ffi.rs        the C ABI the page calls
 web/
@@ -122,11 +123,21 @@ nothing of anyone), and the second is close to an attentive player, and the only
 fair read on positional goals like jelly, which the floor bot can only clear by
 accident.
 
-As it stands the floor bot clears level 1 96% of the time and levels 4 and up
+Both bots play the ladder the way a run actually meets it, each level holding
+only the unlocks the levels below it handed over, because measuring it with
+every special switched on measures a game nobody plays.
+
+As it stands the floor bot clears level 1 99% of the time and levels 4 and up
 almost never, while the attentive bot clears everything, using a tenth of its
 moves on the opening levels and half to four fifths of them on the closing ones.
 Real players sit somewhere between the two, so these numbers bound the
 difficulty rather than fix it: the ladder still wants playtesting.
+
+The last table is the exception: it is a gate, not a reading. Every level has to
+be clearable holding only what came before it, or a run dead-ends with nothing
+left to do, and `make balance` exits non-zero if one is not. That is the same
+claim the Archipelago side has to hold to, asked here of the ladder and there of
+received items, of the same `Inventory`.
 
 ## The game
 
@@ -158,6 +169,16 @@ What a match leaves behind:
   is a run of four down a *column* that earns it.
 - **An L or a T** leaves a gem that takes a row and a column together.
 - **Five in a line** leaves a **rainbow**.
+
+None of which a new run can do. Each of the five is an **unlock**, and a run
+that holds none of them matches and clears normally and leaves nothing behind,
+which is how the opening level plays. Solo finds them by clearing levels, one
+per rung until the pool runs out; Archipelago will scatter the same five across
+a multiworld. They are separate items, including the two line clearers, so a
+run can spend a while able to finish four in a row and not four in a column.
+Levels themselves no longer switch specials off: a level says what belongs on
+it, the run says what it may make, and a match gets whatever survives both.
+That is why coming back to the opening level later plays differently.
 
 Specials are inert against ordinary gems. A line gem or a cross sits where it is
 until a match of its own color sweeps it up; shoving one against a plain gem
@@ -564,9 +585,13 @@ durations and brightness are measurable; character is not. Listen, then edit
 
 1. **A playable solo game.** Done: mechanics, levels, objectives, and the browser
    front end.
-2. **Solo progression gating and Archipelago.** `Session` is the seam: today it
-   unlocks the next level on a win, and it is where received items will decide
-   what may be played instead.
+2. **Solo progression gating and Archipelago.** Started. `progression.rs` holds
+   the item model and `Session` walks it; the five specials are unlocks now,
+   found by clearing levels in solo and delivered by the multiworld later. Both
+   sides fill the same `Inventory`, so "can this be cleared from here" is one
+   question asked of one thing. Still to come: progressive move counts, the
+   locations (chains, level clears, score tiers), the endgame scoring phase,
+   and emitting the apworld from the same tables.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles

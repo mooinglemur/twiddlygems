@@ -48,6 +48,26 @@ impl SpecialSet {
         SpecialSet { line_h: true, line_v: true, cross: true, rainbow: true, rocket: true };
     pub const NONE: SpecialSet =
         SpecialSet { line_h: false, line_v: false, cross: false, rainbow: false, rocket: false };
+
+    /// The specials both sets allow.
+    ///
+    /// A level says which specials it would ever hand out; a run says which it
+    /// has earned the right to make at all. What a match can leave behind is
+    /// whatever survives both.
+    pub fn intersect(self, other: SpecialSet) -> SpecialSet {
+        SpecialSet {
+            line_h: self.line_h && other.line_h,
+            line_v: self.line_v && other.line_v,
+            cross: self.cross && other.cross,
+            rainbow: self.rainbow && other.rainbow,
+            rocket: self.rocket && other.rocket,
+        }
+    }
+
+    /// Whether any special can be made at all.
+    pub fn is_empty(self) -> bool {
+        self == SpecialSet::NONE
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

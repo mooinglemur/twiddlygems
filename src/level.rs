@@ -1,6 +1,6 @@
 //! Level definitions and the objectives that end one.
 
-use crate::rules::{Rules, SpecialSet, MAX_COLORS};
+use crate::rules::{Rules, MAX_COLORS};
 
 /// A goal the player has to reach before the moves run out.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -143,10 +143,6 @@ impl LevelSpec {
         self
     }
 
-    fn specials(mut self, specials: SpecialSet) -> Self {
-        self.rules.specials = specials;
-        self
-    }
 }
 
 // A layout declares its own size, so these are the board on the levels that
@@ -272,9 +268,10 @@ pub fn levels() -> Vec<LevelSpec> {
     vec![
         // Wide-open boards with few colors: matches fall into your lap while
         // you learn that swapping is all there is to it.
-        LevelSpec::new("First Light", 20, vec![Objective::Score(4_000)])
-            .colors(5)
-            .specials(SpecialSet::NONE),
+        // Nothing is switched off here any more: a new run simply holds none
+        // of the unlocks yet, so the opener plays as plain matching on its
+        // own. Come back to it later and it hands out specials like the rest.
+        LevelSpec::new("First Light", 20, vec![Objective::Score(4_000)]).colors(5),
         LevelSpec::new("Finding Fours", 22, vec![Objective::Score(7_000)]).colors(5),
         // Color goals ask you to aim rather than to clear whatever is nearest.
         LevelSpec::new("Ruby Hunt", 22, vec![Objective::Color { color: 0, count: 30 }]).colors(5),

@@ -16,8 +16,9 @@
 //! behavior. Null is tolerated and returns a neutral value so a front-end bug
 //! cannot trap the module.
 
-use crate::board::Pos;
+use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
+use crate::progression::Item;
 use crate::session::Session;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
@@ -315,6 +316,41 @@ pub unsafe extern "C" fn tg_cascade(handle: *const Handle) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn tg_accepts_input(handle: *const Handle) -> u32 {
     session!(handle, 0).session.game().accepts_input() as u32
+}
+
+/// Which specials the run may make, as a bitmask indexed by [`Special`]'s own
+/// codes: bit 1 is `LineH`, bit 5 is `Rocket`. Bit 0 is never set.
+///
+/// A mask rather than a call per special, because the front end wants the
+/// whole set at once and this way a sixth special costs nothing at the
+/// boundary.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_unlocked_specials(handle: *const Handle) -> u32 {
+    let set = session!(handle, 0).session.inventory().specials();
+    let held = [
+        (set.line_h, Special::LineH),
+        (set.line_v, Special::LineV),
+        (set.cross, Special::Cross),
+        (set.rainbow, Special::Rainbow),
+        (set.rocket, Special::Rocket),
+    ];
+    held.iter().filter(|(on, _)| *on).map(|(_, s)| 1u32 << s.code()).sum()
+}
+
+/// The special that clearing the current level handed over, as its own code,
+/// or 255 when it gave nothing new. Cleared as soon as another level is dealt.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_granted_special(handle: *const Handle) -> u32 {
+    match session!(handle, 255).session.granted() {
+        Some(Item::Unlock(special)) => special.code() as u32,
+        None => 255,
+    }
 }
 
 /// A legal move packed as `r1 << 24 | c1 << 16 | r2 << 8 | c2`, or `u32::MAX`

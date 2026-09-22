@@ -1,8 +1,19 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { ObjectiveKind, Status } from './engine.js';
+import { ObjectiveKind, Special, Status } from './engine.js';
 import { PALETTE } from './render.js';
+
+/// What each special is called, and the match that leaves one behind. The
+/// second half is the point: an unlock is being announced to someone who has
+/// never seen that gem, so it says how to make one.
+const SPECIALS = {
+  [Special.LINE_H]: { name: 'Horizontal Line Clear', from: 'four in a column' },
+  [Special.LINE_V]: { name: 'Vertical Line Clear', from: 'four in a row' },
+  [Special.CROSS]: { name: 'Cross Clear', from: 'an L or a T' },
+  [Special.RAINBOW]: { name: 'Rainbow', from: 'five in a line' },
+  [Special.ROCKET]: { name: 'Rocket', from: 'a 2x2 square' },
+};
 
 export class Hud {
   constructor(engine, dom) {
@@ -98,9 +109,17 @@ export class Hud {
         ? 'Ladder complete'
         : 'Level complete'
       : 'Out of moves';
-    dom.overlayBody.textContent = won
-      ? `${Math.round(engine.score).toLocaleString()} points on ${engine.levelName}.`
-      : unmetSummary(engine);
+    const lines = [];
+    if (won) {
+      lines.push(`${Math.round(engine.score).toLocaleString()} points on ${engine.levelName}.`);
+      const granted = SPECIALS[engine.grantedSpecial];
+      if (granted) {
+        lines.push(`Unlocked: ${granted.name}, from ${granted.from}.`);
+      }
+    } else {
+      lines.push(unmetSummary(engine));
+    }
+    dom.overlayBody.textContent = lines.join(' ');
 
     const buttons = [];
     if (won && !lastLevel) {
