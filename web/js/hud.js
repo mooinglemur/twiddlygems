@@ -116,9 +116,10 @@ export class Hud {
     const lines = [];
     if (won) {
       lines.push(`${Math.round(engine.score).toLocaleString()} points on ${engine.levelName}.`);
-      const granted = SPECIALS[engine.grantedSpecial];
+      const granted = engine.granted && this.describeItem(engine.granted);
       if (granted) {
-        lines.push(`Unlocked: ${granted.name}, from ${granted.from}.`);
+        const [said, what, how] = granted;
+        lines.push(how ? `${said}${what}, ${how}.` : `${said}${what}.`);
       }
     } else {
       lines.push(unmetSummary(engine));
@@ -237,11 +238,23 @@ export class Hud {
     this.dom.feed.replaceChildren();
   }
 
-  /** Says what an item was, for the feed. Unknown items still get a line. */
-  describeItem(event) {
-    if (event.color === ItemKind.UNLOCK) {
-      const special = SPECIALS[event.value];
-      return special ? ['Unlocked ', special.name] : null;
+  /**
+   * Says what an item was, as the words around it and the item's own name.
+   *
+   * Takes `{ kind, value }`, which is what both the event stream and the
+   * engine's last grant hand over, so the feed and the end-of-level panel say
+   * the same thing about the same item. Anything unrecognized gets no line
+   * rather than a wrong one.
+   */
+  describeItem({ kind, value }) {
+    if (kind === ItemKind.UNLOCK) {
+      const special = SPECIALS[value];
+      return special ? ['Unlocked ', special.name, `from ${special.from}`] : null;
+    }
+    if (kind === ItemKind.MOVES) {
+      // Named the way Archipelago will name it, so the feed reads the same
+      // whichever side sent it.
+      return ['Received ', `Level ${value + 1} Progressive Moves`, null];
     }
     return null;
   }

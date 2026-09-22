@@ -18,7 +18,6 @@
 
 use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
-use crate::progression::Item;
 use crate::session::Session;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
@@ -28,6 +27,9 @@ pub const EVENT_SIZE: usize = 8;
 pub struct Handle {
     session: Session,
     events: Vec<u8>,
+    /// Scratch for [`tg_checked_ptr`], which has to hand out a pointer to
+    /// something that outlives the call.
+    checked: Vec<u8>,
 }
 
 /// Creates a session. The seed is passed as two halves because wasm's JS
@@ -38,7 +40,8 @@ pub struct Handle {
 #[no_mangle]
 pub extern "C" fn tg_create(seed_lo: u32, seed_hi: u32) -> *mut Handle {
     let seed = ((seed_hi as u64) << 32) | seed_lo as u64;
-    let handle = Box::new(Handle { session: Session::new(seed), events: Vec::new() });
+    let handle =
+        Box::new(Handle { session: Session::new(seed), events: Vec::new(), checked: Vec::new() });
     Box::into_raw(handle)
 }
 
@@ -340,17 +343,58 @@ pub unsafe extern "C" fn tg_unlocked_specials(handle: *const Handle) -> u32 {
     held.iter().filter(|(on, _)| *on).map(|(_, s)| 1u32 << s.code()).sum()
 }
 
-/// The special that clearing the current level handed over, as its own code,
-/// or 255 when it gave nothing new. Cleared as soon as another level is dealt.
+/// The item the current level's clear handed over, packed as
+/// `kind << 16 | value`, or `u32::MAX` when it gave nothing. Cleared as soon
+/// as another level is dealt.
 ///
 /// # Safety
 /// `handle` must come from [`tg_create`].
 #[no_mangle]
-pub unsafe extern "C" fn tg_granted_special(handle: *const Handle) -> u32 {
-    match session!(handle, 255).session.granted() {
-        Some(Item::Unlock(special)) => special.code() as u32,
-        None => 255,
+pub unsafe extern "C" fn tg_granted(handle: *const Handle) -> u32 {
+    match session!(handle, u32::MAX).session.granted() {
+        Some(item) => ((item.kind() as u32) << 16) | item.value() as u32,
+        None => u32::MAX,
     }
+}
+
+/// Which locations this run has already checked, as little-endian `u32` ids.
+///
+/// Written into the save, so a returning run keeps what it found and stays
+/// unable to find it twice. The pointer is only good until the next call.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_checked_ptr(handle: *mut Handle) -> *const u8 {
+    let handle = session_mut!(handle, std::ptr::null());
+    handle.checked.clear();
+    for id in handle.session.checked() {
+        handle.checked.extend_from_slice(&id.to_le_bytes());
+    }
+    handle.checked.as_ptr()
+}
+
+/// How many ids [`tg_checked_ptr`] has to offer.
+///
+/// Read from the run rather than from the buffer that call fills, so the two
+/// can be asked in either order.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_checked_len(handle: *const Handle) -> u32 {
+    session!(handle, 0).session.checked().len() as u32
+}
+
+/// Hands back a location the run had checked before, rebuilding what it was
+/// worth. Quiet: restoring a save should not replay every item through the
+/// feed. Ids nothing recognizes are ignored.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_restore(handle: *mut Handle, id: u32) {
+    session_mut!(handle, ()).session.restore(id);
 }
 
 /// A legal move packed as `r1 << 24 | c1 << 16 | r2 << 8 | c2`, or `u32::MAX`

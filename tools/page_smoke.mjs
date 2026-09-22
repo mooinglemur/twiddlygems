@@ -345,8 +345,13 @@ outer: for (let r = 0; r < 8 && !scored; r += 1) {
   }
 }
 assert.ok(scored, 'no swipe anywhere on the board ever scored a point');
-const movesAfterPlay = Number(elements.get('moves').textContent);
-assert.ok(movesAfterPlay < 20, 'a scoring swap did not cost a move');
+// Spent rather than remaining: a chain along the way can hand the run a moves
+// item, which raises the budget and the counter together, so the number on
+// screen is not required to have gone down.
+assert.ok(
+  window.twiddlygems.engine.movesTotal - window.twiddlygems.engine.movesLeft > 0,
+  'a scoring swap did not cost a move',
+);
 
 // The hint button has to produce a highlight without throwing.
 dispatch('hint-button', 'click', {});
@@ -356,7 +361,15 @@ pump(2);
 dispatch('retry-button', 'click', {});
 pump(5);
 assert.equal(elements.get('score').textContent, '0', 'restarting did not reset the score on screen');
-assert.equal(elements.get('moves').textContent, '20', 'restarting did not restore the moves');
+{
+  const { engine } = window.twiddlygems;
+  assert.equal(engine.movesLeft, engine.movesTotal, 'restarting did not restore the moves');
+  assert.equal(
+    elements.get('moves').textContent,
+    String(engine.movesTotal),
+    'the counter on screen disagrees with the engine',
+  );
+}
 
 // Sound is off by default here (the stub has no AudioContext), but the button
 // must still toggle without throwing and must remember the choice.
@@ -471,7 +484,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // and nothing anywhere says why.
   assert.match(
     elements.get('overlay-body').textContent,
-    /Unlocked: Vertical Line Clear, from four in a row\./,
+    /Unlocked Vertical Line Clear, from four in a row\./,
     'clearing the opening level announced no unlock',
   );
   assert.deepEqual(
@@ -484,11 +497,37 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // the Archipelago feed will go. It reads the event stream rather than asking
   // the engine what it holds, so a multiworld item lands the same way.
   const feed = elements.get('feed');
-  assert.equal(feed.children.length, 1, 'the unlock never reached the item feed');
-  assert.equal(
-    feed.children[0].children.map((part) => part.textContent ?? part).join(''),
-    'Unlocked Vertical Line Clear',
+  const lines = feed.children.map((line) =>
+    line.children.map((part) => part.textContent ?? part).join(''),
   );
+  assert.ok(
+    lines.includes('Unlocked Vertical Line Clear'),
+    `the unlock never reached the item feed, which holds ${JSON.stringify(lines)}`,
+  );
+  // A chain along the way pays too, so the feed is not only ever the unlock.
+  assert.ok(
+    lines.every((line) => /^(Unlocked|Received) \S/.test(line)),
+    `the feed has a line it cannot name: ${JSON.stringify(lines)}`,
+  );
+
+  // What the run has found goes in the save. Without it a reload keeps the
+  // levels a player unlocked and quietly takes back everything they earned on
+  // the way, which is worse than losing both.
+  const saved = JSON.parse(store.get(SAVE_KEY));
+  assert.ok(Array.isArray(saved.checked), 'the save does not record what was found');
+  assert.ok(saved.checked.length > 0, 'clearing a level was not written down');
+
+  // Handing those back rebuilds the run, quietly: restoring is not finding.
+  const restored = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, 1);
+  for (const id of saved.checked) {
+    restored.restore(id);
+  }
+  assert.deepEqual(
+    [...restored.unlockedSpecials],
+    [...engine.unlockedSpecials],
+    'a restored run does not hold what the saved one did',
+  );
+  assert.equal(restored.granted, null, 'restoring looked like a fresh find');
   assert.ok(
     grid.classList.contains('hidden'),
     'the finished-level panel is showing the level picker underneath its buttons',

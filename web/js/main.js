@@ -43,7 +43,7 @@ const dom = {
 
 /** Progress lives in the browser; the engine is told about it on start. */
 function readSave() {
-  const fallback = { seed: freshSeed(), unlocked: 1, level: 0 };
+  const fallback = { seed: freshSeed(), unlocked: 1, level: 0, checked: [] };
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) {
@@ -54,6 +54,7 @@ function readSave() {
       seed: Number.isFinite(save.seed) ? save.seed : fallback.seed,
       unlocked: Number.isInteger(save.unlocked) ? save.unlocked : 1,
       level: Number.isInteger(save.level) ? save.level : 0,
+      checked: Array.isArray(save.checked) ? save.checked.filter(Number.isInteger) : [],
     };
   } catch (error) {
     // A corrupt or unavailable store should cost a save, not the game.
@@ -66,7 +67,15 @@ function writeSave(engine, seed) {
   try {
     window.localStorage.setItem(
       SAVE_KEY,
-      JSON.stringify({ seed, unlocked: engine.unlocked, level: engine.levelIndex }),
+      JSON.stringify({
+        seed,
+        unlocked: engine.unlocked,
+        level: engine.levelIndex,
+        // What the run has found. Without these a reload keeps the levels a
+        // player unlocked and quietly takes back everything they earned on
+        // the way, which is worse than losing both.
+        checked: engine.checked,
+      }),
     );
   } catch (error) {
     console.warn('could not save progress', error);
@@ -107,6 +116,11 @@ async function boot() {
 
   hud.engine = engine;
   engine.setUnlocked(save.unlocked);
+  // Before the level is loaded, so it opens holding what the run had earned
+  // rather than being dealt bare and corrected a moment later.
+  for (const id of save.checked) {
+    engine.restore(id);
+  }
   if (save.level > 0) {
     engine.loadLevel(save.level);
   }
@@ -226,7 +240,7 @@ async function boot() {
       if (event.kind !== EventKind.ITEM) {
         continue;
       }
-      const said = hud.describeItem(event);
+      const said = hud.describeItem({ kind: event.color, value: event.value });
       if (said) {
         hud.logItem(said[0], said[1]);
         audio.play('sparkle');

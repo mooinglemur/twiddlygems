@@ -30,7 +30,7 @@ fn ladder() -> Vec<LevelSpec> {
         .into_iter()
         .enumerate()
         .map(|(index, mut spec)| {
-            solo_inventory(index).apply(&mut spec.rules);
+            solo_inventory(index).apply(index, &mut spec);
             spec
         })
         .collect()
@@ -84,11 +84,12 @@ fn in_logic(seeds: u64) -> bool {
             ok = false;
         }
         println!(
-            "{:<16} {:>4}/{:<4} {}  {}",
+            "{:<16} {:>4}/{:<4} {} {:>3} moves, {}",
             spec.name,
             wins,
             seeds,
             if wins == 0 { "UNREACHABLE" } else { "ok         " },
+            spec.moves,
             describe(held),
         );
     }

@@ -94,7 +94,7 @@ src/
   matching.rs   run finding, special awards, and chain reactions
   level.rs      objectives and the built-in level ladder
   game.rs       input, the phase state machine, scoring, the snapshot
-  progression.rs  items, what holding one lets you do, and where solo finds them
+  progression.rs  items, locations, what holding one lets you do, and where solo finds them
   session.rs    the level ladder, what is unlocked, and dealing each board
   ffi.rs        the C ABI the page calls
 web/
@@ -179,6 +179,29 @@ run can spend a while able to finish four in a row and not four in a column.
 Levels themselves no longer switch specials off: a level says what belongs on
 it, the run says what it may make, and a match gets whatever survives both.
 That is why coming back to the opening level later plays differently.
+
+The other item is **progressive moves**, which add to one named level's budget.
+Several can land on the same level and each adds again, and what one is worth
+is a quarter of that level's own budget rather than a flat number, so an item
+means about as much on a forty move level as on a sixteen. They are never
+needed to clear anything: every level has to be beatable on its own budget or
+the ladder dead-ends, so what they buy is a better run at one rather than a
+first clear. One arriving mid level goes straight on the counter in front of
+the player, because an item that did nothing for the level it was sent to would
+not be much of an item.
+
+Items are found at **locations**: clearing each level, and reaching a chain of
+each length from two to twelve. The opening level clears hold the unlocks;
+every clear past those is worth more room on that same level, and the short
+chains carry the move items for the levels the unlocks took, so nothing on the
+ladder is cleared for nothing. A location pays once, which is why the run
+writes down which it has checked, and why the save carries that list: reloading
+has to leave a run holding what it held, and still unable to find it again.
+
+Logic counts level clears and nothing else. Reaching a level means clearing
+every level below it, so those items are guaranteed; a chain is not, since
+nobody is owed a five long one. The claim has to hold for the player who never
+made one.
 
 Items arrive as events on the same stream the board raises, and the **item
 feed** above the board is what reads them: two lines on a phone, four on a
@@ -593,12 +616,13 @@ durations and brightness are measurable; character is not. Listen, then edit
 1. **A playable solo game.** Done: mechanics, levels, objectives, and the browser
    front end.
 2. **Solo progression gating and Archipelago.** Started. `progression.rs` holds
-   the item model and `Session` walks it; the five specials are unlocks now,
-   found by clearing levels in solo and delivered by the multiworld later. Both
-   sides fill the same `Inventory`, so "can this be cleared from here" is one
-   question asked of one thing. Still to come: progressive move counts, the
-   locations (chains, level clears, score tiers), the endgame scoring phase,
-   and emitting the apworld from the same tables.
+   the items, the locations and the placement between them, and `Session` walks
+   it; the five specials are unlocks and each level's move budget can be topped
+   up, found by clearing levels and making chains in solo and delivered by the
+   multiworld later. Both sides fill the same `Inventory`, so "can this be
+   cleared from here" is one question asked of one thing. Still to come: the
+   score tiers and the endgame scoring phase that makes them worth chasing, the
+   trap and usable items, and emitting the apworld from the same tables.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles

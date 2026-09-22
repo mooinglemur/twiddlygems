@@ -6,7 +6,7 @@
 
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
-use crate::progression::{solo_grant, Inventory, Item};
+use crate::progression::{solo_item_at, Inventory, Item, Location, LONGEST_CHAIN, SHORTEST_CHAIN};
 use crate::rng::Rng;
 
 pub struct Session {
@@ -29,6 +29,13 @@ pub struct Session {
     /// What the run has been given. A solo run finds it by clearing levels;
     /// under Archipelago the same inventory is filled from the multiworld.
     inventory: Inventory,
+    /// Locations this run has already checked, by id.
+    ///
+    /// The record that stops a location paying twice, which matters now that
+    /// move items stack: without it, reaching a three long chain again would
+    /// keep handing moves over. Written into the save so a returning run keeps
+    /// what it found, and keeps not being able to find it again.
+    checked: Vec<u32>,
     /// The item the level just cleared handed over, if it was new. Read by the
     /// front end to say so, and cleared the moment another level is dealt.
     granted: Option<Item>,
@@ -49,12 +56,13 @@ impl Session {
         // however much its own rules would otherwise allow.
         let inventory = Inventory::empty();
         let mut session = Session {
-            game: open_level(first, &inventory, deal.next_u64()),
+            game: open_level(0, first, &inventory, deal.next_u64()),
             levels: levels.clone(),
             index: 0,
             unlocked: 1,
             deal,
             inventory,
+            checked: Vec::new(),
             granted: None,
             events: Vec::new(),
             name_buf: Vec::new(),
@@ -137,7 +145,7 @@ impl Session {
     /// whatever the run holds by now.
     fn deal_level(&mut self) {
         let seed = self.deal.next_u64();
-        self.game = open_level(&self.levels[self.index], &self.inventory, seed);
+        self.game = open_level(self.index, &self.levels[self.index], &self.inventory, seed);
         self.granted = None;
         self.sync_name();
     }
@@ -163,6 +171,7 @@ impl Session {
         let is_new = self.inventory.receive(item);
         if is_new {
             self.refresh_specials();
+            self.refresh_moves();
             self.events.push(Event::about_item(EV_ITEM, item.kind(), item.value()));
         }
         is_new
@@ -182,21 +191,81 @@ impl Session {
     /// intersecting them with a larger inventory can only ever take more away:
     /// an item would arrive and change nothing.
     fn refresh_specials(&mut self) {
-        let mut rules = self.levels[self.index].rules;
-        self.inventory.apply(&mut rules);
-        self.game.spec.rules.specials = rules.specials;
+        let mut spec = self.levels[self.index].clone();
+        self.inventory.apply(self.index, &mut spec);
+        self.game.spec.rules.specials = spec.rules.specials;
     }
 
-    /// Collects what the level just cleared is holding.
+    /// Re-derives the level's move budget, handing the player the difference.
     ///
-    /// Idempotent, because it runs on every frame the board sits won: taking
-    /// the same unlock again changes nothing, and only the first time counts
-    /// as news.
-    fn collect_clear_reward(&mut self) {
-        if let Some(item) = solo_grant(self.index) {
+    /// A moves item that arrives during a level is worth its moves in that
+    /// level, so what it adds goes on the counter in front of the player as
+    /// well as on the budget. Anything already spent stays spent.
+    fn refresh_moves(&mut self) {
+        let mut spec = self.levels[self.index].clone();
+        self.inventory.apply(self.index, &mut spec);
+        let extra = spec.moves.saturating_sub(self.game.spec.moves);
+        self.game.spec.moves = spec.moves;
+        self.game.moves_left += extra;
+    }
+
+    /// Takes whatever is at a location, once and once only.
+    ///
+    /// Has to run every frame a board sits won and every frame a chain stands
+    /// at its longest, so the record of what has been checked is what keeps it
+    /// honest rather than the caller being careful.
+    fn check(&mut self, location: Location) {
+        let id = location.id();
+        if self.checked.contains(&id) {
+            return;
+        }
+        self.checked.push(id);
+        if let Some(item) = solo_item_at(location) {
             if self.receive(item) {
                 self.granted = Some(item);
             }
+        }
+    }
+
+    /// Which locations this run has checked, for writing down.
+    pub fn checked(&self) -> &[u32] {
+        &self.checked
+    }
+
+    /// Hands a run back a location it had already checked, rebuilding what it
+    /// was worth without announcing it again.
+    ///
+    /// The quiet half of [`Session::check`]: restoring a save should leave the
+    /// run holding what it held, not replay every item it ever found through
+    /// the feed. Unknown ids are ignored, which is what a save written by a
+    /// later version looks like from here.
+    pub fn restore(&mut self, id: u32) {
+        let Some(location) = Location::from_id(id) else { return };
+        if let Location::LevelClear(index) = location {
+            if index >= self.levels.len() {
+                return;
+            }
+        }
+        if self.checked.contains(&id) {
+            return;
+        }
+        self.checked.push(id);
+        if let Some(item) = solo_item_at(location) {
+            self.inventory.receive(item);
+        }
+        self.refresh_specials();
+        self.refresh_moves();
+    }
+
+    /// Checks whatever the board has earned this frame.
+    fn check_reached(&mut self) {
+        if self.game.status() == Status::Won {
+            self.check(Location::LevelClear(self.index));
+        }
+        // A chain that got to five got to two, three and four on the way.
+        let reached = self.game.cascade().min(LONGEST_CHAIN);
+        for length in SHORTEST_CHAIN..=reached {
+            self.check(Location::Chain(length));
         }
     }
 
@@ -207,8 +276,8 @@ impl Session {
         self.game.update(dt_ms);
         if self.game.status() == Status::Won {
             self.unlocked = self.unlocked.max((self.index + 2).min(self.levels.len()));
-            self.collect_clear_reward();
         }
+        self.check_reached();
     }
 
     pub fn game_mut(&mut self) -> &mut Game {
@@ -225,9 +294,9 @@ impl Session {
 ///
 /// The one place a [`Game`] is built from a [`LevelSpec`], so there is nowhere
 /// for a level to be started with more than the run has earned.
-fn open_level(spec: &LevelSpec, inventory: &Inventory, seed: u64) -> Game {
+fn open_level(index: usize, spec: &LevelSpec, inventory: &Inventory, seed: u64) -> Game {
     let mut spec = spec.clone();
-    inventory.apply(&mut spec.rules);
+    inventory.apply(index, &mut spec);
     Game::new(spec, seed)
 }
 
@@ -298,6 +367,96 @@ mod tests {
         force_win(&mut session);
         assert_eq!(session.granted(), None, "the second clear had nothing left to give");
         assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "and it kept the first");
+    }
+
+    #[test]
+    fn a_chain_checks_its_location_and_pays_once() {
+        // Two deep turns up by itself soon enough: a clear that drops gems
+        // into another match.
+        let mut session = Session::new(11);
+        let chain = Location::Chain(SHORTEST_CHAIN).id();
+        for _ in 0..4000 {
+            if session.checked().contains(&chain) {
+                break;
+            }
+            if session.game().phase() == Phase::Idle && session.game().status() == Status::Playing {
+                if let Some((a, b)) = session.game().hint() {
+                    session.game_mut().try_swap(a, b);
+                }
+            }
+            session.update(16.0);
+        }
+        assert!(session.checked().contains(&chain), "no chain was ever registered");
+        assert_eq!(
+            session.inventory().moves_found(0),
+            1,
+            "the chain should have paid what the table says",
+        );
+
+        // And it is spent. Playing on, chains of two keep happening, and none
+        // of them is worth anything a second time.
+        for _ in 0..2000 {
+            if session.game().phase() == Phase::Idle && session.game().status() == Status::Playing {
+                if let Some((a, b)) = session.game().hint() {
+                    session.game_mut().try_swap(a, b);
+                }
+            }
+            session.update(16.0);
+        }
+        assert_eq!(session.inventory().moves_found(0), 1, "the location paid out twice");
+    }
+
+    #[test]
+    fn a_restored_location_rebuilds_what_it_gave_without_announcing_it() {
+        // Coming back to a run has to leave it holding what it held. Replaying
+        // the finds through the feed would be a wall of news about nothing.
+        let mut session = Session::new(7);
+        session.restore(Location::LevelClear(0).id());
+        session.restore(Location::Chain(SHORTEST_CHAIN).id());
+
+        assert!(session.inventory().has(Item::Unlock(UNLOCKS[0])), "the unlock did not come back");
+        assert_eq!(session.inventory().moves_found(0), 1, "the moves did not come back");
+        assert!(session.events().is_empty(), "restoring announced itself");
+        assert_eq!(session.granted(), None, "restoring looked like a fresh find");
+        assert_eq!(
+            session.game().rules().specials,
+            SpecialSet { line_v: true, ..SpecialSet::NONE },
+            "and the board in play should be what the restored run may do",
+        );
+    }
+
+    #[test]
+    fn a_restored_location_cannot_be_found_again() {
+        let mut session = Session::new(7);
+        let chain = Location::Chain(SHORTEST_CHAIN).id();
+        session.restore(chain);
+        session.restore(chain);
+        assert_eq!(session.inventory().moves_found(0), 1, "restoring twice paid twice");
+        assert_eq!(session.checked(), [chain], "and it was written down twice");
+    }
+
+    #[test]
+    fn a_save_from_somewhere_else_is_ignored_rather_than_believed() {
+        let mut session = Session::new(7);
+        session.restore(9_999);
+        session.restore(Location::LevelClear(session.level_count() + 5).id());
+        assert!(session.checked().is_empty(), "an id from nowhere was taken as a location");
+        assert!(session.inventory().specials().is_empty());
+    }
+
+    #[test]
+    fn moves_arriving_during_a_level_go_on_the_counter_in_front_of_the_player() {
+        // What a multiworld delivering mid level looks like. Waiting until the
+        // next deal would mean an item that does nothing for the level it was
+        // sent to.
+        let mut session = Session::new(7);
+        let before = session.game().moves_left;
+        let budget = session.game().spec.moves;
+
+        assert!(session.receive(Item::Moves { level: 0 }));
+        let step = crate::progression::move_step(budget);
+        assert_eq!(session.game().moves_left, before + step);
+        assert_eq!(session.game().spec.moves, budget + step, "and the budget grew with it");
     }
 
     #[test]

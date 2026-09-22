@@ -60,7 +60,7 @@ export const EventKind = {
 };
 
 /// What sort of item an `EventKind.ITEM` is about.
-export const ItemKind = { UNLOCK: 0 };
+export const ItemKind = { UNLOCK: 0, MOVES: 1 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
@@ -160,7 +160,10 @@ export class Engine {
 
   /** A legal move as `[r1, c1, r2, c2]`, or null when the board is stuck. */
   hint() {
-    const packed = this.wasm.tg_hint(this.handle);
+    // `>>> 0` because wasm hands an i32 back signed: the engine's `u32::MAX`
+    // arrives as -1, and comparing that to 0xffffffff is never true. Without
+    // it a stuck board answers with the cell (255, 255), which is nowhere.
+    const packed = this.wasm.tg_hint(this.handle) >>> 0;
     if (packed === 0xffffffff) {
       return null;
     }
@@ -189,10 +192,35 @@ export class Engine {
     return new Set(Object.values(Special).filter((code) => (mask >> code) & 1));
   }
 
-  /** The special the level just cleared handed over, or null. */
-  get grantedSpecial() {
-    const code = this.wasm.tg_granted_special(this.handle);
-    return code === 255 ? null : code;
+  /**
+   * The item the level just cleared handed over, as `{ kind, value }`, or
+   * null. Same shape as an `EventKind.ITEM` carries, so one description
+   * function serves both.
+   */
+  get granted() {
+    // See `hint` for the `>>> 0`: an i32 comes back signed.
+    const packed = this.wasm.tg_granted(this.handle) >>> 0;
+    return packed === 0xffffffff ? null : { kind: packed >>> 16, value: packed & 0xffff };
+  }
+
+  /**
+   * Which locations this run has checked, as ids to write into a save.
+   *
+   * Opaque numbers on purpose: what each one is worth is the engine's business
+   * and will be the multiworld's later. The page only has to hand them back.
+   */
+  get checked() {
+    const count = this.wasm.tg_checked_len(this.handle);
+    const ptr = this.wasm.tg_checked_ptr(this.handle);
+    if (count === 0) {
+      return [];
+    }
+    return [...new Uint32Array(this.memory.buffer, ptr, count)];
+  }
+
+  /** Hands one back on load, rebuilding what it gave without announcing it. */
+  restore(id) {
+    this.wasm.tg_restore(this.handle, id);
   }
 
   get levelCount() { return this.wasm.tg_level_count(this.handle); }
