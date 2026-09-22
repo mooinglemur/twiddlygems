@@ -156,6 +156,12 @@ for (const [name, metrics] of [
   await send('Page.navigate', { url: `http://127.0.0.1:${PORT}/index.html` });
   await sleep(2200);
 
+  // The game opens on its menu now, so that gets photographed and then
+  // dismissed: nothing below can reach the board until a mode is chosen.
+  await shoot(`${name}-00-title`);
+  await evaluate(`document.getElementById('solo-button').click()`);
+  await sleep(400);
+
   const box = await evaluate(`
     (() => {
       const r = document.getElementById('board').getBoundingClientRect();

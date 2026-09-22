@@ -145,7 +145,29 @@ export class Hud {
 
     dom.levelGrid.replaceChildren(...chips);
     dom.levelGrid.classList.remove('hidden');
-    dom.overlayButtons.replaceChildren(button('Close', actions.onClose, true));
+    dom.overlayButtons.replaceChildren(
+      button('Close', actions.onClose, true),
+      button('Title screen', actions.onQuit, false),
+    );
+    dom.overlay.classList.remove('hidden');
+  }
+
+  /**
+   * Quitting throws the run away, so it asks first. The harmless answer is the
+   * primary one and comes first, because this is reached from a menu rather
+   * than from a deliberate "wipe my progress" button.
+   */
+  confirmQuit(actions) {
+    const { engine, dom } = this;
+    dom.overlayTitle.textContent = 'Back to the title screen?';
+    dom.overlayBody.textContent =
+      `This ends the run. All ${engine.unlocked} unlocked levels go back to just the first, ` +
+      'and the next run deals fresh boards.';
+    dom.levelGrid.classList.add('hidden');
+    dom.overlayButtons.replaceChildren(
+      button('Keep playing', actions.onCancel, true),
+      button('End the run', actions.onConfirm, false),
+    );
     dom.overlay.classList.remove('hidden');
   }
 

@@ -150,7 +150,9 @@ button[disabled] { opacity: 0.4; cursor: default; }
   padding: 20px;
   z-index: 10;
 }
-#overlay.hidden, .hidden { display: none; }
+/* The id selectors below set `display`, so hiding them needs the same weight:
+   a bare `.hidden` loses to `#title` and the panel stays on screen. */
+#overlay.hidden, #title.hidden, .hidden { display: none; }
 
 #overlay-card {
   background: var(--panel);
@@ -176,6 +178,43 @@ button[disabled] { opacity: 0.4; cursor: default; }
 .level-chip .n { font-size: 0.7rem; color: var(--ink-dim); }
 .level-chip .t { font-weight: 600; font-size: 0.82rem; }
 .level-chip.current { outline: 2px solid var(--accent); }
+
+/* ---- title screen ---- */
+
+/* Opaque rather than a scrim: the board is laid out underneath so the canvas
+   sizes itself correctly, but there is nothing to see there yet. It sits above
+   the overlay so quitting to the title covers whatever panel asked for it. */
+#title {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 20;
+  background: radial-gradient(120% 80% at 50% 0%, #2c2552 0%, var(--bg-deep) 70%);
+}
+
+#title-card { width: min(360px, 100%); text-align: center; }
+#title-heading {
+  margin: 0;
+  font-size: clamp(2rem, 11vw, 3rem);
+  letter-spacing: -0.02em;
+  background: linear-gradient(180deg, var(--ink) 30%, var(--accent) 140%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+#title-tagline {
+  margin: 4px 0 32px;
+  color: var(--ink-dim);
+  font-size: 0.82rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+#title-buttons { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+#title-buttons button { padding: 14px; font-size: 1.05rem; }
+.title-note { margin: 0 0 18px; color: var(--ink-dim); font-size: 0.74rem; min-height: 1em; }
+.title-note:last-child { margin-bottom: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .objective-fill { transition: none; }

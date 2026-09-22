@@ -230,4 +230,21 @@ export class Engine {
   setUnlocked(count) {
     this.wasm.tg_set_unlocked(this.handle, count);
   }
+
+  /**
+   * Throws the whole run away and opens a fresh session on the same module:
+   * a new seed, back to the first level, everything else locked again.
+   *
+   * The new session is opened before the old one is dropped, so a refusal
+   * leaves the run that is already going still playable.
+   */
+  restart(seed) {
+    const next = this.wasm.tg_create(seed >>> 0, Math.floor(seed / 2 ** 32) >>> 0);
+    if (!next) {
+      throw new Error('the engine refused to start a session');
+    }
+    this.wasm.tg_destroy(this.handle);
+    this.handle = next;
+    this.readGeometry();
+  }
 }

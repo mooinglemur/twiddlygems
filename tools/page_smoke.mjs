@@ -70,9 +70,14 @@ function stubElement(id) {
     },
     append(...nodes) { this.children.push(...nodes); },
     replaceChildren(...nodes) { this.children = nodes; },
+    // Kept on the element as well as in the global map: every element the page
+    // creates shares the id `created:<tag>`, so a button in the overlay can
+    // only be clicked on its own rather than by name.
+    handlers: [],
     addEventListener(type, handler) {
       const key = `${id}:${type}`;
       listeners.set(key, [...(listeners.get(key) ?? []), handler]);
+      element.handlers.push({ type, handler });
     },
     removeEventListener() {},
     getBoundingClientRect() {
@@ -90,9 +95,10 @@ function stubElement(id) {
 }
 
 for (const id of [
-  'board', 'stage', 'level-number', 'level-name', 'score', 'moves', 'objectives',
+  'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'moves', 'objectives',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons', 'level-grid',
   'levels-button', 'hint-button', 'retry-button', 'sound-button',
+  'title', 'solo-button', 'solo-note', 'archipelago-button',
 ]) {
   elements.set(id, stubElement(id));
 }
@@ -133,6 +139,7 @@ globalThis.window = {
   localStorage: {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => store.set(key, value),
+    removeItem: (key) => store.delete(key),
   },
   // Recorded rather than dropped, so a test can act like someone touching the
   // page. Opening the audio device hangs off these.
@@ -198,6 +205,58 @@ function dispatch(id, type, event) {
   for (const handler of handlers) {
     handler({ preventDefault() {}, pointerId: 1, ...event });
   }
+}
+
+/// Clicks an element the page built rather than one the markup names.
+function click(element, why) {
+  assert.ok(element, why);
+  const handlers = element.handlers.filter((entry) => entry.type === 'click');
+  assert.ok(handlers.length > 0, `${why}: nothing is listening for a click on it`);
+  for (const { handler } of handlers) {
+    handler({ preventDefault() {} });
+  }
+}
+
+/// Finds a button in the overlay by the words on it.
+function overlayButton(label) {
+  return elements.get('overlay-buttons').children.find((child) => child.textContent === label);
+}
+
+// ---- the title screen ----
+//
+// The game opens on a menu rather than on a board, which is also what gets a
+// tap in before anything has to make a noise: the audio device is opened from
+// a gesture, and without one the opening swap plays in silence.
+{
+  const title = elements.get('title');
+  assert.ok(!title.classList.contains('hidden'), 'the game did not open on its title screen');
+  // Archipelago is not built yet. The stub does not parse the markup, so the
+  // attribute is checked where it is written, and the thing that would
+  // actually go wrong (someone wiring the button up early) is checked here.
+  const markup = await readFile('web/index.html', 'utf8');
+  const tag = markup.match(/<button id="archipelago-button"[^>]*>/)?.[0] ?? '';
+  assert.match(tag, /\bdisabled\b/, 'the Archipelago button is not disabled in the markup');
+  assert.equal(
+    elements.get('archipelago-button').handlers.length,
+    0,
+    'something is wired to the Archipelago button, which does not work yet',
+  );
+  assert.equal(
+    elements.get('app').getAttribute('aria-hidden'),
+    'true',
+    'the board behind the title screen is still exposed to assistive tech',
+  );
+
+  // The clock is held while the menu is up: the level behind it must not be
+  // playing itself out unseen.
+  const drawnBefore = calls.clearRect ?? 0;
+  pump(30);
+  assert.equal(calls.clearRect ?? 0, drawnBefore, 'the board kept running behind the title screen');
+
+  dispatch('solo-button', 'click', {});
+  assert.ok(title.classList.contains('hidden'), 'choosing Solo Play left the title screen up');
+  assert.equal(elements.get('app').getAttribute('aria-hidden'), null);
+  assert.ok(store.has('twiddlygems.save.v1'), 'starting a run did not pin its seed');
 }
 
 pump(FRAMES);
@@ -338,6 +397,27 @@ const grid = elements.get('level-grid');
 assert.ok(grid.children.length >= 10, 'the level picker is missing levels');
 assert.equal(grid.children[0].disabled, false, 'level one is locked');
 assert.equal(grid.children[9].disabled, true, 'a level nobody has reached is unlocked');
+
+// Ending a run from that same menu asks first, then throws the progress away
+// and goes back to the title screen.
+{
+  const { engine } = window.twiddlygems;
+  engine.setUnlocked(5);
+
+  click(overlayButton('Title screen'), 'the level menu offers no way back to the title');
+  click(overlayButton('Keep playing'), 'ending a run is not confirmed first');
+  assert.ok(elements.get('title').classList.contains('hidden'), 'backing out still quit the run');
+  assert.equal(engine.unlocked, 5, 'backing out still threw the progress away');
+
+  // Backing out returns to the level list, so the way in is open again.
+  click(overlayButton('Title screen'), 'backing out closed the menu instead of reopening it');
+  click(overlayButton('End the run'), 'the confirmation has no way to go through with it');
+  assert.ok(!elements.get('title').classList.contains('hidden'), 'ending a run left the board up');
+  assert.ok(elements.get('overlay').classList.contains('hidden'), 'the menu is still over the title');
+  assert.equal(engine.unlocked, 1, 'ending a run kept the levels it had unlocked');
+  assert.equal(engine.levelIndex, 0, 'ending a run left us on a later level');
+  assert.ok(!store.has('twiddlygems.save.v1'), 'ending a run left the save behind');
+}
 
 console.log(
   `page ok: ${framesRun} frames, ${calls.drawImage} blits, ${calls.fill} fills, ` +

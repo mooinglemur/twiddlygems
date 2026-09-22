@@ -17,8 +17,13 @@ const HINT_DELAY_MS = 6000;
 const MAX_FRAME_MS = 100;
 
 const dom = {
+  app: document.getElementById('app'),
   canvas: document.getElementById('board'),
   stage: document.getElementById('stage'),
+  title: document.getElementById('title'),
+  soloButton: document.getElementById('solo-button'),
+  soloNote: document.getElementById('solo-note'),
+  archipelagoButton: document.getElementById('archipelago-button'),
   levelNumber: document.getElementById('level-number'),
   levelName: document.getElementById('level-name'),
   score: document.getElementById('score'),
@@ -37,7 +42,7 @@ const dom = {
 
 /** Progress lives in the browser; the engine is told about it on start. */
 function readSave() {
-  const fallback = { seed: Math.floor(Math.random() * 2 ** 32), unlocked: 1, level: 0 };
+  const fallback = { seed: freshSeed(), unlocked: 1, level: 0 };
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) {
@@ -67,15 +72,32 @@ function writeSave(engine, seed) {
   }
 }
 
+function clearSave() {
+  try {
+    window.localStorage.removeItem(SAVE_KEY);
+  } catch (error) {
+    console.warn('could not clear saved progress', error);
+  }
+}
+
+function freshSeed() {
+  return Math.floor(Math.random() * 2 ** 32);
+}
+
 async function boot() {
   const hud = new Hud(null, dom);
   let engine;
   const save = readSave();
+  // Not const: ending a run deals a new one from a new seed.
+  let seed = save.seed;
 
   try {
-    engine = await loadEngine(WASM_URL, save.seed);
+    engine = await loadEngine(WASM_URL, seed);
   } catch (error) {
     console.error(error);
+    // The title screen sits above the overlay, so it has to go or the failure
+    // is announced behind a menu whose one button leads nowhere.
+    dom.title.classList.add('hidden');
     hud.showError(
       `${error.message}. Build it with "make wasm", and serve this folder over http rather than opening the file directly.`,
     );
@@ -196,6 +218,8 @@ async function boot() {
 
   let hintAt = performance.now() + HINT_DELAY_MS;
   let resultShown = false;
+  /** 'title' while the menu is up, 'solo' once a run is being played. */
+  let mode = 'title';
 
   const onLevelChanged = () => {
     renderer.layout();
@@ -205,7 +229,44 @@ async function boot() {
     hud.hideOverlay();
     hintAt = performance.now() + HINT_DELAY_MS;
     resultShown = false;
-    writeSave(engine, save.seed);
+    writeSave(engine, seed);
+  };
+
+  const showTitle = () => {
+    mode = 'title';
+    hud.hideOverlay();
+    dom.title.classList.remove('hidden');
+    // The board is still laid out underneath so the canvas keeps its size;
+    // hiding it from assistive tech is what stops it being read as content.
+    dom.app.setAttribute('aria-hidden', 'true');
+    const levels = engine.levelCount;
+    dom.soloNote.textContent =
+      engine.unlocked > 1 ? `Continue: ${engine.unlocked} of ${levels} levels unlocked` : `${levels} levels`;
+  };
+
+  const startSolo = () => {
+    mode = 'solo';
+    dom.title.classList.add('hidden');
+    dom.app.removeAttribute('aria-hidden');
+    renderer.layout();
+    hintAt = performance.now() + HINT_DELAY_MS;
+    // Pin the seed now rather than at the first level change, so reloading
+    // part way through the opening level deals the same board again.
+    writeSave(engine, seed);
+  };
+
+  /// Ends the run: the saved progress goes, and the engine opens a new session
+  /// so the next run is dealt from a different seed rather than replaying this
+  /// one from the start.
+  const endRun = () => {
+    clearSave();
+    seed = freshSeed();
+    engine.restart(seed);
+    renderer.reset();
+    renderer.hint = null;
+    resultShown = false;
+    hud.rebuild();
+    showTitle();
   };
 
   attachInput(dom.canvas, renderer, engine, () => {
@@ -219,7 +280,7 @@ async function boot() {
   observer.observe(dom.stage);
   window.addEventListener('orientationchange', () => renderer.layout());
 
-  dom.levelsButton.addEventListener('click', () => {
+  const openLevels = () => {
     hud.showLevels({
       onPick: (index) => {
         if (engine.loadLevel(index)) {
@@ -227,8 +288,13 @@ async function boot() {
         }
       },
       onClose: () => hud.hideOverlay(),
+      onQuit: () => hud.confirmQuit({ onCancel: openLevels, onConfirm: endRun }),
     });
-  });
+  };
+
+  dom.levelsButton.addEventListener('click', openLevels);
+
+  dom.soloButton.addEventListener('click', startSolo);
 
   dom.hintButton.addEventListener('click', () => {
     renderer.hint = engine.hint();
@@ -247,10 +313,20 @@ async function boot() {
     window.twiddlygems = { engine, renderer, hud, audio };
   }
 
+  showTitle();
+
   let last = performance.now();
   const frame = (now) => {
     const dt = Math.min(now - last, MAX_FRAME_MS);
     last = now;
+
+    // The title screen holds the clock rather than running a level nobody can
+    // see behind it. `last` is still moved on above, so choosing a mode does
+    // not hand the engine the whole time the menu was up as one frame.
+    if (mode !== 'solo') {
+      requestAnimationFrame(frame);
+      return;
+    }
 
     engine.update(dt);
     const events = engine.drainEvents();
@@ -273,7 +349,7 @@ async function boot() {
 
     if (engine.status !== Status.PLAYING && !resultShown && !hud.overlayVisible) {
       resultShown = true;
-      writeSave(engine, save.seed);
+      writeSave(engine, seed);
       hud.showResult(engine.status, {
         onNext: () => {
           if (engine.nextLevel()) {
@@ -284,15 +360,7 @@ async function boot() {
           engine.retry();
           onLevelChanged();
         },
-        onLevels: () =>
-          hud.showLevels({
-            onPick: (index) => {
-              if (engine.loadLevel(index)) {
-                onLevelChanged();
-              }
-            },
-            onClose: () => hud.hideOverlay(),
-          }),
+        onLevels: openLevels,
       });
     }
 

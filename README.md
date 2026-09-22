@@ -2,8 +2,8 @@
 
 An Archipelago implementation of a set of classic match-3 puzzles.
 
-Right now it is a solo game: ten levels, playable in a phone or desktop browser
-with nothing to set up. The Archipelago side comes later.
+Right now it is a solo game: thirteen levels, playable in a phone or desktop
+browser with nothing to set up. The Archipelago side comes later.
 
 ## Building and playing
 
@@ -68,6 +68,15 @@ a falling gem is simply drawn some distance above where it already is.
 Because nothing links the two languages, `make abi` compares the exports and the
 shared enum numbering between `src/` and `web/js/` and fails the build on a
 mismatch, rather than letting it surface as a blank page.
+
+**The page opens on a title screen**, where a mode is chosen: Solo Play, or
+Archipelago once it exists. Nothing about the mode reaches the engine, which
+only ever knows about a session; the frame loop simply holds the clock until a
+mode is picked, so a level is not played out behind a menu. The hamburger menu
+is the way back: it lists the levels and offers the title screen, which ends the
+run, clears the save, and opens a fresh session on a new seed. Opening on a menu
+also means the first tap of a visit happens before the board does, which is what
+gets the audio device running before anything needs to make a noise.
 
 ```
 src/
