@@ -51,11 +51,16 @@ function readSave() {
       return fallback;
     }
     const save = JSON.parse(raw);
+    // The seed dealt the run's progression, so the location ids below only
+    // mean anything alongside it. Without one, what was found cannot be looked
+    // back up: the levels the player opened are kept and the finds are not,
+    // rather than handing them items from a layout they never played.
+    const seeded = Number.isFinite(save.seed);
     return {
-      seed: Number.isFinite(save.seed) ? save.seed : fallback.seed,
+      seed: seeded ? save.seed : fallback.seed,
       unlocked: Number.isInteger(save.unlocked) ? save.unlocked : 1,
       level: Number.isInteger(save.level) ? save.level : 0,
-      checked: Array.isArray(save.checked) ? save.checked.filter(Number.isInteger) : [],
+      checked: seeded && Array.isArray(save.checked) ? save.checked.filter(Number.isInteger) : [],
     };
   } catch (error) {
     // A corrupt or unavailable store should cost a save, not the game.

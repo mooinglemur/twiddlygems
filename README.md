@@ -123,9 +123,14 @@ nothing of anyone), and the second is close to an attentive player, and the only
 fair read on positional goals like jelly, which the floor bot can only clear by
 accident.
 
-Both bots play the ladder the way a run actually meets it, each level holding
-only the unlocks the levels below it handed over, because measuring it with
-every special switched on measures a game nobody plays.
+Each table says which run it measures, because a run deals its own
+progression and two players on the same level may be holding quite different
+things. **Holding nothing** is the floor, and the only state the rules promise
+outright: a run can perfectly well reach the top of the ladder having found
+every unlock on score marks it never went back for. **Holding everything** is
+the ceiling, and it is what a score mark's rule asks for, so it is the state
+the silver and gold numbers are read against. Measuring a mark against a run
+that happened to hold two unlocks would only measure that run's luck.
 
 As it stands the floor bot clears level 1 99% of the time and levels 4 and up
 almost never, while the attentive bot clears everything, using a tenth of its
@@ -133,11 +138,20 @@ moves on the opening levels and half to four fifths of them on the closing ones.
 Real players sit somewhere between the two, so these numbers bound the
 difficulty rather than fix it: the ladder still wants playtesting.
 
-The last table is the exception: it is a gate, not a reading. Every level has to
-be clearable holding only what came before it, or a run dead-ends with nothing
-left to do, and `make balance` exits non-zero if one is not. That is the same
-claim the Archipelago side has to hold to, asked here of the ladder and there of
-received items, of the same `Inventory`.
+The last table reads how far a run that has found nothing gets. A level that
+wants its move items before it will go down is a fine level, and with several
+move items per level it is the expected shape, so this reports rather than
+judges. **The opening level is the exception, and it is a gate.** Its rule is
+`Always`: until it goes down, not one location in the game is open and there is
+no first item to find, so a seed where a run holding nothing cannot clear it is
+a seed nobody can start. `make balance` exits non-zero on that alone.
+
+What the rest of that table costs is a promise. A level that genuinely needs
+its moves is only safe once its own rule says it needs them, because the
+Archipelago generator believes those rules when it decides what it may place
+behind what. Today every level's clear asks for nothing but the level below, so
+that is a thing to settle when the ladder is designed rather than a thing to be
+quietly wrong about.
 
 ## The game
 
@@ -172,9 +186,9 @@ What a match leaves behind:
 
 None of which a new run can do. Each of the five is an **unlock**, and a run
 that holds none of them matches and clears normally and leaves nothing behind,
-which is how the opening level plays. Solo finds them by clearing levels, one
-per rung until the pool runs out; Archipelago will scatter the same five across
-a multiworld. They are separate items, including the two line clearers, so a
+which is how the opening level plays. Solo scatters them across its own run,
+wherever that run's fill put them; Archipelago will scatter the same five
+across a multiworld. They are separate items, including the two line clearers, so a
 run can spend a while able to finish four in a row and not four in a column.
 Levels themselves no longer switch specials off: a level says what belongs on
 it, the run says what it may make, and a match gets whatever survives both.
@@ -192,21 +206,19 @@ not be much of an item.
 
 Items are found at **locations**: clearing each level, clearing it past each of
 its two score marks, and reaching a chain of each length from two to twelve.
-The opening level clears hold the unlocks; every clear past those is worth more
-room on that same level; a level's two score marks are worth more room on the
-**next** one, so beating a level well makes the one after it easier; and the
-short chains carry what is left for the levels whose own clear an unlock took.
-Every level ends up improvable three times over and nothing on the ladder is
-cleared for nothing. A location pays once, which is why the run writes down
-which it has checked, and why the save carries that list: reloading has to
-leave a run holding what it held, and still unable to find it again.
+Which location holds which item is the fill's business rather than a table
+anybody wrote, and it is dealt fresh for every run. What holds whatever the
+seed decides is that every level ends up improvable at least twice over and
+nothing on the ladder is cleared for nothing. A location pays once, which is
+why the run writes down which it has checked, and why the save carries that
+list alongside the seed: reloading has to leave a run holding what it held, and
+still unable to find it again.
 
-**A level's score marks never hold that level's own moves**, and the closing
-level's marks wrap round to pay the opening one. That keeps every mark clear of
-its own requirements, and it keeps every item on a chain short enough that runs
-actually get there: `make balance` reports how deep a chain a playthrough
-reaches, and it falls from every run at three deep to one in ten at twelve.
-Items live on the short ones only.
+**A level's gold never holds that level's own moves**, since gold asks for
+them, and no item is ever kept behind a chain longer than six. `make balance`
+reports how deep a chain a playthrough reaches holding nothing, which is what a
+chain's rule asks for, and it falls from every run at three deep to one in
+twenty-five at twelve. Items live on the short ones only.
 
 **What a location asks is a `Requirement`**, shaped to Archipelago's own rule
 vocabulary rather than to anything of ours: `All` is its `And`, `Has` is its
@@ -239,13 +251,21 @@ only grows and nothing can end up behind itself. Whatever is left empty
 afterwards gets filler, the way a multiworld would put another world's items
 there, because clearing a level and being handed nothing reads as a bug.
 
-It is dealt from a fixed seed, so a solo run is the same game for everybody. It
-is not Archipelago's fill and does not try to be: the multiworld shuffles
-across worlds and walks itself back out of corners, where this only has to
-produce one honest layout.
+**It is dealt from the run's own seed**, so a solo run generates its own
+progression the way a multiworld does: every run is a different game, and the
+same seed is the same game. The seed goes in the save, because the save records
+the ids of the locations a run checked and looks the items back up through the
+fill; without it those ids would resolve in somebody else's layout. Ending a
+run deals a new seed.
+
+It is still not Archipelago's fill and does not try to be: the multiworld
+shuffles across worlds and walks itself back out of corners, where this only
+ever places into somewhere already open and so never has to.
 
 A test walks the whole placement in spheres the way a generator does and fails
-if anything can never be reached; another checks that walk can still fail, by
+if anything can never be reached; it does that for thirty-two seeds against
+four ladder lengths, because a fill that is safe for one seed and not another
+is a run somebody cannot finish. Another checks that walk can still fail, by
 giving a location a rule its own item would satisfy.
 
 **Two moves per level, not three.** A ladder of `L` levels offers `3L`
@@ -264,12 +284,13 @@ special's own code rather than by the order a run is given them: the numbers
 end up in seeds and must not move, while the teaching order should stay free to
 re-tune.
 
-**Silver and gold** are read off the bots. `make balance` reports how often
-each reaches each mark, and the numbers in the ladder are set so the attentive
-bot takes gold most of the time (or the location is one nobody can check) and
-the floor bot mostly does not (or gold is what clearing the level already
-pays). As it stands the attentive bot takes gold on 60 to 96% of its wins and
-the floor bot on 0 to 60% of its far rarer ones. Marks are judged once the
+**Silver and gold** are read off the bots, holding everything, which is what
+their rules ask for. `make balance` reports how often each reaches each mark,
+and the numbers in the ladder are set so the attentive bot takes gold most of
+the time (or the location is one nobody can check) and the floor bot mostly
+does not (or gold is what clearing the level already pays). As it stands the
+attentive bot takes gold on 56 to 100% of its wins and the floor bot on 8 to
+100% of its far rarer ones. Marks are judged once the
 level is over rather than when its goals were met, because the flourish is
 still adding to the score in between.
 

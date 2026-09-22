@@ -210,7 +210,8 @@ globalThis.fetch = async (url) => {
 // and that bot wins First Light on 99% of boards, not all of them. A test that
 // fails one run in a hundred is worse than one that only ever sees one board.
 const SAVE_KEY = 'twiddlygems.save.v1';
-store.set(SAVE_KEY, JSON.stringify({ seed: 20260920, unlocked: 1, level: 0 }));
+const SEED = 20260920;
+store.set(SAVE_KEY, JSON.stringify({ seed: SEED, unlocked: 1, level: 0 }));
 
 await import(path.resolve('web/js/main.js'));
 
@@ -596,7 +597,12 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.ok(saved.checked.length > 0, 'clearing a level was not written down');
 
   // Handing those back rebuilds the run, quietly: restoring is not finding.
-  const restored = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, 1);
+  //
+  // The same seed, because the seed is what dealt the progression: a run
+  // rebuilt from somebody else's seed would look up the saved location ids in
+  // a different layout and hand back items that were never found. That is what
+  // the save's own seed is for, and what the page reloads with.
+  const restored = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, SEED);
   let announced = 0;
   for (const id of saved.checked) {
     restored.restore(id);

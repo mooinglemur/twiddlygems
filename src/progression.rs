@@ -2,10 +2,11 @@
 //!
 //! This is the seam the Archipelago layer slots into. A run receives items;
 //! the items decide what the player may do. Nothing here knows the difference
-//! between solo and multiworld, because there is only one difference: where
-//! the items come from. Solo reads them out of the fixed table below;
-//! Archipelago will be handed them by the server. Both walk the same
-//! [`Inventory`] through the same [`apply`](Inventory::apply).
+//! between solo and multiworld, because there is only one difference: who
+//! filled the locations. Solo fills its own, from its own seed, by the same
+//! reachability walk a generator does; Archipelago will have the server fill
+//! them. Both walk the same [`Inventory`] through the same
+//! [`apply`](Inventory::apply).
 //!
 //! Keeping both on one path is the point. The rule the multiworld has to hold
 //! to, that a level is only ever placed somewhere the run can already clear
@@ -17,12 +18,20 @@ use crate::level::LevelSpec;
 use crate::rng::Rng;
 use crate::rules::SpecialSet;
 
-/// What the solo placement is dealt from.
+/// Splits the fill's randomness off the run seed.
 ///
-/// Fixed, so a solo run is the same game for everybody and a save keeps
-/// meaning what it meant: the ids written into it are looked back up here.
-/// Changing it reshuffles every solo run there has ever been.
-const FILL_SEED: u64 = 0x7477_6964_646c_7967;
+/// A solo run generates its own progression, the way a multiworld does: the
+/// run seed decides where the items went, so no two runs are the same game and
+/// a returning one is handed back exactly what it found. Keeping the fill on
+/// its own stream rather than drawing it alongside the boards means changing
+/// how boards are dealt can never quietly reshuffle a saved run's items.
+const FILL_SALT: u64 = 0x7477_6964_646c_7967;
+
+/// What a run's placement is dealt from, given the seed the run itself was
+/// dealt from. See [`solo_placement`].
+pub fn fill_seed(run: u64) -> u64 {
+    run ^ FILL_SALT
+}
 
 /// Something a run can receive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,11 +120,12 @@ pub const LONGEST_CHAIN: u32 = 12;
 
 /// The deepest chain a run can be counted on to reach.
 ///
-/// `make balance` measures this: every run gets three deep, most get six, half
-/// get seven, one in ten gets twelve. Items are kept at or under this, so a
-/// solo run is not asked to produce something rare to finish its own pool. The
-/// deeper ones are locations all the same, and in a multiworld they will be
-/// holding somebody else's item.
+/// `make balance` measures this on a run holding nothing, which is what a
+/// chain's rule asks for: every playthrough gets three deep, most get five,
+/// half get six, one in twenty-five gets twelve. Items are kept at or under
+/// this, so a solo run is not asked to produce something rare to finish its
+/// own pool. The deeper ones are locations all the same, and in a multiworld
+/// they will be holding somebody else's item.
 pub const RELIABLE_CHAIN: u32 = 6;
 
 impl Location {
@@ -543,12 +553,12 @@ pub fn move_step(base: u32) -> u32 {
 /// multiworld they will be holding somebody else's item anyway.
 /// `levels` is how long the ladder is, which the marks on the last level need:
 /// there is no next level for them to pay, so they hold nothing.
-/// What a solo run finds at one location.
+/// What a run dealt from `seed` finds at one location.
 ///
 /// Builds the whole placement to answer, so it is for a one-off question. Hold
 /// a [`solo_placement`] and index it if you are asking repeatedly.
-pub fn solo_item_at(location: Location, levels: usize) -> Option<Item> {
-    let placed = solo_placement(levels);
+pub fn solo_item_at(location: Location, levels: usize, seed: u64) -> Option<Item> {
+    let placed = solo_placement(levels, seed);
     location_index(location, levels).and_then(|at| placed[at])
 }
 
@@ -572,7 +582,7 @@ pub fn item_pool(levels: usize) -> Vec<Item> {
         .collect()
 }
 
-/// Where a solo run finds each item, as one entry per location.
+/// Where a run dealt from `seed` finds each item, as one entry per location.
 ///
 /// Filled by reachability rather than written out by hand. Every item here is
 /// progression now that gold asks for a level's moves, and hand-assigning
@@ -589,15 +599,21 @@ pub fn item_pool(levels: usize) -> Vec<Item> {
 ///
 /// This is not Archipelago's fill and does not try to be. The multiworld
 /// shuffles, can place another world's items here, and walks itself back out
-/// of corners. This only has to produce one honest layout, and the same one
-/// every time.
-pub fn solo_placement(levels: usize) -> Vec<Option<Item>> {
+/// of corners when it paints itself in. This only has to produce one honest
+/// layout, and it produces it the only way that never needs walking back:
+/// forwards, out of what is already open.
+///
+/// The seed is the run's, so every solo run is its own game and the same seed
+/// is the same game. That matters beyond variety: a save records the ids of
+/// the locations it checked and looks the items back up here, so the run seed
+/// has to be saved alongside them, and it is.
+pub fn solo_placement(levels: usize, seed: u64) -> Vec<Option<Item>> {
     let places = locations(levels);
     let mut held: Vec<Option<Item>> = vec![None; places.len()];
     let mut reached = Reached::none(levels);
     let mut inventory = Inventory::empty();
 
-    let mut rng = Rng::new(FILL_SEED);
+    let mut rng = Rng::new(seed);
     for item in item_pool(levels) {
         expand(&places, levels, &inventory, &mut reached);
         let open: Vec<usize> = places
@@ -673,26 +689,6 @@ fn expand(places: &[Location], levels: usize, inventory: &Inventory, reached: &m
             reached.add(at);
         }
     }
-}
-
-/// The least a solo run can hold by the time it starts the level at `index`:
-/// what the levels below it handed over, and nothing else.
-///
-/// This is the logic function, and it counts only the level clears on purpose.
-/// Getting to level `index` means clearing every level below it, so those are
-/// guaranteed. A chain is not: nobody is owed a five long one, so an item
-/// sitting on that location cannot be assumed in hand. Logic has to hold for
-/// the player who never made one.
-pub fn solo_inventory(index: usize, levels: usize) -> Inventory {
-    let placed = solo_placement(levels);
-    let mut inventory = Inventory::empty();
-    for below in 0..index {
-        let at = location_index(Location::LevelClear(below), levels);
-        if let Some(item) = at.and_then(|at| placed[at]) {
-            inventory.receive(item);
-        }
-    }
-    inventory
 }
 
 #[cfg(test)]
@@ -797,6 +793,17 @@ mod tests {
     /// full one, because the table has to hold at both ends.
     const LADDERS: [usize; 4] = [8, 13, 30, 50];
 
+    /// Runs to deal placements from.
+    ///
+    /// Every run fills its own now, so a claim about the fill is a claim about
+    /// all of them rather than about one lucky layout. These stand in: enough
+    /// that a shape which only goes wrong sometimes turns up, few enough that
+    /// the suite stays quick. A failure names the seed, so it can be read back
+    /// into a single case.
+    fn fills() -> impl Iterator<Item = u64> {
+        (0..32u64).map(fill_seed)
+    }
+
     #[test]
     fn the_solo_placement_finds_a_home_for_the_whole_pool() {
         // Where each item ends up is the fill's business and changes with the
@@ -804,27 +811,31 @@ mod tests {
         // invented: an item with nowhere to go is a level that can never be
         // improved as much as the others.
         for levels in LADDERS {
-            let placed = solo_placement(levels);
-            let mut left = item_pool(levels);
-            for held in placed.iter().flatten() {
-                if let Some(at) = left.iter().position(|wanted| wanted == held) {
-                    left.swap_remove(at);
-                    continue;
+            for seed in fills() {
+                let placed = solo_placement(levels, seed);
+                let mut left = item_pool(levels);
+                for held in placed.iter().flatten() {
+                    if let Some(at) = left.iter().position(|wanted| wanted == held) {
+                        left.swap_remove(at);
+                        continue;
+                    }
+                    // Anything beyond the pool is filler, which is only ever
+                    // more moves: an unlock turning up twice would be a real
+                    // fault.
+                    assert!(
+                        matches!(held, Item::Moves { .. }),
+                        "{} was placed but is not in the pool",
+                        item_name(*held),
+                    );
                 }
-                // Anything beyond the pool is filler, which is only ever more
-                // moves: an unlock turning up twice would be a real fault.
                 assert!(
-                    matches!(held, Item::Moves { .. }),
-                    "{} was placed but is not in the pool",
-                    item_name(*held),
+                    left.is_empty(),
+                    "on a ladder of {levels} dealt from {seed:#x}, {} items had nowhere to go, \
+                     starting with {}",
+                    left.len(),
+                    item_name(left[0]),
                 );
             }
-            assert!(
-                left.is_empty(),
-                "on a ladder of {levels}, {} items had nowhere to go, starting with {}",
-                left.len(),
-                item_name(left[0]),
-            );
         }
     }
 
@@ -834,16 +845,18 @@ mod tests {
         // would be required to reach the place it is kept. Silver asks for no
         // such thing, so silver may hold them quite happily.
         for levels in LADDERS {
-            let placed = solo_placement(levels);
-            for index in 0..levels {
-                let gold = Location::LevelGold(index);
-                let at = location_index(gold, levels).unwrap();
-                assert_ne!(
-                    placed[at],
-                    Some(Item::Moves { level: index }),
-                    "{} holds the very item reaching it would need",
-                    location_name(gold),
-                );
+            for seed in fills() {
+                let placed = solo_placement(levels, seed);
+                for index in 0..levels {
+                    let gold = Location::LevelGold(index);
+                    let at = location_index(gold, levels).unwrap();
+                    assert_ne!(
+                        placed[at],
+                        Some(Item::Moves { level: index }),
+                        "dealt from {seed:#x}, {} holds the very item reaching it would need",
+                        location_name(gold),
+                    );
+                }
             }
         }
     }
@@ -854,19 +867,22 @@ mod tests {
         // whether its own clear carries the items, its neighbor's marks do, or
         // a chain does.
         for levels in LADDERS {
-            let placed = solo_placement(levels);
-            for level in 0..levels {
-                let found = placed
-                    .iter()
-                    .filter(|held| **held == Some(Item::Moves { level }))
-                    .count();
-                // At least, not exactly: what is left over once the pool is
-                // placed becomes filler, and filler is more moves.
-                assert!(
-                    found >= MOVES_PER_LEVEL,
-                    "level {} of {levels} can be improved only {found} times",
-                    level + 1,
-                );
+            for seed in fills() {
+                let placed = solo_placement(levels, seed);
+                for level in 0..levels {
+                    let found = placed
+                        .iter()
+                        .filter(|held| **held == Some(Item::Moves { level }))
+                        .count();
+                    // At least, not exactly: what is left over once the pool
+                    // is placed becomes filler, and filler is more moves.
+                    assert!(
+                        found >= MOVES_PER_LEVEL,
+                        "dealt from {seed:#x}, level {} of {levels} can be improved \
+                         only {found} times",
+                        level + 1,
+                    );
+                }
             }
         }
     }
@@ -907,8 +923,8 @@ mod tests {
     /// Walks a placement the way a generator does: take everything reachable,
     /// see what that opens, repeat until nothing new opens. Returns what was
     /// never reached.
-    fn unreachable(levels: usize) -> Vec<Location> {
-        walk(levels, &solo_placement(levels), |at| requirement(at, levels))
+    fn unreachable(levels: usize, seed: u64) -> Vec<Location> {
+        walk(levels, &solo_placement(levels, seed), |at| requirement(at, levels))
     }
 
     /// Walks a placement under whatever rules are handed in, and says what was
@@ -944,18 +960,77 @@ mod tests {
 
     #[test]
     fn every_location_in_the_solo_placement_can_be_reached() {
-        // The check a generator does, done to the fixed table: if a location
-        // asks for an item that is kept behind it, directly or round a loop of
-        // several, nothing ever opens it and everything inside is lost.
+        // The check a generator does, done to every layout the fill can deal:
+        // if a location asks for an item that is kept behind it, directly or
+        // round a loop of several, nothing ever opens it and everything inside
+        // is lost. A fill that is right for one seed and wrong for another is
+        // a run somebody cannot finish, so this is the claim that the fill is
+        // safe rather than lucky.
         for levels in LADDERS {
-            let stuck = unreachable(levels);
-            assert!(
-                stuck.is_empty(),
-                "on a ladder of {levels}, {} locations can never be checked, starting with {}",
-                stuck.len(),
-                location_name(stuck[0]),
-            );
+            for seed in fills() {
+                let stuck = unreachable(levels, seed);
+                assert!(
+                    stuck.is_empty(),
+                    "on a ladder of {levels} dealt from {seed:#x}, {} locations can never be \
+                     checked, starting with {}",
+                    stuck.len(),
+                    location_name(stuck[0]),
+                );
+            }
         }
+    }
+
+    #[test]
+    fn an_unlock_is_never_kept_behind_a_score_mark() {
+        // The unlocks go in first, while a run holds nothing, and nothing
+        // holding nothing can reach a score mark: every mark asks for all five
+        // of them. So an unlock can only ever land on a level clear or on a
+        // chain, and that is what keeps the fill from having to back out of a
+        // corner. It also means claiming every clear and every short chain
+        // hands a run all five, whatever it was dealt, which is how the
+        // screenshot runs are set up.
+        for levels in LADDERS {
+            for seed in fills() {
+                let placed = solo_placement(levels, seed);
+                for (at, held) in locations(levels).into_iter().zip(placed) {
+                    let Some(Item::Unlock(_)) = held else { continue };
+                    assert!(
+                        matches!(at, Location::LevelClear(_) | Location::Chain(_)),
+                        "on a ladder of {levels} dealt from {seed:#x}, {} is keeping {}, \
+                         which reaching it would need",
+                        location_name(at),
+                        item_name(held.unwrap()),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn two_runs_are_dealt_different_progressions() {
+        // The point of dealing per run: a second playthrough is a new game,
+        // not the same one again. Every seed placing everything in the same
+        // order would satisfy every other test here.
+        let levels = 13;
+        let first = solo_placement(levels, fill_seed(1));
+        let differs = fills()
+            .filter(|seed| solo_placement(levels, *seed) != first)
+            .count();
+        assert!(
+            differs >= fills().count() - 1,
+            "only {differs} of the seeds dealt something other than the first",
+        );
+    }
+
+    #[test]
+    fn a_run_seed_deals_the_same_progression_every_time() {
+        // And the other half of it: a save records which locations it checked
+        // and looks the items back up, so the same seed has to mean the same
+        // items or a returning run is handed somebody else's.
+        for seed in fills() {
+            assert_eq!(solo_placement(13, seed), solo_placement(13, seed));
+        }
+        assert_ne!(fill_seed(7), 7, "the fill should not share the deal's stream");
     }
 
     #[test]
@@ -965,7 +1040,7 @@ mod tests {
         // opening level's clear asking for the very unlock it is holding.
         // Nothing opens it, so nothing opens at all.
         let levels = 13;
-        let placed = solo_placement(levels);
+        let placed = solo_placement(levels, fill_seed(3));
         let held = placed[0].expect("the opening clear holds something");
         let circular = |at: Location| match at {
             Location::LevelClear(0) => Requirement::Has { item: held, count: 1 },
@@ -1004,18 +1079,20 @@ mod tests {
         // it falls off fast. Items live only on the short ones, and the rest
         // wait for the traps and usable items, which nobody has to find.
         for levels in LADDERS {
-            let placed = solo_placement(levels);
-            let deepest = (SHORTEST_CHAIN..=LONGEST_CHAIN)
-                .filter(|length| {
-                    placed[location_index(Location::Chain(*length), levels).unwrap()].is_some()
-                })
-                .max();
-            if let Some(deepest) = deepest {
-                assert!(
-                    deepest <= RELIABLE_CHAIN,
-                    "on a ladder of {levels}, a {deepest} chain is holding an item, \
-                     which few runs would ever reach",
-                );
+            for seed in fills() {
+                let placed = solo_placement(levels, seed);
+                let deepest = (SHORTEST_CHAIN..=LONGEST_CHAIN)
+                    .filter(|length| {
+                        placed[location_index(Location::Chain(*length), levels).unwrap()].is_some()
+                    })
+                    .max();
+                if let Some(deepest) = deepest {
+                    assert!(
+                        deepest <= RELIABLE_CHAIN,
+                        "on a ladder of {levels} dealt from {seed:#x}, a {deepest} chain is \
+                         holding an item, which few runs would ever reach",
+                    );
+                }
             }
         }
     }
@@ -1051,26 +1128,26 @@ mod tests {
     }
 
     #[test]
-    fn the_opening_level_is_reached_with_nothing_and_the_ladder_fills_up() {
-        assert!(
-            solo_inventory(0, 13).specials().is_empty(),
-            "the first level has to be clearable with no items at all",
-        );
-
-        // And everything can be got at in the end. Which location holds which
-        // unlock is the fill's business, so this walks the whole placement
-        // rather than assuming any of them sit on the ladder.
+    fn a_run_can_end_up_holding_every_unlock() {
+        // Which location holds which unlock is the fill's business, so this
+        // walks the whole placement rather than assuming any of them sit on
+        // the ladder. Whether the ladder can be climbed to get at them is
+        // `make balance`'s gate, which asks every level to be clearable by a
+        // run that has found none of this.
         for levels in LADDERS {
-            let placed = solo_placement(levels);
-            let mut held = Inventory::empty();
-            for item in placed.iter().flatten() {
-                held.receive(*item);
+            for seed in fills() {
+                let placed = solo_placement(levels, seed);
+                let mut held = Inventory::empty();
+                for item in placed.iter().flatten() {
+                    held.receive(*item);
+                }
+                assert_eq!(
+                    held.specials(),
+                    SpecialSet::ALL,
+                    "on a ladder of {levels} dealt from {seed:#x}, a run cannot end up \
+                     holding every unlock",
+                );
             }
-            assert_eq!(
-                held.specials(),
-                SpecialSet::ALL,
-                "on a ladder of {levels}, a run cannot end up holding every unlock",
-            );
         }
     }
 }

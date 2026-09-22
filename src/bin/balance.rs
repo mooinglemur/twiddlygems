@@ -1,5 +1,12 @@
 //! Plays every level with bots, to see whether the targets are worth aiming at.
 //!
+//! A measuring instrument, not a test. Nothing here runs under `make check`:
+//! it is `make balance`, it takes half a minute, and what it produces is
+//! tables to read. Its job is to answer questions that can only be answered by
+//! playing a level a few hundred times, of which the live one is where to put
+//! a level's silver and gold marks. Setting those by eye means guessing at a
+//! score distribution; setting them off these tables means reading one.
+//!
 //! Two bots bracket the range of players:
 //!
 //! * `first` takes the first legal move it finds, top left to bottom right,
@@ -16,22 +23,47 @@ use twiddlygems::board::{Pos, Special};
 use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
-use twiddlygems::progression::{solo_inventory, LONGEST_CHAIN, SHORTEST_CHAIN};
+use twiddlygems::progression::{
+    Inventory, Item, LONGEST_CHAIN, MOVES_PER_LEVEL, SHORTEST_CHAIN, UNLOCKS,
+};
 
-/// The ladder as a solo run actually meets it: every level narrowed to the
-/// specials the levels below it have handed over.
+/// The ladder as the unluckiest run meets it: nothing in hand at all.
 ///
-/// Measuring it with everything switched on measures a game nobody plays. The
-/// opener is meant to leave nothing behind at all, and the rungs just above it
-/// are meant to be short of most of the pool, so those are the numbers that
-/// say whether the ladder can be climbed.
-fn ladder() -> Vec<LevelSpec> {
+/// This is the floor, and it is the only state the rules promise. A run deals
+/// its own progression now, so somebody will reach the top of the ladder
+/// having found every unlock on score marks they never went back for. Anything
+/// that has to be true of every run has to be true here.
+fn bare() -> Vec<LevelSpec> {
     let all = levels();
-    let count = all.len();
     all.into_iter()
         .enumerate()
         .map(|(index, mut spec)| {
-            solo_inventory(index, count).apply(index, &mut spec);
+            Inventory::empty().apply(index, &mut spec);
+            spec
+        })
+        .collect()
+}
+
+/// The ladder as a run that has found everything meets it: all five unlocks,
+/// and every level's own move items.
+///
+/// This is the ceiling, and it is also exactly what a score mark's rule asks
+/// for, so it is the state to read the tier numbers against. A level narrowed
+/// to whatever one run happened to be holding would only ever measure that
+/// run's luck.
+fn equipped() -> Vec<LevelSpec> {
+    let all = levels();
+    all.into_iter()
+        .enumerate()
+        .map(|(index, mut spec)| {
+            let mut held = Inventory::empty();
+            for special in UNLOCKS {
+                held.receive(Item::Unlock(special));
+            }
+            for _ in 0..MOVES_PER_LEVEL {
+                held.receive(Item::Moves { level: index });
+            }
+            held.apply(index, &mut spec);
             spec
         })
         .collect()
@@ -75,6 +107,10 @@ fn main() {
 /// should mostly miss it, or gold is what clearing the level already pays.
 /// Silver sits where a good run lands rather than a lucky one.
 ///
+/// Read against [`equipped`], because that is what a mark's rule asks for: a
+/// run is only expected at silver or gold once it holds the unlocks, and at
+/// gold once it holds that level's moves as well.
+///
 /// Only wins count. A level that was not cleared has no tier, however high the
 /// score got.
 fn tiers(bot: Bot, seeds: u64) {
@@ -82,13 +118,15 @@ fn tiers(bot: Bot, seeds: u64) {
         Bot::First => "first legal move",
         Bot::Greedy => "greedy",
     };
-    println!("score tiers reached by the {name} bot ({seeds} seeds per level)");
+    println!(
+        "score tiers reached by the {name} bot, holding everything ({seeds} seeds per level)"
+    );
     println!(
         "{:<16} {:>8} {:>9} {:>6} {:>9} {:>6}",
         "level", "won", "silver", "of won", "gold", "of won"
     );
 
-    for (index, spec) in ladder().into_iter().enumerate() {
+    for (index, spec) in equipped().into_iter().enumerate() {
         let mut won = 0;
         let (mut silver, mut gold) = (0, 0);
         for seed in 0..seeds {
@@ -119,13 +157,18 @@ fn tiers(bot: Bot, seeds: u64) {
 /// length nothing ever reaches is a place items disappear into, and if logic
 /// counted on one the run would dead-end.
 ///
+/// Read against [`bare`], because a chain asks for nothing: its rule is
+/// `Always`, so the run that has to be able to make one is the run holding
+/// nothing. Measuring with the specials switched on would count chains that
+/// only a run further along could ever make, and put items behind them.
+///
 /// Counted per playthrough rather than per chain: what matters is whether a
 /// run ever gets there, not how often.
 fn chains(bot: Bot, seeds: u64) {
-    println!("how deep a chain a playthrough reaches ({seeds} runs per level)");
+    println!("how deep a chain a playthrough reaches, holding nothing ({seeds} runs per level)");
     println!("{:<16}  {}", "length", "share of runs reaching it");
 
-    let ladder = ladder();
+    let ladder = bare();
     let mut reached = vec![0u64; (LONGEST_CHAIN + 2) as usize];
     let mut runs = 0u64;
     for (index, spec) in ladder.iter().enumerate() {
@@ -169,44 +212,54 @@ fn chains(bot: Bot, seeds: u64) {
     }
 }
 
-/// Whether the ladder can be climbed at all with what it hands over.
+/// How far up the ladder a run that has found nothing can get.
 ///
-/// This is the completability check, and it is the one number here that is a
-/// gate rather than a reading. Every level has to be clearable holding only
-/// what the levels below it gave, or a run dead-ends with nothing to do. The
-/// greedy bot standing in for a player is generous, so a level it never wins
-/// is one nobody can, whatever the rest of the table says about difficulty.
+/// Mostly a reading. A level that wants its move items before it will go down
+/// is a fine level, and with several move items per level it is the expected
+/// shape; what it is not is free. A run deals its own progression, so whether
+/// those moves are in hand when the level comes up is the seed's business, and
+/// the only thing that makes it safe is the level's own rule saying so.
+/// Nothing here can tell a level that is meant to want items from one that is
+/// short by accident, so it reports and leaves the judgment to whoever is
+/// designing the ladder.
 ///
-/// The same claim has to hold on the Archipelago side, where it will be asked
-/// of received items rather than of the ladder. Both read the same inventory.
+/// **The opener is the exception, and it is a gate.** Its rule is `Always`: a
+/// run holding nothing has to be able to clear it, because until it does, not
+/// one location in the game is open and there is no first item to find. A seed
+/// where that fails is a seed nobody can start. The greedy bot standing in for
+/// a player is generous, so a level it never wins is one nobody can.
 fn in_logic(seeds: u64) -> bool {
-    println!("completable in logic: every level, with only what the ones below it gave");
-    let mut ok = true;
-    for (index, spec) in ladder().into_iter().enumerate() {
+    println!("how far a run that has found nothing gets, level by level");
+    let mut opener = true;
+    for (index, spec) in bare().into_iter().enumerate() {
         let wins = (0..seeds)
             .filter(|seed| {
                 play(&spec, seed * 7919 + index as u64, Bot::Greedy).status() == Status::Won
             })
             .count();
-        let held = solo_inventory(index, levels().len()).specials();
-        if wins == 0 {
-            ok = false;
+        if wins == 0 && index == 0 {
+            opener = false;
         }
         println!(
             "{:<16} {:>4}/{:<4} {} {:>3} moves, {}",
             spec.name,
             wins,
             seeds,
-            if wins == 0 { "UNREACHABLE" } else { "ok         " },
+            match (index, wins) {
+                (0, 0) => "THE OPENER MUST BE CLEARABLE WITH NOTHING",
+                (_, 0) => "wants items before it will go down     ",
+                _ => "                                       ",
+            },
             spec.moves,
-            describe(held),
+            describe(spec.rules.specials),
         );
     }
-    if !ok {
+    if !opener {
         println!();
-        println!("a level above cannot be cleared with what the ladder hands over before it");
+        println!("the opening level cannot be cleared by a run holding nothing, so a run");
+        println!("has nowhere to find its first item and no seed can be started");
     }
-    ok
+    opener
 }
 
 /// The specials a run holds, for the logic table.
@@ -238,13 +291,13 @@ fn calibrate(bot: Bot, seeds: u64) {
         Bot::First => "first legal move",
         Bot::Greedy => "greedy",
     };
-    println!("ceiling for the {name} bot ({seeds} seeds per level)");
+    println!("ceiling for the {name} bot, holding everything ({seeds} seeds per level)");
     println!(
         "{:<16} {:>6} {:>9} {:>9}  {}",
         "level", "moves", "used p50", "used p90", "reached with the full budget"
     );
 
-    for (index, spec) in ladder().into_iter().enumerate() {
+    for (index, spec) in equipped().into_iter().enumerate() {
         let mut used: Vec<u32> = Vec::new();
         for seed in 0..seeds {
             let game = play(&spec, seed * 7919 + index as u64, bot);
@@ -306,15 +359,18 @@ fn inflate(spec: &LevelSpec) -> LevelSpec {
 }
 
 /// How often each special actually turns up in play.
+///
+/// Read against [`equipped`]: a run that has not found an unlock never makes
+/// that special at all, so the rates only mean anything once they are all on.
 fn specials_made(bot: Bot, seeds: u64) {
-    println!("specials created per 100 moves ({seeds} seeds per level)");
+    println!("specials created per 100 moves, holding everything ({seeds} seeds per level)");
     println!("{:<16} {:>8} {:>8} {:>8} {:>8} {:>8}", "level", "lineH", "lineV", "cross", "rainbow", "rocket");
 
     let mut overall = [0u32; 6];
     let mut total_moves = 0u32;
     let mut all_spreads: Vec<u32> = Vec::new();
     let mut all_voices: Vec<u32> = Vec::new();
-    for (index, spec) in ladder().into_iter().enumerate() {
+    for (index, spec) in equipped().into_iter().enumerate() {
         let mut made = [0u32; 6];
         let mut moves = 0u32;
         let mut spreads: Vec<u32> = Vec::new();
@@ -388,18 +444,24 @@ fn specials_made(bot: Bot, seeds: u64) {
     );
 }
 
+/// How each bot does on the ladder, read against [`bare`].
+///
+/// The win column is the one the levels are designed against, and a level has
+/// to be winnable by a run that found nothing, so this is the state to design
+/// against. What a well supplied run does with the same level is the tier
+/// table's business.
 fn run(bot: Bot, seeds: u64) {
     let name = match bot {
         Bot::First => "first legal move",
         Bot::Greedy => "greedy, one move of lookahead",
     };
-    println!("bot: {name} ({seeds} seeds per level)");
+    println!("bot: {name}, holding nothing ({seeds} seeds per level)");
     println!(
         "{:<16} {:>6} {:>5} {:>8} {:>9}  {}",
         "level", "moves", "win%", "used", "score", "objectives (reached / needed)"
     );
 
-    for (index, spec) in ladder().into_iter().enumerate() {
+    for (index, spec) in bare().into_iter().enumerate() {
         let moves = spec.moves;
         let mut wins = 0;
         let mut used_when_won: Vec<u32> = Vec::new();

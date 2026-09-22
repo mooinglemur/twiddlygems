@@ -7,8 +7,8 @@
 use crate::game::{Event, Game, Status, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::progression::{
-    item_index, item_name, items, location_index, location_name, locations, solo_placement,
-    Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
+    fill_seed, item_index, item_name, items, location_index, location_name, locations,
+    solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
 };
 use crate::rng::Rng;
 
@@ -39,9 +39,9 @@ pub struct Session {
     /// keep handing moves over. Written into the save so a returning run keeps
     /// what it found, and keeps not being able to find it again.
     checked: Vec<u32>,
-    /// What each location holds, worked out once when the run opens. Building
-    /// it walks the whole ladder by reachability, which is not something to do
-    /// on the frame a level is cleared.
+    /// What each location holds, dealt once when the run opens from the run's
+    /// own seed. Working it out walks the whole ladder by reachability, which
+    /// is not something to do on the frame a level is cleared.
     placement: Vec<Option<Item>>,
     /// Things that happened to the run rather than to the board, raised
     /// alongside the board's own so the page has one stream to watch.
@@ -59,6 +59,9 @@ fn blob(names: impl Iterator<Item = String>) -> Vec<u8> {
 }
 
 impl Session {
+    /// Opens a run. The seed is the whole run: it deals every board, and it
+    /// deals the progression, so two players on the same seed play the same
+    /// game and nobody else plays theirs.
     pub fn new(seed: u64) -> Self {
         let levels = levels();
         let first = levels.first().expect("the ladder is never empty");
@@ -74,7 +77,7 @@ impl Session {
             deal,
             inventory,
             checked: Vec::new(),
-            placement: solo_placement(levels.len()),
+            placement: solo_placement(levels.len(), fill_seed(seed)),
             events: Vec::new(),
             name_buf: Vec::new(),
             names_blob: Vec::new(),
@@ -272,8 +275,9 @@ impl Session {
         &self.checked
     }
 
-    /// What one location is holding in this run.
-    fn holds(&self, location: Location) -> Option<Item> {
+    /// What one location is holding in this run. Another run holding a
+    /// different seed will have something else there.
+    pub fn holds(&self, location: Location) -> Option<Item> {
         location_index(location, self.levels.len()).and_then(|at| self.placement[at])
     }
 
@@ -382,7 +386,6 @@ mod tests {
     use super::*;
     use crate::board::Special;
     use crate::game::Phase;
-    use crate::progression::UNLOCKS;
     use crate::rules::SpecialSet;
 
     /// Wins the level in front of the session without playing it properly.
@@ -403,12 +406,6 @@ mod tests {
 
     /// The same, built from the item and location themselves, so a test can
     /// say what it expects in those terms rather than in numbers.
-    /// What the solo placement keeps at a location.
-    fn placed_at(location: Location) -> Option<Item> {
-        let levels = levels().len();
-        location_index(location, levels).and_then(|at| solo_placement(levels)[at])
-    }
-
     fn says(item: Item, from: Option<Location>) -> Announced {
         let levels = levels().len();
         (
@@ -476,7 +473,7 @@ mod tests {
         // fill decides, and asking for a particular one here would only pin
         // the fill's current shape rather than the behavior.
         let mut session = Session::new(7);
-        let held = placed_at(Location::LevelClear(0)).expect("the opener holds something");
+        let held = session.holds(Location::LevelClear(0)).expect("the opener holds something");
         let seen = force_win(&mut session);
         assert!(
             seen.contains(&says(held, Some(Location::LevelClear(0)))),
@@ -491,7 +488,7 @@ mod tests {
         // `update` sees a won board on every frame until something else
         // happens, so collecting has to survive being asked repeatedly.
         let mut session = Session::new(7);
-        let held = placed_at(Location::LevelClear(0)).expect("the opener holds something");
+        let held = session.holds(Location::LevelClear(0)).expect("the opener holds something");
         let first = force_win(&mut session);
         assert!(first.contains(&says(held, Some(Location::LevelClear(0)))));
         session.retry();
@@ -595,7 +592,7 @@ mod tests {
             session.update(16.0);
         }
         assert!(session.checked().contains(&chain), "no chain was ever registered");
-        if let Some(held) = placed_at(Location::Chain(SHORTEST_CHAIN)) {
+        if let Some(held) = session.holds(Location::Chain(SHORTEST_CHAIN)) {
             assert!(session.inventory().has(held), "the chain did not pay what it holds");
         }
 
@@ -623,7 +620,7 @@ mod tests {
         let mut session = Session::new(7);
         let found: Vec<(Location, Item)> = locations(session.level_count())
             .into_iter()
-            .filter_map(|at| placed_at(at).map(|item| (at, item)))
+            .filter_map(|at| session.holds(at).map(|item| (at, item)))
             .take(2)
             .collect();
         assert_eq!(found.len(), 2, "the placement is too empty to test with");
@@ -652,9 +649,9 @@ mod tests {
         let mut session = Session::new(7);
         let at = locations(session.level_count())
             .into_iter()
-            .find(|at| matches!(placed_at(*at), Some(Item::Moves { .. })))
+            .find(|at| matches!(session.holds(*at), Some(Item::Moves { .. })))
             .expect("something in the placement stacks");
-        let Some(Item::Moves { level }) = placed_at(at) else { unreachable!() };
+        let Some(Item::Moves { level }) = session.holds(at) else { unreachable!() };
 
         session.restore(at.id());
         session.restore(at.id());
