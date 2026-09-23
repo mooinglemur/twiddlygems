@@ -381,6 +381,13 @@ pub struct Game {
     /// The board settles several times during the flourish that follows, and
     /// only the first of those is news.
     announced_clear: bool,
+    /// How many Archipelago gems this level still has checks waiting in, which
+    /// is what caps how many the refill lets in.
+    ///
+    /// Set by whoever opened the level, because the board has no idea what a
+    /// location is. Zero on a board opened without a run behind it, which is
+    /// every board in these tests and the reason none of them sees one.
+    pub ap_gems_wanted: u32,
     events: Vec<Event>,
     cells_buf: Vec<u8>,
     offs_buf: Vec<f32>,
@@ -408,6 +415,7 @@ impl Game {
             selected: None,
             warned_low_moves: false,
             announced_clear: false,
+            ap_gems_wanted: 0,
             events: Vec::new(),
             cells_buf: Vec::new(),
             offs_buf: Vec::new(),
@@ -955,7 +963,7 @@ impl Game {
     /// Runs the next stage of a settle and puts the board into the fall that
     /// animates it, reporting whether there was a stage to run.
     fn begin_settle_stage(&mut self) -> bool {
-        match self.board.settle_stage(&self.spec.rules, &mut self.rng) {
+        match self.board.settle_stage(&self.spec.rules, &mut self.rng, self.ap_gems_wanted) {
             Some(origin) => {
                 self.origin = origin;
                 self.begin_fall();
@@ -2211,7 +2219,7 @@ mod tests {
         game.board.set_gem(Pos::new(3, 0), None);
 
         let rules = *game.rules();
-        while game.board.settle_stage(&rules, &mut game.rng).is_some() {}
+        while game.board.settle_stage(&rules, &mut game.rng, 0).is_some() {}
 
         assert_eq!(
             game.board.gem(Pos::new(3, 0)).map(|g| g.special),
@@ -3288,7 +3296,7 @@ mod tests {
         game.board.set_gem(Pos::new(0, 2), Some(Gem::plain(1)));
         game.origin = game.settled_origin();
 
-        while game.board.settle_stage(&game.spec.rules, &mut game.rng).is_some() {}
+        while game.board.settle_stage(&game.spec.rules, &mut game.rng, 0).is_some() {}
 
         assert_eq!(game.board.brick(Pos::new(3, 2)), 2, "the brick stayed put");
         assert!(
@@ -4274,7 +4282,7 @@ mod tests {
         }
         let rules = game.spec.rules.clone();
         for _ in 0..16 {
-            if game.board.settle_stage(&rules, &mut game.rng).is_none() {
+            if game.board.settle_stage(&rules, &mut game.rng, 0).is_none() {
                 break;
             }
         }

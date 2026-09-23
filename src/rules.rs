@@ -110,6 +110,15 @@ pub struct Rules {
     pub revert_invalid: bool,
     /// Reshuffle in place when no legal move is left, rather than ending the level.
     pub shuffle_when_stuck: bool,
+    /// One in this many refilled gems is an Archipelago gem, while the level
+    /// still has checks left in them. Zero for never.
+    ///
+    /// A reciprocal rather than a fraction because it is a yaml number people
+    /// type, and "one in five hundred" is easier to mean than 0.002. It is set
+    /// from the run's options rather than by the level: how often checks turn
+    /// up is a property of the run, and a level that hard-coded it would be a
+    /// level whose yaml setting did nothing.
+    pub ap_gem_odds: u32,
 }
 
 /// The engine indexes per-color counters with fixed arrays, so colors are capped.
@@ -147,6 +156,9 @@ impl Default for Rules {
             swap: SwapMode::Orthogonal,
             revert_invalid: true,
             shuffle_when_stuck: true,
+            // Off by default, so a board built without a run behind it, which
+            // is most of the tests, never sees one. The session sets it.
+            ap_gem_odds: 0,
         }
     }
 }

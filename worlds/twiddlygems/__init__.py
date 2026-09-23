@@ -136,11 +136,43 @@ class TwiddlyGemsWorld(World):
     item_name_to_id = {item["name"]: item["id"] for item in ITEMS}
     location_name_to_id = {at["name"]: at["id"] for at in LOCATIONS}
 
+    def _ap_gems_per_level(self) -> int:
+        """How many of each level's ten Archipelago gems this run plays over.
+
+        The setting is a floor, not a count: every item has to have somewhere
+        to go, and the options deciding how many items there are do not know
+        how many places there are to put them. So when the pool outgrows
+        everywhere else, the gems make up the difference.
+
+        The engine works the same number out the same way for a solo run. Both
+        sides have to land on it exactly, or a seed's locations and the game's
+        would not be the same set, which is why this counts every other
+        location rather than only the ones a solo fill likes.
+        """
+        levels = len(GAME_DATA["levels"])
+        pool = sum(self._count(item["count"]) for item in ITEMS)
+        elsewhere = sum(1 for at in LOCATIONS if "gem_index" not in at)
+        needed = max(0, -(-(pool - elsewhere) // levels)) if levels else 0
+        return min(
+            max(self.options.ap_gems.value, needed), GAME_DATA["ap_gems_per_level"]
+        )
+
+    def _locations_in_play(self) -> list[dict[str, Any]]:
+        """The locations this run actually has.
+
+        Every gem is in the table because the table is a datapackage and
+        fixed for everybody; the ones past what this run asked for are not in
+        its world. Nothing will ever spawn for them, so an item left in one
+        could never be found.
+        """
+        gems = self._ap_gems_per_level()
+        return [at for at in LOCATIONS if at.get("gem_index", 0) < gems or "gem_index" not in at]
+
     def create_regions(self) -> None:
         menu = Region(self.origin_region_name, self.player, self.multiworld)
         menu.locations += [
             TwiddlyGemsLocation(self.player, at["name"], at["id"], menu)
-            for at in LOCATIONS
+            for at in self._locations_in_play()
         ]
         self.multiworld.regions.append(menu)
 
@@ -180,12 +212,16 @@ class TwiddlyGemsWorld(World):
         # places to look than things to find, which is the shape that leaves
         # room for other worlds' items, and here it means topping up with
         # filler until the two match.
-        while len(pool) < len(self.location_name_to_id):
+        #
+        # Against the locations this run has rather than every name in the
+        # table: the gems it did not ask for are not in its world, and filling
+        # for them would submit more items than there are places.
+        while len(pool) < len(self._locations_in_play()):
             pool.append(self.create_filler())
         self.multiworld.itempool += pool
 
     def set_rules(self) -> None:
-        for at in LOCATIONS:
+        for at in self._locations_in_play():
             self.set_rule(self.get_location(at["name"]), self.rule_from_dict(at["rule"]))
         self.set_completion_rule(self.rule_from_dict(GAME_DATA["goal"]))
 

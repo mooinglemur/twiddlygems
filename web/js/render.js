@@ -998,9 +998,11 @@ function drawExhaust(ctx, x, y, r, angle) {
  */
 function drawApGemBody(ctx, x, y, r, phase) {
   // The rosette is mostly holes, so it reads smaller than a solid gem of the
-  // same extent; sized a touch over the gem's own circle to hold its cell.
-  const ring = r * 0.76;
-  const lobe = r * 0.42;
+  // same extent and wants a little more room than one. Only a little: at the
+  // full extent it crowded its cell, so this is that sizing pulled back about
+  // a seventh, which leaves it a touch inside the gem's own circle.
+  const ring = r * 0.65;
+  const lobe = r * 0.36;
   const cos = Math.cos(phase);
   const sin = Math.sin(phase);
 

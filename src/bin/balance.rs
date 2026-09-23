@@ -99,9 +99,89 @@ fn main() {
     // design, and a handful of runs cannot tell rare from never.
     let marks_hold = marks(150);
     println!();
+    gem_rate(50);
+    println!();
     if !in_logic(25) || !marks_hold {
         std::process::exit(1);
     }
+}
+
+/// How long a player waits for an Archipelago gem to fall, at each frequency
+/// the yaml offers.
+///
+/// A reading, not a gate. What it is for is picking the default: a gem should
+/// be a pleasant surprise rather than something to grind for, and neither
+/// "every other board" nor "never in a playthrough" is that.
+///
+/// Measured in playthroughs of one level rather than in gems per board,
+/// because that is the unit a player feels: how many times they have to beat a
+/// level before one turns up. A level is played to its end, win or lose, and
+/// the gem is counted if it fell at all.
+fn gem_rate(seeds: u64) {
+    println!("how long an Archipelago gem takes to turn up ({seeds} playthroughs per level)");
+    println!(
+        "{:<18}{:>10}{:>10}{:>10}{:>10}{:>12}",
+        "one in", "L2 gems", "L2 runs", "L8 gems", "L8 runs", "runs per gem",
+    );
+    let ladder = bare();
+    for odds in [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384] {
+        let mut row = Vec::new();
+        for index in [1_usize, 7] {
+            let mut gems = 0;
+            let mut runs_with = 0;
+            for seed in 0..seeds {
+                let mut spec = ladder[index].clone();
+                spec.rules.ap_gem_odds = odds;
+                let mut game = Game::new(spec, seed * 7 + 1);
+                // Plenty of room, so the count is about how often one falls
+                // rather than about running out of checks.
+                game.ap_gems_wanted = 99;
+                let seen = play_counting_gems(&mut game);
+                gems += seen;
+                runs_with += u32::from(seen > 0);
+            }
+            row.push((gems, runs_with));
+        }
+        let total: u32 = row.iter().map(|(gems, _)| gems).sum();
+        let per_gem =
+            if total == 0 { f64::INFINITY } else { (seeds as f64 * 2.0) / total as f64 };
+        println!(
+            "{:<18}{:>10}{:>10}{:>10}{:>10}{:>12.1}",
+            format!("1 in {odds}"),
+            row[0].0,
+            row[0].1,
+            row[1].0,
+            row[1].1,
+            per_gem,
+        );
+    }
+}
+
+/// Plays one level out with the floor bot and counts the Archipelago gems that
+/// fell, whether or not anything cleared them.
+fn play_counting_gems(game: &mut Game) -> u32 {
+    let mut seen = 0;
+    let mut on_board = 0;
+    for _ in 0..20_000 {
+        if game.status() != Status::Playing {
+            break;
+        }
+        if game.accepts_input() {
+            match game.hint() {
+                Some((a, b)) => {
+                    game.try_swap(a, b);
+                }
+                None => break,
+            }
+        }
+        game.update(16.0);
+        let now = game.board.ap_gems().len() as u32;
+        if now > on_board {
+            seen += now - on_board;
+        }
+        on_board = now;
+    }
+    seen
 }
 
 /// How often each bot reaches a level's two score tiers.

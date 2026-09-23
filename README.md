@@ -222,7 +222,28 @@ One item carries the whole of a level's upgrade today. Splitting it into one
 item per move, so that finding four of Pillars' sixteen is worth four moves,
 is the version that makes them properly progressive, and it waits on somewhere
 to put them: the ladder grants 166 moves across its thirteen levels and has 50
-locations. The Archipelago gem is that somewhere.
+locations besides its gems. The Archipelago gems are that somewhere.
+
+**The Archipelago gem** is a check sitting on the board rather than a gem to
+match. It has no color, it will not swap with an ordinary gem, and what
+collects it is anything going off in the four cells beside it, the way a brick
+is broken. Swapped against a rainbow or against another of its own kind it
+takes every one on the board at once. It falls with gravity, unlike a brick,
+which is why it is a kind of gem rather than a property of a cell.
+
+They fall in with the refill, one gem in a few hundred, while the level still
+has checks waiting in them. Both halves of that are settings: how many checks a
+level holds, and how often one falls. The first is a floor rather than a count,
+because the options that decide how many items a run has do not know how many
+places there are to put them, so when the pool outgrows everywhere else the
+gems make up the difference. Ten to a level is the ceiling, and every one of
+the ten is in the location table whatever a run asked for, because that table
+is a datapackage and fixed for everybody.
+
+Which gem on the board was cleared says nothing about which check it pays. A
+level's gems go in order and the order belongs to the run: coming back to a
+level whose first two are already checked and clearing one there takes the
+third.
 
 Items are found at **locations**: clearing each level, clearing it past each of
 its two score marks, and reaching a chain of each length from two to twelve.

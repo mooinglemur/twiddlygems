@@ -25,7 +25,8 @@ use twiddlygems::options::{
 };
 use twiddlygems::progression::{
     goal, item_name, item_pool, items, location_name, locations, requirement, Count, Item,
-    Requirement, AP_ID_BASE, LONGEST_CHAIN, RELIABLE_CHAIN, SHORTEST_CHAIN,
+    Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, LONGEST_CHAIN, RELIABLE_CHAIN,
+    SHORTEST_CHAIN,
 };
 
 /// What the game is called wherever Archipelago says its name.
@@ -139,6 +140,10 @@ fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
         ("shortest_chain", Json::Num(SHORTEST_CHAIN)),
         ("longest_chain", Json::Num(LONGEST_CHAIN)),
         ("reliable_chain", Json::Num(RELIABLE_CHAIN)),
+        // The ceiling on a level's gems, which is how many of them the
+        // location table holds. The world needs it to know how far its own
+        // floor-raising may go.
+        ("ap_gems_per_level", Json::Num(AP_GEMS_PER_LEVEL)),
         ("goal", rule(&goal(count))),
     ])
 }
@@ -188,11 +193,21 @@ fn location_table(levels: usize) -> Json {
         locations(levels)
             .into_iter()
             .map(|at| {
-                Json::Obj(vec![
+                let mut fields = vec![
                     ("name", Json::Str(location_name(at))),
                     ("id", Json::Num(AP_ID_BASE + at.id())),
                     ("rule", rule(&requirement(at, levels))),
-                ])
+                ];
+                // An Archipelago gem says where it sits in its level's
+                // sequence, which is what the world reads to decide whether
+                // this run has it at all: the names and numbers are the same
+                // for everybody, and how many of them are in play is not.
+                // Everything else has no such field, and the world takes the
+                // absence of one to mean "always".
+                if let Location::ApGem { index, .. } = at {
+                    fields.push(("gem_index", Json::Num(index)));
+                }
+                Json::Obj(fields)
             })
             .collect(),
     )

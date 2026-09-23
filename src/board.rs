@@ -400,9 +400,19 @@ impl Board {
     /// its own position when it did not move, and a negative row for a gem that
     /// has just entered from off the top. The renderer turns that into a fall;
     /// the board itself is already in its final state.
-    pub fn settle_stage(&mut self, rules: &Rules, rng: &mut Rng) -> Option<Vec<(f32, f32)>> {
+    /// `ap_wanted` is how many Archipelago gems this level still has checks
+    /// for, which caps how many the refill will let in.
+    pub fn settle_stage(
+        &mut self,
+        rules: &Rules,
+        rng: &mut Rng,
+        ap_wanted: u32,
+    ) -> Option<Vec<(f32, f32)>> {
         let mut origin: Vec<(f32, f32)> =
             self.positions().map(|p| (p.r as f32, p.c as f32)).collect();
+        // Counted once and kept, rather than swept for on every mouth of every
+        // pass: nothing takes one off the board while this runs.
+        let mut ap_on_board = self.ap_gems().len() as u32;
         // How many gems each refill point has already let in this stage, so
         // they queue above the board instead of arriving stacked on each other.
         let mut spawned = vec![0_i32; (self.rows * self.cols) as usize];
@@ -434,7 +444,21 @@ impl Board {
                         continue;
                     }
                     let i = self.index(mouth);
-                    self.set_gem(mouth, Some(Gem::plain(rules.draw_color(rng))));
+                    // An Archipelago gem falls in instead of an ordinary one,
+                    // now and then, while the level still has checks left in
+                    // them and there are not already that many waiting on the
+                    // board. Without the second half a long level would bury
+                    // itself in gems that pay nothing.
+                    let gem = if ap_on_board < ap_wanted
+                        && rules.ap_gem_odds > 0
+                        && rng.below(rules.ap_gem_odds) == 0
+                    {
+                        ap_on_board += 1;
+                        Gem::archipelago()
+                    } else {
+                        Gem::plain(rules.draw_color(rng))
+                    };
+                    self.set_gem(mouth, Some(gem));
                     origin[i] = ((mouth.r - 1 - spawned[i]) as f32, mouth.c as f32);
                     spawned[i] += 1;
                     resting = false;
@@ -565,7 +589,7 @@ mod tests {
     fn settle_all(board: &mut Board, rules: &Rules, rng: &mut Rng) -> Vec<(f32, f32)> {
         let mut last: Vec<(f32, f32)> =
             board.positions().map(|p| (p.r as f32, p.c as f32)).collect();
-        while let Some(origin) = board.settle_stage(rules, rng) {
+        while let Some(origin) = board.settle_stage(rules, rng, 0) {
             last = origin;
         }
         last

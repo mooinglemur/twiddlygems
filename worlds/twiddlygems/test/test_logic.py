@@ -1,7 +1,7 @@
 """What the rules promise, asked of Archipelago's own state machine."""
 
 from . import TwiddlyGemsTestBase
-from .. import GAME_DATA, ITEMS_BY_NAME, SETTINGS
+from .. import GAME_DATA, ITEMS_BY_NAME, LOCATIONS, SETTINGS
 
 
 def count_of(name: str):
@@ -76,6 +76,33 @@ class TestDefault(TwiddlyGemsTestBase):
         self.collect(upgrades[0])
         self.assertTrue(self.can_reach_location("Level 2 Gold"))
 
+    def test_only_the_gems_this_run_asked_for_are_in_its_world(self) -> None:
+        # Every level's ten gems are in the table, because the table is a
+        # datapackage and the same for everybody. A run plays over as many of
+        # them as it asked for, and no more: nothing spawns for the rest, so
+        # an item left in one could never be found.
+        levels = len(LEVELS)
+        self.assertEqual(self.world._ap_gems_per_level(), 1, "the default is one a level")
+
+        named = [at for at in LOCATIONS if "gem_index" in at]
+        self.assertEqual(
+            len(named),
+            levels * GAME_DATA["ap_gems_per_level"],
+            "the table should hold every level's ten however few are played",
+        )
+        in_play = [at for at in self.world._locations_in_play() if "gem_index" in at]
+        self.assertEqual(len(in_play), levels, "one gem a level should be in play")
+        self.assertTrue(
+            all(at["gem_index"] == 0 for at in in_play),
+            "the gems in play should be the start of each level's sequence",
+        )
+
+        # And the world built only those: asking for a location it did not
+        # create raises.
+        self.world.get_location("Level 1 Archipelago Gem 1")
+        with self.assertRaises(KeyError):
+            self.world.get_location("Level 1 Archipelago Gem 2")
+
     def test_a_chain_is_open_to_anybody(self) -> None:
         # A chain is made on whatever board is in front of you, and the
         # opening one is in front of everybody. The deep ones are rare rather
@@ -110,6 +137,37 @@ class TestDefault(TwiddlyGemsTestBase):
         # a game already won: an empty playthrough, no spheres, and every item
         # in the world optional. That is what clearing the last level would
         # be, since clearing a level asks for no items at all.
+        self.assertBeatable(False)
+        self.collect_all_but([])
+        self.assertBeatable(True)
+
+
+class TestGemsTurnedUp(TwiddlyGemsTestBase):
+    """Asked for more gems than the default, which is a bigger world."""
+
+    options = {"ap_gems": 6}
+
+    def test_the_world_grows_with_the_setting(self) -> None:
+        self.assertEqual(self.world._ap_gems_per_level(), 6)
+        in_play = [at for at in self.world._locations_in_play() if "gem_index" in at]
+        self.assertEqual(len(in_play), len(LEVELS) * 6)
+        self.world.get_location("Level 1 Archipelago Gem 6")
+        with self.assertRaises(KeyError):
+            self.world.get_location("Level 1 Archipelago Gem 7")
+
+
+class TestNoGems(TwiddlyGemsTestBase):
+    """Asked for none, which today's pool has room for."""
+
+    options = {"ap_gems": 0}
+
+    def test_a_run_can_ask_for_none(self) -> None:
+        self.assertEqual(self.world._ap_gems_per_level(), 0)
+        self.assertEqual(
+            [at for at in self.world._locations_in_play() if "gem_index" in at], []
+        )
+        # And the seed is still one that can be generated and finished: the
+        # items have to fit in what is left.
         self.assertBeatable(False)
         self.collect_all_but([])
         self.assertBeatable(True)

@@ -101,6 +101,16 @@ pub enum Location {
     /// Reaching a chain this long: one clear setting off the next, that many
     /// deep, off a single move.
     Chain(u32),
+    /// Collecting an Archipelago gem on the level at `level`.
+    ///
+    /// `index` is a place in that level's sequence rather than a particular
+    /// gem: clearing one checks the lowest of the level's gems not yet
+    /// checked, so the first ever collected on level three is `index` 0 and
+    /// the next is 1, whichever playthrough each happened on. A level holds
+    /// [`AP_GEMS_PER_LEVEL`] of these however few are in play, because the
+    /// numbers and names are a datapackage and a datapackage is fixed; which
+    /// of them a run actually has is [`ap_gems_per_level`].
+    ApGem { level: usize, index: u32 },
 }
 
 /// How well a level has been beaten, at best.
@@ -154,6 +164,7 @@ impl Location {
             Location::Chain(_) => 1,
             Location::LevelSilver(_) => 2,
             Location::LevelGold(_) => 3,
+            Location::ApGem { .. } => 4,
         }
     }
 
@@ -164,6 +175,11 @@ impl Location {
             | Location::LevelSilver(index)
             | Location::LevelGold(index) => index as u16,
             Location::Chain(length) => length as u16,
+            // Both halves, because neither alone names it. Ten to a level, so
+            // a fifty level ladder needs nine bits and this has sixteen.
+            Location::ApGem { level, index } => {
+                level as u16 * AP_GEMS_PER_LEVEL as u16 + index as u16
+            }
         }
     }
 
@@ -178,6 +194,11 @@ impl Location {
             Location::Chain(length) => CHAIN_ID_BASE + length,
             Location::LevelSilver(index) => SILVER_ID_BASE + index as u32,
             Location::LevelGold(index) => GOLD_ID_BASE + index as u32,
+            // Ten to a level, packed in order, so a level's whole sequence is
+            // one run of numbers and appending levels appends numbers.
+            Location::ApGem { level, index } => {
+                AP_GEM_ID_BASE + level as u32 * AP_GEMS_PER_LEVEL + index
+            }
         }
     }
 
@@ -186,6 +207,13 @@ impl Location {
     pub fn from_id(id: u32) -> Option<Location> {
         if id < CHAIN_ID_BASE {
             return Some(Location::LevelClear(id as usize));
+        }
+        if id >= AP_GEM_ID_BASE {
+            let at = id - AP_GEM_ID_BASE;
+            return Some(Location::ApGem {
+                level: (at / AP_GEMS_PER_LEVEL) as usize,
+                index: at % AP_GEMS_PER_LEVEL,
+            });
         }
         if id >= GOLD_ID_BASE {
             return Some(Location::LevelGold((id - GOLD_ID_BASE) as usize));
@@ -207,6 +235,18 @@ impl Location {
 const CHAIN_ID_BASE: u32 = 1_000;
 const SILVER_ID_BASE: u32 = 2_000;
 const GOLD_ID_BASE: u32 = 3_000;
+/// Fifty levels of ten fit inside this thousand, which is the ladder's own
+/// ceiling, so this stays one block like the rest.
+const AP_GEM_ID_BASE: u32 = 4_000;
+
+/// How many Archipelago gem locations every level has, whatever a run puts in
+/// play.
+///
+/// The table is the datapackage: fixed names and fixed numbers, the same for
+/// everybody, so a run asking for one gem and a run asking for ten are reading
+/// the same list. [`ap_gems_per_level`] is how many of them a given run
+/// actually holds.
+pub const AP_GEMS_PER_LEVEL: u32 = 10;
 
 /// Where the move items start. The unlocks sit below it on their own codes.
 const MOVES_ID_BASE: u32 = 1_000;
@@ -311,8 +351,13 @@ pub struct Reached {
 
 impl Reached {
     /// A run that has got nowhere yet.
+    ///
+    /// Sized off [`locations`] rather than counted out again here, which is
+    /// what kept it right when the gems were added: the two have to agree
+    /// about how long the table is, and the second copy of the arithmetic was
+    /// the one that went stale.
     pub fn none(levels: usize) -> Self {
-        Reached { seen: vec![false; 3 * levels + (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize], levels }
+        Reached { seen: vec![false; locations(levels).len()], levels }
     }
 
     pub fn has(&self, at: Location) -> bool {
@@ -390,6 +435,17 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
         // A chain is made on whatever board is in front of you, and the
         // opening one is in front of everybody.
         Location::Chain(_) => Requirement::Always,
+        // A gem is collected by playing its level, not by beating it, so it
+        // asks for what reaching that level asks for and nothing more. Within
+        // a level they go in order, because clearing one checks the lowest
+        // still unchecked: the second cannot be taken before the first.
+        Location::ApGem { level: 0, index: 0 } => Requirement::Always,
+        Location::ApGem { level, index: 0 } => {
+            Requirement::Reached(Location::LevelClear(level - 1))
+        }
+        Location::ApGem { level, index } => {
+            Requirement::Reached(Location::ApGem { level, index: index - 1 })
+        }
     }
 }
 
@@ -461,17 +517,87 @@ pub fn location_name(location: Location) -> String {
         Location::LevelSilver(index) => format!("Level {} Silver", index + 1),
         Location::LevelGold(index) => format!("Level {} Gold", index + 1),
         Location::Chain(length) => format!("{length} Chain"),
+        Location::ApGem { level, index } => {
+            format!("Level {} Archipelago Gem {}", level + 1, index + 1)
+        }
     }
 }
 
-/// Every location in the game, which is the list a generator would place over.
+/// Every location the game knows of, which is the list that becomes
+/// Archipelago's location name table.
+///
+/// Every level's ten Archipelago gems are here whatever a run asked for, for
+/// the same reason every item is in the item table whatever a run holds: the
+/// datapackage is one fixed list shared by everybody, and a name that came and
+/// went with a yaml setting would not be one.
+///
+/// What a given run actually plays over is the subset [`in_play`] gives.
 pub fn locations(level_count: usize) -> Vec<Location> {
     (0..level_count)
         .map(Location::LevelClear)
         .chain((0..level_count).map(Location::LevelSilver))
         .chain((0..level_count).map(Location::LevelGold))
         .chain((SHORTEST_CHAIN..=LONGEST_CHAIN).map(Location::Chain))
+        .chain((0..level_count).flat_map(|level| {
+            (0..AP_GEMS_PER_LEVEL).map(move |index| Location::ApGem { level, index })
+        }))
         .collect()
+}
+
+/// How many Archipelago gems each level carries in a run set up this way.
+///
+/// The setting is a floor rather than a count. A run's items have to fit
+/// somewhere, and the options that decide how many items there are do not
+/// know or care how many places there are to put them, so this closes the gap:
+/// enough gems per level to hold whatever the rest of the world could not.
+///
+/// Capped at [`AP_GEMS_PER_LEVEL`], which is as many as the location table
+/// has. A run whose pool will not fit even then is one the rules and the pool
+/// disagree about, and `the_pool_fits_in_the_locations_there_are` is where
+/// that is caught rather than here.
+pub fn ap_gems_per_level(levels: usize, options: &Options) -> u32 {
+    let needed = ap_gems_needed(levels, item_pool(levels, options).len());
+    options.ap_gems.max(needed).min(AP_GEMS_PER_LEVEL)
+}
+
+/// How many gems a level has to carry for a pool of `pool` items to have
+/// somewhere to go, ignoring what anybody asked for.
+///
+/// Split out from [`ap_gems_per_level`] so the arithmetic can be put a pool
+/// that the game cannot currently produce: this is the machinery that the
+/// progressive moves upgrade is waiting on, and it wants checking before the
+/// thing that needs it exists.
+pub fn ap_gems_needed(levels: usize, pool: usize) -> u32 {
+    if levels == 0 {
+        return 0;
+    }
+    // Everywhere but the gems, which is what they are there to top up.
+    //
+    // Every one of them, including the deep chains the solo fill will not use.
+    // This number decides which locations a world has at all, and the solo
+    // side and the Archipelago side have to arrive at the same one or a seed's
+    // locations and the game's would not match. That the solo fill then
+    // declines to put its own items down a twelve-deep chain is a separate
+    // matter, and `the_solo_placement_finds_a_home_for_the_whole_pool` is
+    // what catches it if that ever leaves the fill short.
+    let elsewhere =
+        locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
+    // Round up: half a location is no location.
+    let short = pool.saturating_sub(elsewhere);
+    (short.div_ceil(levels) as u32).min(AP_GEMS_PER_LEVEL)
+}
+
+/// Whether this location is one a run set up this way actually plays over.
+///
+/// The gems past what a run asked for are in the table but not in the world:
+/// nothing is hidden in them, and nothing spawns for them.
+pub fn in_play(at: Location, levels: usize, options: &Options) -> bool {
+    match at {
+        Location::ApGem { level, index } => {
+            level < levels && index < ap_gems_per_level(levels, options)
+        }
+        _ => true,
+    }
 }
 
 /// Where an item sits in [`items`], which is what an event carries instead of
@@ -496,6 +622,14 @@ pub fn location_index(location: Location, levels: usize) -> Option<usize> {
         Location::Chain(length) => (SHORTEST_CHAIN..=LONGEST_CHAIN)
             .contains(&length)
             .then_some(3 * levels + (length - SHORTEST_CHAIN) as usize),
+        Location::ApGem { level, index } => (level < levels
+            && index < AP_GEMS_PER_LEVEL)
+            .then(|| {
+                3 * levels
+                    + (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize
+                    + level * AP_GEMS_PER_LEVEL as usize
+                    + index as usize
+            }),
     }
 }
 
@@ -704,19 +838,28 @@ pub fn item_pool(levels: usize, _options: &Options) -> Vec<Item> {
 /// the locations it checked and looks the items back up here, so the run seed
 /// has to be saved alongside them, and it is.
 pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option<Item>> {
+    // The whole table, so an index into `held` is a `location_index` and a
+    // save's ids look up straight. The gems a run did not ask for are in it
+    // and simply never filled, which `worth_using` sees to.
     let places = locations(levels);
+    let gems = ap_gems_per_level(levels, options);
+    // The ones a run can actually be asked to check, worked out once. Most of
+    // the table is Archipelago gems a run did not ask for, and walking past
+    // them on every round of every item is most of what this used to cost.
+    let usable: Vec<Location> =
+        places.iter().copied().filter(|at| worth_using(*at, gems)).collect();
     let mut held: Vec<Option<Item>> = vec![None; places.len()];
     let mut reached = Reached::none(levels);
     let mut inventory = Inventory::empty();
 
     let mut rng = Rng::new(seed);
     for item in item_pool(levels, options) {
-        expand(&places, levels, &inventory, &mut reached, options);
-        let open: Vec<usize> = places
+        expand(&usable, levels, &inventory, &mut reached, options);
+        let open: Vec<usize> = usable
             .iter()
-            .enumerate()
-            .filter(|(index, at)| held[*index].is_none() && reached.has(**at) && worth_using(**at))
-            .map(|(index, _)| index)
+            .filter_map(|at| location_index(*at, levels))
+            .filter(|index| held[*index].is_none())
+            .filter(|index| reached.has(places[*index]))
             .collect();
         let Some(&index) = open.get(rng.below(open.len() as u32) as usize) else {
             // Nowhere left to put it. The rules and the pool disagree, which
@@ -735,9 +878,10 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     // More moves is the filler we have: harmless wherever it lands, and it can
     // only ever open golds rather than close them, so dropping it in after the
     // pool is placed cannot strand anything.
-    expand(&places, levels, &inventory, &mut reached, options);
-    for (index, at) in places.iter().enumerate() {
-        if held[index].is_none() && reached.has(*at) && worth_using(*at) {
+    expand(&usable, levels, &inventory, &mut reached, options);
+    for at in &usable {
+        let Some(index) = location_index(*at, levels) else { continue };
+        if held[index].is_none() && reached.has(*at) {
             // Never a gold's own level, even though by now it would be
             // harmless: the location is already open, so it cannot be
             // required to reach itself. It reads as a mistake, and a rule
@@ -754,16 +898,22 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     held
 }
 
-/// Whether a solo run should be asked to check here for its own items.
+/// Whether a solo run should be asked to check here for its own items, given
+/// that each level carries `gems` Archipelago gems.
 ///
 /// Every location is reachable in principle; the deep chains are just rare.
 /// `make balance` measures how often a run gets there, and past
 /// [`RELIABLE_CHAIN`] it falls away fast enough that keeping a level's own
 /// progression behind one would be asking a solo player to be lucky. They stay
 /// locations, and a multiworld will put somebody else's item in them.
-fn worth_using(location: Location) -> bool {
+///
+/// A gem past what the run asked for is a different sort of unusable: it is in
+/// the table because the table is fixed, but nothing will ever spawn for it,
+/// so an item left there could never be found at all.
+fn worth_using(location: Location, gems: u32) -> bool {
     match location {
         Location::Chain(length) => length <= RELIABLE_CHAIN,
+        Location::ApGem { index, .. } => index < gems,
         _ => true,
     }
 }
@@ -963,17 +1113,30 @@ mod tests {
         })
     }
 
+    /// Past this many values a choice is sampled rather than swept whole. See
+    /// [`setups`].
+    const SWEPT_WHOLE: usize = 4;
+
     fn setups() -> Vec<Options> {
         let mut all = vec![Options::default()];
         for (at, setting) in SETTINGS.iter().enumerate() {
-            // A choice is swept in full, since there are a handful of each. A
-            // range is sampled at its two ends and its default, because these
-            // multiply: one range of a few thousand values would turn this
-            // from a sweep into a sit-down. The ends are where a range goes
-            // wrong anyway.
+            // These multiply, so anything with more than a handful of values
+            // is sampled at its ends and its default rather than swept: the
+            // ends are where a setting goes wrong, and a full sweep of every
+            // combination turns this from a check into a sit-down. A short
+            // choice is swept whole, because the goal's four values each pick
+            // a different branch of the completion rule and all four have to
+            // be walked.
             let mut values: Vec<u32> = match setting.kind {
                 Kind::Range { low, high } => vec![low, setting.default, high],
-                Kind::Choice(choices) => choices.iter().map(|choice| choice.value).collect(),
+                Kind::Choice(choices) if choices.len() <= SWEPT_WHOLE => {
+                    choices.iter().map(|choice| choice.value).collect()
+                }
+                Kind::Choice(choices) => vec![
+                    choices.first().expect("a choice has values").value,
+                    setting.default,
+                    choices.last().expect("a choice has values").value,
+                ],
             };
             values.sort_unstable();
             values.dedup();
@@ -1167,17 +1330,24 @@ mod tests {
     fn an_unlock_is_never_kept_behind_a_score_mark() {
         // The unlocks go in first, while a run holds nothing, and nothing
         // holding nothing can reach a score mark: every mark asks for all five
-        // of them. So an unlock can only ever land on a level clear or on a
-        // chain, and that is what keeps the fill from having to back out of a
-        // corner. It also means claiming every clear and every short chain
-        // hands a run all five, whatever it was dealt, which is how the
+        // of them. So an unlock can only ever land somewhere a run holding
+        // nothing can already get to, and that is what keeps the fill from
+        // having to back out of a corner.
+        //
+        // A level clear, a chain, or an Archipelago gem: the gems joined this
+        // list when they were added, because collecting one asks only for
+        // being able to play its level. Anything claiming every one of these
+        // is holding all five unlocks whatever it was dealt, which is how the
         // screenshot runs are set up.
         for (levels, seed, options) in every_run() {
             let placed = solo_placement(levels, seed, &options);
             for (at, held) in locations(levels).into_iter().zip(placed) {
                 let Some(Item::Unlock(_)) = held else { continue };
                 assert!(
-                    matches!(at, Location::LevelClear(_) | Location::Chain(_)),
+                    matches!(
+                        at,
+                        Location::LevelClear(_) | Location::Chain(_) | Location::ApGem { .. }
+                    ),
                     "on a ladder of {levels} dealt from {seed:#x} as {options:?}, {} is \
                      keeping {}, which reaching it would need",
                     location_name(at),
@@ -1237,13 +1407,20 @@ mod tests {
             other => requirement(other, levels),
         };
         let stuck = walk(levels, &placed, &options, circular);
-        // The chains are open to anyone and stay reachable; the ladder and
+        // The chains are open to anyone, and so is the opening level's own run
+        // of gems, since playing it asks for nothing. The ladder and
         // everything hanging off it is what should be lost.
         assert!(
             stuck.contains(&Location::LevelClear(0)),
             "a location asking for the item it holds was reached anyway",
         );
-        assert_eq!(stuck.len(), 3 * levels, "only the chains should have survived");
+        let survivors =
+            (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize + AP_GEMS_PER_LEVEL as usize;
+        assert_eq!(
+            stuck.len(),
+            locations(levels).len() - survivors,
+            "only the chains and the opening level's gems should have survived",
+        );
     }
 
     #[test]
@@ -1281,6 +1458,93 @@ mod tests {
                     "on a ladder of {levels} dealt from {seed:#x} as {options:?}, a \
                      {deepest} chain is holding an item, which few runs would ever reach",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn a_level_always_has_ten_gem_locations_however_few_are_in_play() {
+        // The table is the datapackage: one fixed list of names and numbers,
+        // the same for everybody. A run asking for one gem and a run asking
+        // for ten read the same list; what differs is which of them hold
+        // anything.
+        for levels in LADDERS {
+            let gems: Vec<Location> = locations(levels)
+                .into_iter()
+                .filter(|at| matches!(at, Location::ApGem { .. }))
+                .collect();
+            assert_eq!(gems.len(), levels * AP_GEMS_PER_LEVEL as usize);
+            for value in [0, 1, AP_GEMS_PER_LEVEL] {
+                let options = Options { ap_gems: value, ..Options::default() };
+                assert_eq!(
+                    locations(levels).len(),
+                    3 * levels + (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize + gems.len(),
+                    "the table changed size when the setting did, at {value}",
+                );
+                let playing = gems.iter().filter(|at| in_play(**at, levels, &options)).count();
+                assert_eq!(
+                    playing,
+                    levels * ap_gems_per_level(levels, &options) as usize,
+                    "at {value} gems a level, the wrong number are in play",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_gem_floor_rises_when_the_pool_has_nowhere_else_to_go() {
+        // The whole reason the setting is a floor. The options that decide how
+        // many items there are do not know how many places there are to put
+        // them, so this is what closes the gap.
+        let levels = 13;
+        let asked = Options { ap_gems: 0, ..Options::default() };
+        assert_eq!(
+            ap_gems_per_level(levels, &asked),
+            0,
+            "today's pool fits without them, so none should be forced",
+        );
+
+        // A pool too big for everywhere else has to be met with gems. Sized
+        // off the real tables rather than a number written here, so this keeps
+        // meaning the same thing as the ladder grows. Counted the way the
+        // function counts: every location that is not a gem, deep chains
+        // included, because this number decides what locations a world has
+        // and both sides of it have to agree exactly.
+        let elsewhere =
+            locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
+        let over = elsewhere + levels * 3 + 1;
+        assert_eq!(
+            ap_gems_needed(levels, over),
+            4,
+            "a pool of {over} against {elsewhere} places should want four gems a level",
+        );
+        assert_eq!(
+            ap_gems_needed(levels, elsewhere),
+            0,
+            "a pool that already fits asked for gems anyway",
+        );
+        // And it never asks for more than the table has.
+        assert_eq!(ap_gems_needed(levels, 100_000), AP_GEMS_PER_LEVEL);
+    }
+
+    #[test]
+    fn an_item_never_lands_in_a_gem_the_run_did_not_ask_for() {
+        // Nothing spawns for those, so an item left in one could never be
+        // found: it would be a seed nobody can finish.
+        for (levels, seed, options) in every_run() {
+            let gems = ap_gems_per_level(levels, &options);
+            let placed = solo_placement(levels, seed, &options);
+            for (at, held) in locations(levels).into_iter().zip(placed) {
+                let Location::ApGem { index, .. } = at else { continue };
+                if index >= gems {
+                    assert!(
+                        held.is_none(),
+                        "dealt from {seed:#x} as {options:?}, {} holds {} and nothing will \
+                         ever spawn for it",
+                        location_name(at),
+                        item_name(held.unwrap()),
+                    );
+                }
             }
         }
     }
@@ -1355,6 +1619,16 @@ mod tests {
             (1_000, "Level 1 Moves Upgrade", Item::Moves { level: 0 }),
             (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
         ];
+        for (id, name) in [
+            (4_000, "Level 1 Archipelago Gem 1"),
+            (4_009, "Level 1 Archipelago Gem 10"),
+            (4_010, "Level 2 Archipelago Gem 1"),
+            (4_499, "Level 50 Archipelago Gem 10"),
+        ] {
+            let at = Location::from_id(id).expect("a number in use is a location");
+            assert_eq!(location_name(at), name, "location {id} changed meaning");
+            assert_eq!(at.id(), id, "and it does not answer to that number any more");
+        }
         for (id, name, item) in things {
             assert_eq!(item.id(), id, "{name} changed its number");
             assert_eq!(item_name(item), name, "item {id} changed meaning");

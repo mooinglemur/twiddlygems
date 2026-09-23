@@ -4,12 +4,13 @@
 //! level when you clear one, and later the Archipelago layer will answer the
 //! same question (which levels may be played) from received items instead.
 
-use crate::game::{Event, Game, Status, EV_ITEM};
+use crate::game::{Event, Game, Status, EV_AP_CLEAR, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::options::{Kind, Options, SETTINGS};
 use crate::progression::{
-    fill_seed, item_index, item_name, items, location_index, location_name, locations,
-    solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION, SHORTEST_CHAIN,
+    ap_gems_per_level, fill_seed, item_index, item_name, items, location_index, location_name,
+    locations, solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION,
+    SHORTEST_CHAIN,
 };
 use crate::rng::Rng;
 
@@ -112,7 +113,18 @@ impl Session {
         // however much its own rules would otherwise allow.
         let inventory = Inventory::empty();
         let mut session = Session {
-            game: open_level(0, first, &inventory, deal.next_u64()),
+            // A fresh run has checked nothing, so the opening level carries
+            // its whole allowance.
+            game: open_level(
+                0,
+                first,
+                &inventory,
+                deal.next_u64(),
+                ApGems {
+                    odds: options.ap_gem_odds,
+                    wanted: ap_gems_per_level(levels.len(), &options),
+                },
+            ),
             levels: levels.clone(),
             index: 0,
             unlocked: 1,
@@ -270,8 +282,20 @@ impl Session {
     /// whatever the run holds by now.
     fn deal_level(&mut self) {
         let seed = self.deal.next_u64();
-        self.game = open_level(self.index, &self.levels[self.index], &self.inventory, seed);
+        let gems = self.ap_gems_for(self.index);
+        self.game =
+            open_level(self.index, &self.levels[self.index], &self.inventory, seed, gems);
         self.sync_name();
+    }
+
+    /// How many checks are still waiting in one level's gems, and how often
+    /// one should fall in.
+    fn ap_gems_for(&self, index: usize) -> ApGems {
+        let per_level = ap_gems_per_level(self.levels.len(), &self.options);
+        let taken = (0..per_level)
+            .filter(|i| self.checked.contains(&Location::ApGem { level: index, index: *i }.id()))
+            .count() as u32;
+        ApGems { odds: self.options.ap_gem_odds, wanted: per_level - taken }
     }
 
     /// The level being played, as the ladder defines it.
@@ -403,15 +427,13 @@ impl Session {
     /// later version looks like from here.
     pub fn restore(&mut self, id: u32) {
         let Some(location) = Location::from_id(id) else { return };
-        match location {
-            Location::LevelClear(index)
-            | Location::LevelSilver(index)
-            | Location::LevelGold(index)
-                if index >= self.levels.len() =>
-            {
-                return
-            }
-            _ => {}
+        // Whether this ladder actually has that location, asked of the one
+        // function that knows. What stood here was a kind-by-kind bounds
+        // check, a third copy of the same question, and it went stale the
+        // moment a new kind of location was added: an id far past the end of
+        // the table read back as a gem on level six hundred and was believed.
+        if location_index(location, self.levels.len()).is_none() {
+            return;
         }
         if self.checked.contains(&id) {
             return;
@@ -455,6 +477,30 @@ impl Session {
         for length in SHORTEST_CHAIN..=reached {
             self.check(Location::Chain(length));
         }
+        for _ in 0..self.game.events().iter().filter(|e| e.kind == EV_AP_CLEAR).count() {
+            self.check_next_ap_gem();
+        }
+    }
+
+    /// Checks the next Archipelago gem in this level's sequence.
+    ///
+    /// Which gem was collected on the board says nothing about which check it
+    /// pays: they go in order, and the order belongs to the run rather than to
+    /// the playthrough. Coming back to a level whose first two gems are
+    /// already checked and clearing one there takes the third, not the first.
+    ///
+    /// Nothing happens once the level's run is exhausted. A run asking for one
+    /// gem a level has one check there however many gems it goes on to clear,
+    /// which is what keeps the pool and the locations agreeing.
+    fn check_next_ap_gem(&mut self) {
+        let gems = ap_gems_per_level(self.levels.len(), &self.options);
+        for index in 0..gems {
+            let at = Location::ApGem { level: self.index, index };
+            if !self.checked.contains(&at.id()) {
+                self.check(at);
+                return;
+            }
+        }
     }
 
     pub fn update(&mut self, dt_ms: f32) {
@@ -482,16 +528,37 @@ impl Session {
 ///
 /// The one place a [`Game`] is built from a [`LevelSpec`], so there is nowhere
 /// for a level to be started with more than the run has earned.
-fn open_level(index: usize, spec: &LevelSpec, inventory: &Inventory, seed: u64) -> Game {
+fn open_level(
+    index: usize,
+    spec: &LevelSpec,
+    inventory: &Inventory,
+    seed: u64,
+    gems: ApGems,
+) -> Game {
     let mut spec = spec.clone();
     inventory.apply(index, &mut spec);
-    Game::new(spec, seed)
+    spec.rules.ap_gem_odds = gems.odds;
+    let mut game = Game::new(spec, seed);
+    game.ap_gems_wanted = gems.wanted;
+    game
+}
+
+/// What a level should do about Archipelago gems: how often one falls in, and
+/// how many checks are still waiting in them here.
+///
+/// Worked out from the run's options and from what it has already checked, so
+/// coming back to a level whose gems are all taken deals a board with none,
+/// and coming back partway through deals one with the rest still to find.
+#[derive(Clone, Copy)]
+struct ApGems {
+    odds: u32,
+    wanted: u32,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::Special;
+    use crate::board::{Gem, Pos, Special};
     use crate::game::Phase;
     use crate::level::Objective;
     use crate::rules::SpecialSet;
@@ -806,7 +873,10 @@ mod tests {
         // before it would be read off a smaller number than the player sees.
         // Run holding an unlock, because with none there is nothing to mint
         // and so nothing for the flourish to add.
-        let mut session = Session::new(7);
+        // A pinned seed, because what this needs is a board whose score at the
+        // goal sits just under gold. Re-pin by sweeping seeds for one where
+        // the goal is met below the mark and the flourish carries it over.
+        let mut session = Session::new(1);
         session.receive(Item::Unlock(Special::LineH));
         let gold = session.level().gold;
         session.game_mut().progress.score = gold - 400;
@@ -842,11 +912,102 @@ mod tests {
         );
     }
 
+    /// Collects one Archipelago gem on the board in front of the session, by
+    /// putting one where a match is about to happen.
+    fn collect_one_gem(session: &mut Session) {
+        let board = &mut session.game_mut().board;
+        for c in 0..3 {
+            board.set_gem(Pos::new(1, c), Some(Gem::plain(1)));
+        }
+        board.set_gem(Pos::new(1, 2), Some(Gem::plain(2)));
+        board.set_gem(Pos::new(2, 2), Some(Gem::plain(1)));
+        board.set_gem(Pos::new(0, 0), Some(Gem::archipelago()));
+        let (a, b) = (Pos::new(1, 2), Pos::new(2, 2));
+        assert!(session.game_mut().try_swap(a, b), "the setup swap was refused");
+        for _ in 0..400 {
+            session.update(16.0);
+            if session.game().phase() == Phase::Idle {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn collecting_a_gem_checks_the_next_in_the_levels_sequence() {
+        // Which gem was cleared on the board says nothing about which check it
+        // pays. They go in order, and the order belongs to the run: coming
+        // back to a level and clearing one takes the next it has not had, not
+        // the first.
+        let mut session = Session::set_up(7, Options { ap_gems: 3, ..Options::default() });
+        assert!(session.checked().is_empty());
+
+        collect_one_gem(&mut session);
+        assert_eq!(
+            session.checked(),
+            [Location::ApGem { level: 0, index: 0 }.id()],
+            "the first gem collected did not check the first of the sequence",
+        );
+
+        // A fresh board on the same level, as a retry deals. The sequence
+        // carries over rather than starting again.
+        session.retry();
+        collect_one_gem(&mut session);
+        assert!(
+            session.checked().contains(&Location::ApGem { level: 0, index: 1 }.id()),
+            "a second playthrough checked the first gem again instead of the next",
+        );
+        // Counted rather than taking the length of everything checked, since
+        // a match that clears a gem can set off a chain, and a chain is a
+        // location too.
+        let gems = session
+            .checked()
+            .iter()
+            .filter(|id| matches!(Location::from_id(**id), Some(Location::ApGem { .. })))
+            .count();
+        assert_eq!(gems, 2, "two gems collected paid for {gems} checks");
+    }
+
+    #[test]
+    fn a_level_stops_dealing_gems_once_its_checks_are_taken() {
+        // The board is told how many are still worth spawning, so a level
+        // whose run is exhausted deals none. Without it a player would keep
+        // clearing gems that pay nothing.
+        let mut session = Session::set_up(7, Options { ap_gems: 1, ..Options::default() });
+        assert_eq!(session.game().ap_gems_wanted, 1, "the opening level should want its one");
+
+        collect_one_gem(&mut session);
+        assert!(session.checked().contains(&Location::ApGem { level: 0, index: 0 }.id()));
+
+        session.retry();
+        assert_eq!(
+            session.game().ap_gems_wanted,
+            0,
+            "the level still wants gems after its only check was taken",
+        );
+    }
+
+    #[test]
+    fn a_run_asking_for_no_gems_is_dealt_none() {
+        let mut session = Session::set_up(7, Options { ap_gems: 0, ..Options::default() });
+        assert_eq!(session.game().ap_gems_wanted, 0);
+        for _ in 0..600 {
+            session.update(16.0);
+            if let Some((a, b)) = session.game().hint() {
+                session.game_mut().try_swap(a, b);
+            }
+            assert!(
+                session.game().board.ap_gems().is_empty(),
+                "a run that asked for no gems was dealt one",
+            );
+        }
+    }
+
     #[test]
     fn a_chain_checks_its_location_and_pays_once() {
         // Two deep turns up by itself soon enough: a clear that drops gems
-        // into another match.
-        let mut session = Session::new(11);
+        // into another match. Pinned, because "soon enough" is only true of
+        // most boards and this one has three moves to do it in.
+        let mut session = Session::new(0);
         let chain = Location::Chain(SHORTEST_CHAIN).id();
         for _ in 0..4000 {
             if session.checked().contains(&chain) {

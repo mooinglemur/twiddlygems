@@ -20,11 +20,20 @@
 pub struct Options {
     /// What finishing the game means.
     pub goal: Goal,
+    /// The fewest Archipelago gems a level carries.
+    ///
+    /// A floor rather than a count: a run whose items will not fit in the
+    /// locations it has gets more of these until they do. See
+    /// [`crate::progression::ap_gems_per_level`].
+    pub ap_gems: u32,
+    /// One refilled gem in this many is an Archipelago gem, while the level
+    /// still has checks waiting in them.
+    pub ap_gem_odds: u32,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { goal: Goal::GoldOnLastLevel }
+        Options { goal: Goal::GoldOnLastLevel, ap_gems: 1, ap_gem_odds: 256 }
     }
 }
 
@@ -79,6 +88,8 @@ impl Options {
     pub fn get(&self, at: usize) -> Option<u32> {
         match SETTINGS.get(at)?.key {
             GOAL => Some(self.goal.value()),
+            AP_GEMS => Some(self.ap_gems),
+            AP_GEM_ODDS => Some(self.ap_gem_odds),
             _ => None,
         }
     }
@@ -91,6 +102,8 @@ impl Options {
             return false;
         }
         match setting.key {
+            AP_GEMS => self.ap_gems = value,
+            AP_GEM_ODDS => self.ap_gem_odds = value,
             GOAL => match Goal::from_value(value) {
                 Some(goal) => self.goal = goal,
                 None => return false,
@@ -101,6 +114,10 @@ impl Options {
     }
 }
 
+/// The key of the setting that decides [`Options::ap_gems`].
+pub const AP_GEMS: &str = "ap_gems";
+/// The key of the setting that decides [`Options::ap_gem_odds`].
+pub const AP_GEM_ODDS: &str = "ap_gem_odds";
 /// The key of the setting that decides [`Options::goal`].
 pub const GOAL: &str = "goal";
 
@@ -184,12 +201,51 @@ pub static SETTINGS: &[Setting] = &[
         ]),
         default: 0,
     },
+    Setting {
+        key: AP_GEMS,
+        label: "Archipelago gems per level",
+        about: "The fewest checks hidden in the gems that fall on each level. \
+                A run needing more room for its items gets more of them.",
+        // A floor, not a count, which is why zero is allowed: somebody who
+        // wants none should get none unless their own options demand them.
+        // Ten is the ceiling because ten is what the location table holds, and
+        // that number is a datapackage and cannot move.
+        kind: Kind::Range { low: 0, high: 10 },
+        default: 1,
+    },
+    Setting {
+        key: AP_GEM_ODDS,
+        label: "How often a gem falls",
+        about: "One refilled gem in this many is an Archipelago gem, while \
+                the level still has checks waiting in them.",
+        // A list rather than a range, because the useful values span three
+        // orders of magnitude and a pair of step buttons walking one at a time
+        // from 64 to 16384 is not a control anybody can use. Doubling each
+        // step is how a frequency is actually thought about.
+        kind: Kind::Choice(&[
+            Choice { key: "one_in_64", label: "1 in 64", value: 64 },
+            Choice { key: "one_in_128", label: "1 in 128", value: 128 },
+            Choice { key: "one_in_256", label: "1 in 256", value: 256 },
+            Choice { key: "one_in_512", label: "1 in 512", value: 512 },
+            Choice { key: "one_in_1024", label: "1 in 1024", value: 1_024 },
+            Choice { key: "one_in_2048", label: "1 in 2048", value: 2_048 },
+            Choice { key: "one_in_4096", label: "1 in 4096", value: 4_096 },
+            Choice { key: "one_in_8192", label: "1 in 8192", value: 8_192 },
+            Choice { key: "one_in_16384", label: "1 in 16384", value: 16_384 },
+        ]),
+        // Measured rather than guessed: `make balance` plays levels out at
+        // each of these and counts how long a gem takes to fall. At one in
+        // 256 a gem turns up in about a third of playthroughs, so a level's
+        // one check costs two or three runs at it. One in 512 was four times
+        // that, which is a grind rather than a surprise, and one in 64 puts
+        // one on nearly every board.
+        default: 256,
+    },
     // A level's moves upgrade has no setting of its own yet. Each level
     // declares what its upgrade is worth and one item carries the whole of it,
     // so there is nothing to choose. The choice that belongs here is whether
-    // to split that total into one item per move, and it waits on the
-    // Archipelago gem: the ladder grants 166 moves across thirteen levels and
-    // has 50 locations, so one item per move needs somewhere else to put them.
+    // to split that total into one item per move, and it is what the setting
+    // above exists to make room for.
 ];
 
 /// Where to find one by key.
