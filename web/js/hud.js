@@ -2,7 +2,7 @@
 // the overlay used for results and level selection.
 
 import { NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
-import { PALETTE } from './render.js';
+import { PALETTE, paintSpecialIcon } from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
 /// little works, and far short of a session's worth.
@@ -16,12 +16,30 @@ const TIER_CLASSES = TIER_CLASS.filter(Boolean);
 /// second half is the point: an unlock is being announced to someone who has
 /// never seen that gem, so it says how to make one.
 const SPECIALS = {
-  [Special.LINE_H]: { name: 'Horizontal Line Clear', from: 'four in a column' },
-  [Special.LINE_V]: { name: 'Vertical Line Clear', from: 'four in a row' },
-  [Special.CROSS]: { name: 'Cross Clear', from: 'an L or a T' },
-  [Special.RAINBOW]: { name: 'Rainbow', from: 'five in a line' },
-  [Special.ROCKET]: { name: 'Rocket', from: 'a 2x2 square' },
+  [Special.LINE_H]: { name: 'Horizontal Line Clear', short: 'Horizontal', from: 'four in a column' },
+  [Special.LINE_V]: { name: 'Vertical Line Clear', short: 'Vertical', from: 'four in a row' },
+  [Special.CROSS]: { name: 'Cross Clear', short: 'Cross', from: 'an L or a T' },
+  [Special.RAINBOW]: { name: 'Rainbow', short: 'Rainbow', from: 'five in a line' },
+  [Special.ROCKET]: { name: 'Rocket', short: 'Rocket', from: 'a 2x2 square' },
 };
+
+/// The order the tracker shows the unlocks in: the three markings first, from
+/// the plainest match to the fiddliest, then the two gems that replace the gem
+/// entirely.
+const TRACKED = [Special.LINE_H, Special.LINE_V, Special.CROSS, Special.RAINBOW, Special.ROCKET];
+
+/// How big a tracker icon is drawn, in CSS pixels. Five of them and their
+/// captions fit a phone's width; the stylesheet shrinks them below that.
+const ICON_SIZE = 40;
+
+/// The marks a level can be beaten to, in order, which is also the order the
+/// three pips on a level row sit in. Each is a location an item is found at,
+/// so a row of them is a row of checks.
+const MARKS = [
+  { tier: Tier.CLEAR, name: 'clear' },
+  { tier: Tier.SILVER, name: 'silver' },
+  { tier: Tier.GOLD, name: 'gold' },
+];
 
 export class Hud {
   constructor(engine, dom) {
@@ -232,7 +250,7 @@ export class Hud {
     buttons.push(button('Levels', actions.onLevels, false));
     dom.overlayButtons.replaceChildren(...buttons);
 
-    dom.levelGrid.classList.add('hidden');
+    dom.tracker.classList.add('hidden');
     dom.overlay.classList.remove('hidden');
   }
 
@@ -315,49 +333,129 @@ export class Hud {
     this.dom.setup.classList.add('hidden');
   }
 
-  /** The level picker. */
+  /**
+   * The five unlocks along the top of the tracker, lit or greyed.
+   *
+   * Every one of them is shown from the start rather than appearing as it is
+   * found, because the empty slots are half the information: what a run is
+   * still waiting on is exactly as worth knowing as what it holds.
+   */
+  showItems() {
+    const { engine, dom } = this;
+    const held = engine.unlockedSpecials;
+    const icons = TRACKED.map((code) => {
+      const { name, short, from } = SPECIALS[code];
+      const found = held.has(code);
+
+      const item = document.createElement('div');
+      item.className = 'tracked';
+      if (found) {
+        item.classList.add('found');
+      }
+      item.setAttribute('role', 'listitem');
+      // The whole slot carries the words, because the art is a canvas and the
+      // caption is only a nickname for it. Found, it says how to make one,
+      // which is the thing a player who has just been handed it needs.
+      item.setAttribute('aria-label', found ? `${name}, found: ${from}` : `${name}, not found`);
+      item.title = found ? `${name}: ${from}` : `${name}: not found`;
+
+      const art = document.createElement('canvas');
+      art.className = 'tracked-art';
+      paintSpecialIcon(art, code, ICON_SIZE);
+
+      const caption = document.createElement('span');
+      caption.className = 'tracked-name';
+      caption.textContent = short;
+
+      item.append(art, caption);
+      return item;
+    });
+    dom.trackerItems.replaceChildren(...icons);
+  }
+
+  /**
+   * The level picker, which is also the tracker: the items above, then one row
+   * per level.
+   *
+   * A row rather than a chip in a grid, because a level's state is not one
+   * thing. Cleared, silver and gold are three separate locations, and a chip
+   * only had room to show the best of them, so a level cleared twice over and
+   * a level whose gold is still out there looked the same. Three pips on a row
+   * say which of the three have been taken, and the rows scroll, which a
+   * fifty level ladder is going to need.
+   */
   showLevels(actions) {
     const { engine, dom } = this;
     dom.overlayTitle.textContent = 'Levels';
     dom.overlayBody.textContent = `${engine.unlocked} of ${engine.levelCount} unlocked.`;
+    this.showItems();
 
     const focused = this.focusedLevel();
     const names = engine.levelNames();
-    const chips = [];
+    const rows = [];
     for (let i = 0; i < engine.levelCount; i += 1) {
-      const chip = document.createElement('button');
-      chip.type = 'button';
-      chip.className = 'level-chip';
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'level-row';
+      row.setAttribute('role', 'listitem');
       if (i === focused) {
-        chip.classList.add('current');
+        row.classList.add('current');
       }
       const unlocked = i < engine.unlocked;
-      chip.disabled = !unlocked;
-      // How well it has been beaten, so a grid of them can be scanned for
-      // where the gold is and what is still only cleared.
-      const best = TIER_CLASS[engine.levelBest(i)];
-      if (best) {
-        chip.classList.add(best);
+      row.disabled = !unlocked;
+      const best = engine.levelBest(i);
+      // How well it has been beaten, as a wash across the row, so the list can
+      // be scanned for where the gold is without reading any of it.
+      const bestClass = TIER_CLASS[best];
+      if (bestClass) {
+        row.classList.add(bestClass);
       }
 
       const number = document.createElement('span');
       number.className = 'n';
-      number.textContent = `Level ${i + 1}`;
+      number.textContent = String(i + 1);
+
+      const name = unlocked ? (names[i] ?? '') : 'Locked';
       const title = document.createElement('span');
       title.className = 't';
-      title.textContent = unlocked ? names[i] ?? '' : 'Locked';
-      chip.append(number, title);
-      chip.addEventListener('click', () => actions.onPick(i));
-      chips.push(chip);
+      title.textContent = name;
+
+      const marks = document.createElement('span');
+      marks.className = 'marks';
+      // Drawn, not read: a screen reader gets the row's own label instead,
+      // which says the same thing in words.
+      marks.setAttribute('aria-hidden', 'true');
+      for (const mark of MARKS) {
+        const pip = document.createElement('span');
+        pip.className = `pip ${TIER_CLASS[mark.tier]}`;
+        if (best >= mark.tier) {
+          pip.classList.add('taken');
+        }
+        marks.append(pip);
+      }
+
+      const taken = MARKS.filter((mark) => best >= mark.tier).map((mark) => mark.name);
+      row.setAttribute(
+        'aria-label',
+        `Level ${i + 1}, ${name}${taken.length > 0 ? `, ${taken.join(', ')}` : ''}`,
+      );
+
+      row.append(number, title, marks);
+      row.addEventListener('click', () => actions.onPick(i));
+      rows.push(row);
     }
 
-    dom.levelGrid.replaceChildren(...chips);
-    dom.levelGrid.classList.remove('hidden');
+    dom.levelList.replaceChildren(...rows);
+    dom.tracker.classList.remove('hidden');
     dom.overlayButtons.replaceChildren(
       button('Close', actions.onClose, true),
       button('Title screen', actions.onQuit, false),
     );
     dom.overlay.classList.remove('hidden');
+    // The level being played is somewhere down a list that scrolls, and on a
+    // long ladder it is usually off the bottom of it.
+    const current = dom.levelList.children[focused];
+    current?.scrollIntoView?.({ block: 'center' });
   }
 
   /**
@@ -371,7 +469,7 @@ export class Hud {
     dom.overlayBody.textContent =
       `This ends the run. All ${engine.unlocked} unlocked levels go back to just the first, ` +
       'and the next run deals fresh boards.';
-    dom.levelGrid.classList.add('hidden');
+    dom.tracker.classList.add('hidden');
     dom.overlayButtons.replaceChildren(
       button('Keep playing', actions.onCancel, true),
       button('End the run', actions.onConfirm, false),
@@ -444,7 +542,7 @@ export class Hud {
     dom.overlayTitle.textContent = 'Could not start';
     dom.overlayBody.textContent = message;
     dom.overlayButtons.replaceChildren();
-    dom.levelGrid.classList.add('hidden');
+    dom.tracker.classList.add('hidden');
     dom.overlay.classList.remove('hidden');
   }
 

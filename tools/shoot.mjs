@@ -180,8 +180,12 @@ for (const [name, metrics] of [
     // Plus a silver and a gold on a couple of levels (2000 and 3000 up), so
     // the level picker has one of each to show rather than a grid of green.
     // The cost is that the picker is photographed as a finished ladder: no
-    // chip in these shots is an unlocked level nobody has cleared yet.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2001, 3001, 2002] }))`,
+    // row in these shots is an unlocked level nobody has cleared yet.
+    //
+    // Deliberately not on the level being photographed. A level with both
+    // marks behind it has no next one to name, so the score's target went
+    // blank in every gameplay shot and nothing here photographed it at all.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only

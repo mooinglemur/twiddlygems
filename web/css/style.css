@@ -79,7 +79,10 @@ html, body {
 #score.tier-gold { color: var(--tier-gold); }
 
 /* The next mark up, in the color of the mark it names, so which one it is
-   needs no explaining. Empty once there is none left to reach. */
+   needs no explaining. Empty once there is none left to reach.
+   It sits to the left of the score, and grows leftward, because the score is
+   the thing being watched: with it on the right the digits would shuffle
+   sideways every time the mark beside them changed width or went away. */
 #score-target {
   font-variant-numeric: tabular-nums;
   font-size: 0.7rem;
@@ -226,6 +229,9 @@ button[disabled] { opacity: 0.4; cursor: default; }
    in a screenshot. Naming each one instead only works until the next id. */
 .hidden { display: none !important; }
 
+/* A flex column so the tracker's level list can take whatever height the
+   heading and the buttons leave it and scroll inside that, rather than the
+   whole card scrolling and taking its own buttons off the bottom. */
 #overlay-card {
   background: var(--panel);
   border-radius: 20px;
@@ -233,6 +239,9 @@ button[disabled] { opacity: 0.4; cursor: default; }
   width: min(420px, 100%);
   max-height: 80dvh;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   text-align: center;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
 }
@@ -240,30 +249,116 @@ button[disabled] { opacity: 0.4; cursor: default; }
 #overlay-body { margin: 0 0 18px; color: var(--ink-dim); }
 #overlay-buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
-#level-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-  gap: 10px;
+/* ---- tracker ---- */
+
+#tracker {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
   margin-bottom: 18px;
 }
-.level-chip { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; }
-.level-chip .n { font-size: 0.7rem; color: var(--ink-dim); }
-.level-chip .t { font-weight: 600; font-size: 0.82rem; }
-.level-chip.current { outline: 2px solid var(--accent); }
 
-/* How well each level has been beaten, as a wash of its color across the chip
-   with a brighter edge along the bottom: enough to scan a grid of them and see
-   where the gold is, without the names becoming hard to read. */
-.level-chip.tier-clear,
-.level-chip.tier-silver,
-.level-chip.tier-gold {
-  border-bottom: 2px solid var(--tier);
-  background-image: linear-gradient(155deg, color-mix(in srgb, var(--tier) 26%, transparent), color-mix(in srgb, var(--tier) 6%, transparent));
+/* The five unlocks. Fixed columns rather than auto-fill: this is one row of
+   five whatever the width, and a 4 + 1 wrap would read as two groups. */
+#tracker-items {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+  padding: 10px 6px;
+  background: var(--socket);
+  border-radius: var(--radius);
 }
-.level-chip.tier-clear { --tier: var(--tier-clear); }
-.level-chip.tier-silver { --tier: var(--tier-silver); }
-.level-chip.tier-gold { --tier: var(--tier-gold); }
-.level-chip.tier-silver .t, .level-chip.tier-gold .t { color: var(--tier); }
+.tracked { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.tracked-art {
+  width: 40px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+}
+.tracked-name {
+  font-size: 0.58rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+/* Not yet found: drained of color and dimmed, so the strip reads as a set of
+   slots with some of them filled rather than as five different gems. */
+.tracked:not(.found) .tracked-art { filter: grayscale(1) brightness(0.55); opacity: 0.4; }
+.tracked:not(.found) .tracked-name { opacity: 0.5; }
+.tracked.found .tracked-name { color: var(--ink); }
+
+/* The ladder, one level to a row, scrolling inside the card. */
+#level-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  /* Held open whether or not this level has been beaten, so the names down an
+     untouched stretch of the ladder do not step sideways. */
+  border-left: 3px solid transparent;
+}
+.level-row .n {
+  flex: 0 0 auto;
+  min-width: 1.6em;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  color: var(--ink-dim);
+}
+.level-row .t {
+  flex: 1 1 auto;
+  font-weight: 600;
+  font-size: 0.86rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.level-row.current { outline: 2px solid var(--accent); }
+
+/* How well each level has been beaten, as a wash of its color across the row
+   with a brighter edge down the near side: enough to scan the list and see
+   where the gold is, without the names becoming hard to read. */
+.level-row.tier-clear,
+.level-row.tier-silver,
+.level-row.tier-gold {
+  border-left: 3px solid var(--tier);
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--tier) 22%, transparent), color-mix(in srgb, var(--tier) 4%, transparent));
+}
+.level-row.tier-clear { --tier: var(--tier-clear); }
+.level-row.tier-silver { --tier: var(--tier-silver); }
+.level-row.tier-gold { --tier: var(--tier-gold); }
+.level-row.tier-silver .t, .level-row.tier-gold .t { color: var(--tier); }
+
+/* One pip per mark: cleared, silver, gold. Each is somewhere an item is
+   found, so three hollow pips say there are three things still to take here,
+   which the best-of-three wash on its own cannot. */
+.marks { flex: 0 0 auto; display: flex; gap: 5px; }
+.pip {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--tier);
+  opacity: 0.35;
+}
+.pip.tier-clear { --tier: var(--tier-clear); }
+.pip.tier-silver { --tier: var(--tier-silver); }
+.pip.tier-gold { --tier: var(--tier-gold); }
+.pip.taken { background: var(--tier); opacity: 1; }
 
 /* ---- title screen ---- */
 

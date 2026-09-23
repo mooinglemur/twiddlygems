@@ -705,6 +705,35 @@ export class Renderer {
   }
 }
 
+/// The gem color the three marked specials wear on a tracker icon. One color
+/// for all three, because what tells them apart is the marking: five icons in
+/// five hues would read as five colors rather than as five items.
+const ICON_COLOR = 1;
+
+/**
+ * Paints one special at icon size into a canvas of its own, for the tracker.
+ *
+ * The board's own painter rather than a glyph or a picture, so what is being
+ * tracked looks exactly like the thing that turns up in play. `size` is in CSS
+ * pixels; the backing store is sized for the display the same way the board's
+ * sprites are.
+ */
+export function paintSpecialIcon(canvas, special, size) {
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+  paintGem(
+    canvas.getContext('2d'),
+    canvas.width / 2,
+    canvas.height / 2,
+    size * dpr * 0.4,
+    ICON_COLOR,
+    special,
+  );
+}
+
 /**
  * Paints one gem into a sprite: body, highlight, then its special marking.
  *

@@ -123,7 +123,8 @@ function stubElement(id) {
 for (const id of [
   'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'score-target',
   'moves', 'objectives', 'feed',
-  'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons', 'level-grid',
+  'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons',
+  'tracker', 'tracker-items', 'level-list',
   'levels-button', 'hint-button', 'retry-button', 'sound-button',
   'title', 'solo-button', 'solo-note', 'archipelago-button',
   'setup', 'setup-options', 'setup-start', 'setup-back',
@@ -491,22 +492,42 @@ dispatch('sound-button', 'click', {});
   assert.equal(renderer.toast, null, 'the pop-over outlived its fade');
 }
 
-// The level picker builds one chip per level, with the locked ones disabled.
+// The level picker builds one row per level, with the locked ones disabled.
 dispatch('levels-button', 'click', {});
-const grid = elements.get('level-grid');
-assert.ok(grid.children.length >= 10, 'the level picker is missing levels');
-assert.equal(grid.children[0].disabled, false, 'level one is locked');
-assert.equal(grid.children[9].disabled, true, 'a level nobody has reached is unlocked');
+const list = elements.get('level-list');
+const items = elements.get('tracker-items');
+assert.ok(list.children.length >= 10, 'the level picker is missing levels');
+assert.equal(list.children[0].disabled, false, 'level one is locked');
+assert.equal(list.children[9].disabled, true, 'a level nobody has reached is unlocked');
 assert.ok(
-  grid.children[LEVEL].classList.contains('current'),
+  list.children[LEVEL].classList.contains('current'),
   'the picker does not mark the level being played',
 );
+// Every row says which of its three marks have been taken, not just the best
+// of them, so a level cleared and a level golded are told apart on sight.
+for (const row of list.children) {
+  assert.equal(row.children.at(-1).children.length, 3, 'a level row is missing its marks');
+}
+
+// The tracker above shows all five unlocks from the start, greyed until they
+// turn up, so what a run is still waiting on is as readable as what it holds.
+const found = () => items.children.filter((slot) => slot.classList.contains('found'));
+assert.equal(items.children.length, 5, 'the tracker is not showing all five unlocks');
+{
+  const held = window.twiddlygems.engine.unlockedSpecials;
+  assert.ok(held.size < 5, 'this run holds everything, so nothing here tests a greyed slot');
+  assert.equal(
+    found().length,
+    held.size,
+    `the tracker lit ${found().length} unlocks against the ${held.size} the run holds`,
+  );
+}
 click(overlayButton('Close'), 'the level picker has no way out');
 
 // Play the opening level out with the engine's own hints, which is the only
 // way to reach the panel that appears when a level ends.
 {
-  const { EventKind, Phase, Special, Status } = await import(path.resolve('web/js/engine.js'));
+  const { EventKind, Phase, Special, Status, Tier } = await import(path.resolve('web/js/engine.js'));
   const { engine, renderer } = window.twiddlygems;
   // Watched as it goes, because both are gone by the time the level ends: the
   // pop-over fades long before a long run down finishes, and the phases are
@@ -645,21 +666,38 @@ click(overlayButton('Close'), 'the level picker has no way out');
   );
   assert.equal(announced, 0, 'restoring replayed the finds as news');
   assert.ok(
-    grid.classList.contains('hidden'),
+    elements.get('tracker').classList.contains('hidden'),
     'the finished-level panel is showing the level picker underneath its buttons',
   );
 
   // From there the picker marks where the player is going, not the level they
   // just finished: it sits beside a button offering to start the next one.
   click(overlayButton('Levels'), 'the finished-level panel offers no way to the picker');
-  const marked = grid.children.findIndex((chip) => chip.classList.contains('current'));
+  const marked = list.children.findIndex((row) => row.classList.contains('current'));
   assert.equal(marked, LEVEL + 1, 'the picker marks the level just finished rather than the next one');
 
   // And the level just beaten wears how well it was beaten, while a level
   // nobody has touched wears nothing.
-  const tierOf = (chip) => [...chip.classList.set].find((cls) => /^tier-/.test(cls)) ?? null;
-  assert.ok(tierOf(grid.children[LEVEL]), 'the level just cleared is not marked as beaten');
-  assert.equal(tierOf(grid.children[9]), null, 'a level nobody has played is marked as beaten');
+  const tierOf = (row) => [...row.classList.set].find((cls) => /^tier-/.test(cls)) ?? null;
+  assert.ok(tierOf(list.children[LEVEL]), 'the level just cleared is not marked as beaten');
+  assert.equal(tierOf(list.children[9]), null, 'a level nobody has played is marked as beaten');
+  // Its clear is taken, and the marks it did not reach are not.
+  const pips = list.children[LEVEL].children.at(-1).children;
+  assert.ok(pips[0].classList.contains('taken'), 'the cleared level has no clear against it');
+  assert.equal(
+    pips.filter((pip) => pip.classList.contains('taken')).length,
+    [Tier.CLEAR, Tier.SILVER, Tier.GOLD].filter((tier) => engine.levelBest(LEVEL) >= tier).length,
+    'the marks on a row disagree with what the engine says was beaten',
+  );
+
+  // The tracker reads the run rather than counting item lines: it says what is
+  // held now, which is what a multiworld handing something over changes.
+  const held = engine.unlockedSpecials;
+  assert.equal(
+    found().length,
+    held.size,
+    `the tracker shows ${found().length} unlocks against the ${held.size} the run holds`,
+  );
 
   // Coming back to a level already beaten, the score wears the color of the
   // best it was beaten to from the outset rather than starting plain: the
@@ -726,6 +764,6 @@ click(overlayButton('Close'), 'the level picker has no way out');
 console.log(
   `page ok: ${framesRun} frames, ${calls.drawImage} blits, ${calls.fill} fills, ` +
     `${calls.stroke} strokes, ${objectives.children.length} objective chips, ` +
-    `${grid.children.length} levels listed, ` +
+    `${list.children.length} levels listed, ` +
     `a swipe scored and spent a move (${scoreBefore} -> played -> reset)`,
 );
