@@ -493,6 +493,7 @@ mod tests {
     use super::*;
     use crate::board::Special;
     use crate::game::Phase;
+    use crate::level::Objective;
     use crate::rules::SpecialSet;
 
     /// Wins the level in front of the session without playing it properly.
@@ -537,6 +538,7 @@ mod tests {
     /// score threshold would drift off its own number otherwise.
     fn force_win_at(session: &mut Session, score: u64) {
         while session.game().phase() != Phase::Finished {
+            meet_everything_but_the_score(session.game_mut());
             session.game_mut().progress.score = score;
             if let Some((a, b)) = session.game().hint() {
                 session.game_mut().try_swap(a, b);
@@ -579,10 +581,42 @@ mod tests {
         panic!("no run in the first 64 seeds pays only moves for the opening level");
     }
 
+    /// Marks every objective but the score as met, wherever the level's goals
+    /// are not about the score at all.
+    ///
+    /// A level ends when its objectives are met, and those are not all one
+    /// kind: a score can be put out of reach with one assignment, but a color
+    /// count, a board of jelly or a wall of brick cannot. These tests are
+    /// about what a clear leads to rather than about whether a level is
+    /// beatable, so the level is simply told it has been beaten.
+    ///
+    /// Re-applied every frame, because the board recounts what is left of
+    /// itself as it settles.
+    fn meet_everything_but_the_score(game: &mut Game) {
+        for objective in game.objectives().to_vec() {
+            match objective {
+                Objective::Score(_) => {}
+                Objective::Color { color, count } => {
+                    if let Some(slot) = game.progress.cleared.get_mut(color as usize) {
+                        *slot = (*slot).max(count);
+                    }
+                }
+                Objective::Jelly => game.progress.jelly_left = 0,
+                Objective::Brick => game.progress.brick_left = 0,
+                Objective::Seal { color } => {
+                    if let Some(slot) = game.progress.seals_now.get_mut(color as usize) {
+                        *slot = 0;
+                    }
+                }
+            }
+        }
+    }
+
     fn force_win(session: &mut Session) -> Vec<Announced> {
         let mut seen = Vec::new();
         session.game_mut().progress.score = 1_000_000;
         while session.game().phase() != Phase::Finished {
+            meet_everything_but_the_score(session.game_mut());
             if let Some((a, b)) = session.game().hint() {
                 session.game_mut().try_swap(a, b);
             }
@@ -693,6 +727,7 @@ mod tests {
         let mut during_flourish = None;
         session.game_mut().progress.score = 1_000_000;
         while session.game().phase() != Phase::Finished {
+            meet_everything_but_the_score(session.game_mut());
             if let Some((a, b)) = session.game().hint() {
                 session.game_mut().try_swap(a, b);
             }
@@ -735,6 +770,7 @@ mod tests {
             // flourish to carry it over.
             if !session.game().cleared() {
                 session.game_mut().progress.score = silver - 500;
+                meet_everything_but_the_score(session.game_mut());
             }
             if let Some((a, b)) = session.game().hint() {
                 session.game_mut().try_swap(a, b);
@@ -780,6 +816,9 @@ mod tests {
         // gold there, judging it early would look the same as judging it late.
         let mut at_goal = None;
         while session.game().phase() != Phase::Finished {
+            if !session.game().cleared() {
+                meet_everything_but_the_score(session.game_mut());
+            }
             if let Some((a, b)) = session.game().hint() {
                 session.game_mut().try_swap(a, b);
             }

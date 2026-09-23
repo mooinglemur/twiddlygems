@@ -185,6 +185,17 @@ impl LevelSpec {
 // has: on nine columns a centered shape sits on column four rather than
 // straddling the gap between two.
 
+const FIRST_LEVEL: &[&str] = &[
+    "##....##",
+    "##....##",
+    "##....##",
+    "##....##",
+    "##2110##",
+    "##1002##",
+    "##2110##",
+    "##1002##",
+];
+
 const JELLY_PATCH: &[&str] = &[
     ".........",
     ".........",
@@ -312,9 +323,23 @@ pub fn levels() -> Vec<LevelSpec> {
         // fills the gap is the flourish spending the moves left over. The
         // opener is the exception: with no unlocks there is no flourish, so
         // its two sit just above what scraping a win pays.
-        LevelSpec::new("First Light", 20, vec![Objective::Score(4_000)])
-            .colors(5)
-            .tiers(4_600, 5_200),
+        LevelSpec::new(
+            "First Light",
+            3,
+            vec![
+                Objective::Color { color: 0, count: 9 },
+                Objective::Color { color: 1, count: 9 },
+            ])
+            .with_layout(FIRST_LEVEL)
+            .colors(4)
+            .palette(&[0, 5, 1, 2])
+            // Out of reach without specials, which is what a mark is for: both
+            // of them ask for all five unlocks, and a number a bare run scores
+            // anyway would make that rule a lie. Three moves on a narrow board
+            // means a long tail, so these are set off the far end of it rather
+            // than off the middle: two hundred bare runs top out around 25,000
+            // and a supplied one sits near 31,000.
+            .tiers(30_000, 45_000),
         LevelSpec::new("Finding Fours", 22, vec![Objective::Score(7_000)])
             .colors(5)
             .tiers(12_000, 22_000),
@@ -540,8 +565,7 @@ mod tests {
             let Some(layout) = level.layout else { continue };
             for (r, row) in layout.iter().enumerate() {
                 for (c, ch) in row.chars().enumerate() {
-                    let Some(placed) = ch.to_digit(10) else { continue };
-                    let color = (placed as u8).saturating_sub(1);
+                    let Some(color) = ch.to_digit(10).map(|digit| digit as u8) else { continue };
                     assert!(
                         level.rules.deals(color),
                         "{}: the gem at ({r},{c}) is color {color}, which the level never deals",

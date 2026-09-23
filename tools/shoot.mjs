@@ -19,9 +19,12 @@ const OUT = process.argv[2] ?? 'shots';
 const BROWSER = process.env.BROWSER ?? 'google-chrome-stable';
 const PORT = Number(process.env.SHOT_PORT ?? 8099);
 const DEBUG_PORT = Number(process.env.SHOT_DEBUG_PORT ?? 9333);
-// Which level to photograph. Level 1 has specials switched off, so point this
-// at a later one to see line, cross and rocket gems on a real board.
-const LEVEL = Number(process.env.SHOT_LEVEL ?? 0);
+// Which level to photograph. Not the opening one: First Light is a three move
+// puzzle that has to be solved rather than swiped at, and the shots below play
+// a level out by following hints, which is no way to solve a puzzle. The
+// second level is an ordinary board with room on it, which is what most of the
+// game looks like.
+const LEVEL = Number(process.env.SHOT_LEVEL ?? 1);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 await mkdir(OUT, { recursive: true });

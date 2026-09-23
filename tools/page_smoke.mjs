@@ -208,11 +208,20 @@ globalThis.fetch = async (url) => {
 // Pin the seed rather than letting the page deal a random one. Everything the
 // engine does follows from it, so this is what makes the run reproducible: one
 // of the checks below plays a level out by following the engine's own hints,
-// and that bot wins First Light on 99% of boards, not all of them. A test that
-// fails one run in a hundred is worse than one that only ever sees one board.
+// and that bot is a poor player. A test that fails one run in a hundred is
+// worse than one that only ever sees one board.
+//
+// Not the opening level, and not because of the bot alone. First Light is a
+// three move puzzle now: a level that has to be solved rather than swiped at,
+// which leaves nothing to cash in even when it is won. What the checks below
+// want is an ordinary level with room in it, so the run starts on the second
+// one, on a seed where following hints wins with ten moves to spare and the
+// run ends up holding only the rocket and the rainbow, neither of which the
+// flourish can mint.
 const SAVE_KEY = 'twiddlygems.save.v1';
-const SEED = 20260920;
-store.set(SAVE_KEY, JSON.stringify({ seed: SEED, unlocked: 1, level: 0 }));
+const SEED = 11;
+const LEVEL = 1;
+store.set(SAVE_KEY, JSON.stringify({ seed: SEED, unlocked: LEVEL + 1, level: LEVEL }));
 
 await import(path.resolve('web/js/main.js'));
 
@@ -296,30 +305,15 @@ function overlayButton(label) {
   dispatch('solo-button', 'click', {});
   assert.ok(title.classList.contains('hidden'), 'choosing Solo Play left the title screen up');
 
-  // A fresh run is set up before it starts, because the settings are fixed
-  // for its whole length the way a multiworld's yaml is.
-  const setup = elements.get('setup');
-  assert.ok(!setup.classList.contains('hidden'), 'Solo Play did not offer to set the run up');
-  const rows = elements.get('setup-options').children;
-  assert.ok(rows.length > 0, 'the setup screen has no settings on it');
-
-  // Every control is built by walking the engine's table, so each row should
-  // have a way to move the setting and something showing where it is. Tapping
-  // one has to change what it says, or the control is decoration.
-  const first = rows[0];
-  const steps = first.children.find((child) => child.className === 'setup-controls');
-  assert.ok(steps, 'a setting has no controls');
-  const reading = steps.children.find((child) => child.className === 'setup-value');
-  assert.ok(reading && reading.textContent, 'a setting does not say what it is set to');
-  const before = reading.textContent;
-  click(
-    steps.children.find((child) => child.className === 'setup-step'),
-    'a setting has no button to move it',
+  // Straight back into it, with no setup screen in the way: this save is a run
+  // already under way, and its settings were fixed when it started. Being
+  // asked to set them again would be being offered to throw it away. The
+  // other half of that, a fresh run being set up first, is checked at the end
+  // once this one has been ended.
+  assert.ok(
+    elements.get('setup').classList.contains('hidden'),
+    'a run already under way was asked to set itself up again',
   );
-  assert.notEqual(reading.textContent, before, 'tapping a setting changed nothing');
-
-  dispatch('setup-start', 'click', {});
-  assert.ok(setup.classList.contains('hidden'), 'starting the run left the setup screen up');
   assert.equal(elements.get('app').getAttribute('aria-hidden'), null);
   assert.ok(store.has(SAVE_KEY), 'starting a run did not pin its seed');
   const saved = JSON.parse(store.get(SAVE_KEY));
@@ -343,7 +337,7 @@ assert.equal(
 
 const objectives = elements.get('objectives');
 assert.ok(objectives.children.length > 0, 'the objective chips were never built');
-assert.equal(elements.get('level-number').textContent, 'Level 1');
+assert.equal(elements.get('level-number').textContent, `Level ${LEVEL + 1}`);
 // The mark still out of reach is named beside the score, and the score wears
 // no color yet because the level has never been cleared.
 assert.match(
@@ -357,7 +351,12 @@ assert.equal(
   'an uncleared level is already colored',
 );
 assert.ok(elements.get('level-name').textContent.length > 0, 'the level has no name on screen');
-assert.equal(elements.get('moves').textContent, '20');
+// Read off the ladder rather than written here, so retuning a level's budget
+// does not break the front end's test.
+assert.equal(
+  elements.get('moves').textContent,
+  String(window.twiddlygems.engine.movesTotal),
+);
 assert.ok(elements.get('overlay').classList.contains('hidden'), 'the overlay is covering the board');
 
 // Tap a gem, then its neighbor: the two taps should start a swap, which the
@@ -499,7 +498,7 @@ assert.ok(grid.children.length >= 10, 'the level picker is missing levels');
 assert.equal(grid.children[0].disabled, false, 'level one is locked');
 assert.equal(grid.children[9].disabled, true, 'a level nobody has reached is unlocked');
 assert.ok(
-  grid.children[0].classList.contains('current'),
+  grid.children[LEVEL].classList.contains('current'),
   'the picker does not mark the level being played',
 );
 click(overlayButton('Close'), 'the level picker has no way out');
@@ -591,8 +590,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // was.
   assert.match(
     elements.get('overlay-body').textContent,
-    /Found .+ \(Level 1 (Clear|Silver|Gold)\)\./,
-    'clearing the opening level announced nothing',
+    new RegExp(`Found .+ \\(Level ${LEVEL + 1} (Clear|Silver|Gold)\\)\\.`),
+    'clearing the level announced nothing',
   );
 
   // The feed is the running record of what the run has been given, and where
@@ -603,7 +602,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
     line.children.map((part) => part.textContent ?? part).join(''),
   );
   assert.ok(
-    lines.some((line) => line.endsWith('(Level 1 Clear)')),
+    lines.some((line) => line.endsWith(`(Level ${LEVEL + 1} Clear)`)),
     `clearing the level never reached the item feed, which holds ${JSON.stringify(lines)}`,
   );
   // A chain along the way pays too, and every line has to say where its item
@@ -654,12 +653,12 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // just finished: it sits beside a button offering to start the next one.
   click(overlayButton('Levels'), 'the finished-level panel offers no way to the picker');
   const marked = grid.children.findIndex((chip) => chip.classList.contains('current'));
-  assert.equal(marked, 1, 'the picker marks the level just finished rather than the next one');
+  assert.equal(marked, LEVEL + 1, 'the picker marks the level just finished rather than the next one');
 
   // And the level just beaten wears how well it was beaten, while a level
   // nobody has touched wears nothing.
   const tierOf = (chip) => [...chip.classList.set].find((cls) => /^tier-/.test(cls)) ?? null;
-  assert.ok(tierOf(grid.children[0]), 'the level just cleared is not marked as beaten');
+  assert.ok(tierOf(grid.children[LEVEL]), 'the level just cleared is not marked as beaten');
   assert.equal(tierOf(grid.children[9]), null, 'a level nobody has played is marked as beaten');
 
   // Coming back to a level already beaten, the score wears the color of the
@@ -695,6 +694,33 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.equal(engine.unlocked, 1, 'ending a run kept the levels it had unlocked');
   assert.equal(engine.levelIndex, 0, 'ending a run left us on a later level');
   assert.ok(!store.has(SAVE_KEY), 'ending a run left the save behind');
+
+  // And now there is a fresh run to start, which is set up before it begins,
+  // because the settings are fixed for its whole length the way a
+  // multiworld's yaml is.
+  dispatch('solo-button', 'click', {});
+  const setup = elements.get('setup');
+  assert.ok(!setup.classList.contains('hidden'), 'a fresh run was not offered a setup screen');
+  const rows = elements.get('setup-options').children;
+  assert.ok(rows.length > 0, 'the setup screen has no settings on it');
+
+  // Every control is built by walking the engine's table, so each row should
+  // have a way to move the setting and something showing where it is. Tapping
+  // one has to change what it says, or the control is decoration.
+  const steps = rows[0].children.find((child) => child.className === 'setup-controls');
+  assert.ok(steps, 'a setting has no controls');
+  const reading = steps.children.find((child) => child.className === 'setup-value');
+  assert.ok(reading && reading.textContent, 'a setting does not say what it is set to');
+  const before = reading.textContent;
+  click(
+    steps.children.find((child) => child.className === 'setup-step'),
+    'a setting has no button to move it',
+  );
+  assert.notEqual(reading.textContent, before, 'tapping a setting changed nothing');
+
+  dispatch('setup-start', 'click', {});
+  assert.ok(setup.classList.contains('hidden'), 'starting the run left the setup screen up');
+  assert.ok(store.has(SAVE_KEY), 'starting a fresh run did not write a save');
 }
 
 console.log(

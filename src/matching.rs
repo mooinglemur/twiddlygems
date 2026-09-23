@@ -932,6 +932,27 @@ mod tests {
     }
 
     #[test]
+    fn a_beam_crosses_a_wall_rather_than_stopping_at_it() {
+        // A wall divides where gems can fall, not where a beam can reach. So a
+        // line gem fired in a walled-off pocket still takes its whole row, and
+        // a level drawn in separate chambers is not separate to a special.
+        //
+        // Deliberate rather than incidental, and asserted because nothing else
+        // would notice it changing: the wall holds no gem, so it contributes
+        // nothing of its own, and the cells beyond it go with the rest.
+        let mut board = board_of(&["1#34", "5678", "1234", "5678"]);
+        board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::LineH }));
+        let mut rng = Rng::new(1);
+        let result = detonate(&board, &[Pos::new(0, 0)], &[], &mut rng, 0.0);
+
+        assert!(
+            result.cleared.contains(&Pos::new(0, 3)),
+            "the beam stopped at the wall instead of crossing it",
+        );
+        assert_eq!(result.cleared.len(), 3, "the row, less the wall itself");
+    }
+
+    #[test]
     fn a_rainbow_caught_in_a_blast_takes_the_commonest_color() {
         let mut board = board_of(&["1111", "1111", "1123", "4567"]);
         board.set_gem(Pos::new(3, 0), Some(Gem { color: 4, special: Special::Rainbow }));

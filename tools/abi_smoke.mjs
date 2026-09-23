@@ -44,17 +44,28 @@ function checkSnapshot(where) {
   const count = exports.tg_rows(handle) * exports.tg_cols(handle);
   const cells = new Uint8Array(exports.memory.buffer, exports.tg_cells_ptr(handle), count * 4);
   const offsets = new Float32Array(exports.memory.buffer, exports.tg_offsets_ptr(handle), count * 3);
+  const seen = new Set();
   for (let i = 0; i < count; i += 1) {
     const color = cells[i * 4];
     const isWall = (cells[i * 4 + 3] & 1) === 1;
     if (isWall) {
       assert.equal(color, 255, `${where}: a wall is holding a gem`);
-    } else {
-      assert.ok(color < exports.tg_colors(handle), `${where}: cell ${i} has color ${color}`);
+    } else if (color !== 255) {
+      // 255 is an empty cell. Anything else is a gem, and it has to be one of
+      // the eight the gem set has a shape for.
+      assert.ok(color < 8, `${where}: cell ${i} has color ${color}`);
+      seen.add(color);
     }
     assert.ok(Number.isFinite(offsets[i * 3]), `${where}: cell ${i} has a broken offset`);
     assert.ok(offsets[i * 3 + 2] >= 0, `${where}: cell ${i} has a negative scale`);
   }
+  // A level deals as many colors as it says, but not necessarily the first
+  // few: it may name any set of the eight, so what can be checked from here is
+  // how many turned up rather than which.
+  assert.ok(
+    seen.size <= exports.tg_colors(handle),
+    `${where}: ${seen.size} colors on a board that deals ${exports.tg_colors(handle)}`,
+  );
 }
 
 checkSnapshot('a fresh board');

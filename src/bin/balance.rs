@@ -98,7 +98,12 @@ fn main() {
     println!();
     chains(Bot::Greedy, 25);
     println!();
-    if !in_logic(25) {
+    // More seeds than the other tables get, because the number that matters is
+    // a tail rather than a middle: a bare run reaching a mark is rare by
+    // design, and a handful of runs cannot tell rare from never.
+    let marks_hold = marks(150);
+    println!();
+    if !in_logic(25) || !marks_hold {
         std::process::exit(1);
     }
 }
@@ -214,6 +219,99 @@ fn chains(bot: Bot, seeds: u64) {
             if hits == 0 { "  NOBODY EVER GETS HERE" } else { "" },
         );
     }
+}
+
+/// What a score mark has to clear, which is the table its numbers are set off.
+///
+/// Both ends of the same level, side by side. A mark is meant to be something
+/// a well supplied run chases, and the rules say as much: silver and gold both
+/// ask for all five unlocks, because nearly all of a good score comes from the
+/// flourish and a run holding nothing has nothing to mint. So a mark below
+/// what a bare run scores anyway is a location that pays for nothing, and it
+/// makes the rule a lie as well: logic promises the unlocks are needed.
+///
+/// Read it by putting silver above the bare column and gold well above it,
+/// then checking both sit inside the full column often enough to be worth
+/// chasing. Only wins count, since a level that was not cleared has no tier.
+///
+/// **The last column is a gate on the opening level**, and a reading for the
+/// rest. First Light is the one level designed rather than bracketed so far,
+/// and its marks are meant to be out of reach without specials: a bare run
+/// reaching one there is the failure this exists to catch. The rest of the
+/// ladder is placeholder and reaches its own marks bare all day, which is
+/// what the column says. Widen the gate as levels are redesigned.
+fn marks(seeds: u64) -> bool {
+    println!("what a score mark has to clear ({seeds} seeds per level)");
+    println!(
+        "{:<16} {:>9} {:>9} {:>9} {:>10} {:>9} {:>9}  {}",
+        "level", "bare p50", "bare max", "full p50", "full p90", "silver", "gold",
+        "bare reaches them",
+    );
+
+    let mut opener_holds = true;
+    let bare = bare();
+    for (index, spec) in equipped().into_iter().enumerate() {
+        let mut nothing: Vec<u64> = Vec::new();
+        let mut everything: Vec<u64> = Vec::new();
+        for seed in 0..seeds {
+            let seed = seed * 7919 + index as u64;
+            let game = play(&bare[index], seed, Bot::Greedy);
+            if game.status() == Status::Won {
+                nothing.push(game.progress.score);
+            }
+            let game = play(&spec, seed, Bot::Greedy);
+            if game.status() == Status::Won {
+                everything.push(game.progress.score);
+            }
+        }
+        // Counted rather than shared out. A percentage of a few hundred runs
+        // rounds one hit down to nothing, and one bare run reaching a mark is
+        // the whole of what this is looking for.
+        let hits = |mark: u64| {
+            if mark == 0 {
+                return 0;
+            }
+            nothing.iter().filter(|score| **score >= mark).count()
+        };
+        let (bare_silver, bare_gold) = (hits(spec.silver), hits(spec.gold));
+        // One run in a hundred, not none. Three moves on a narrow board has a
+        // long tail: a bare run occasionally cascades into something enormous,
+        // and a mark set above that would be one no supplied run could reach
+        // either. What this is looking for is a mark a bare run reaches
+        // routinely, which is a mark that pays for nothing.
+        let allowance = nothing.len() / 100;
+        if index == 0 && (bare_silver > allowance || bare_gold > allowance) {
+            opener_holds = false;
+        }
+        let at = |values: &mut Vec<u64>, p: usize| {
+            percentile(values, p).map_or("-".to_string(), |score| score.to_string())
+        };
+        println!(
+            "{:<16} {:>9} {:>9} {:>9} {:>10} {:>9} {:>9}  {}",
+            spec.name,
+            at(&mut nothing, 50),
+            at(&mut nothing, 100),
+            at(&mut everything, 50),
+            at(&mut everything, 90),
+            spec.silver,
+            spec.gold,
+            format!(
+                "{bare_silver} / {bare_gold} of {}{}",
+                nothing.len(),
+                if index == 0 && (bare_silver > allowance || bare_gold > allowance) {
+                    "   TOO EASY"
+                } else {
+                    ""
+                },
+            ),
+        );
+    }
+    if !opener_holds {
+        println!();
+        println!("the opening level's marks can be reached without a single special, which is");
+        println!("not what they are for: every mark's rule asks for all five unlocks");
+    }
+    opener_holds
 }
 
 /// How far up the ladder a run that has found nothing can get.

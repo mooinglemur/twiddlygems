@@ -3934,7 +3934,7 @@ mod tests {
         // designed around. The deal has to leave them where they are, or the
         // arrangement is only whatever the seed felt like.
         let mut level = spec(4, 4, 6, 10);
-        level.layout = Some(&["1.2.", "....", "....", "3.4."]);
+        level.layout = Some(&["0.1.", "....", "....", "2.3."]);
         for seed in 0..20 {
             let game = Game::new(level.clone(), seed);
             assert_eq!(game.board.gem(Pos::new(0, 0)).map(|g| g.color), Some(0));
@@ -3954,7 +3954,7 @@ mod tests {
         // dealing one color would be a different thing entirely, and this is
         // not that.
         let mut level = spec(4, 4, 6, 10);
-        level.layout = Some(&["1111", "....", "....", "...."]);
+        level.layout = Some(&["0000", "....", "....", "...."]);
         let mut game = Game::new(level, 7);
         for p in game.board.occupied() {
             game.board.set_gem(p, None);

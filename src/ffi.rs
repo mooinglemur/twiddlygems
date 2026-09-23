@@ -670,7 +670,16 @@ mod tests {
             let count = (tg_rows(handle) * tg_cols(handle)) as usize;
             let cells = std::slice::from_raw_parts(tg_cells_ptr(handle), count * 4);
             let offsets = std::slice::from_raw_parts(tg_offsets_ptr(handle), count * 3);
-            assert!(cells.chunks(4).all(|c| c[0] < tg_colors(handle) as u8));
+            // 255 is the empty cell, which a walled layout has plenty of.
+            // Every other byte names a color the level actually deals, which
+            // is not the same as one below the count: a level may name any
+            // four of the eight rather than the first four.
+            let level = &crate::level::levels()[0];
+            assert!(
+                cells.chunks(4).all(|c| c[0] == 255 || level.rules.deals(c[0])),
+                "a gem on the board is a color the level never deals",
+            );
+            assert!(cells.chunks(4).any(|c| c[0] != 255), "the board is empty");
             assert!(offsets.chunks(3).all(|o| o[2] == 1.0));
             tg_destroy(handle);
         }
@@ -680,17 +689,18 @@ mod tests {
     fn objectives_are_readable_and_start_at_zero() {
         unsafe {
             let handle = tg_create(5, 0);
-            assert_eq!(tg_objective_count(handle), 1);
-            assert_eq!(tg_objective_kind(handle, 0), 0, "level one is a score goal");
-            // Read the target from the ladder rather than pinning it here, so
-            // retuning a level does not break the ABI's test.
-            let expected = match crate::level::levels()[0].objectives[0] {
-                crate::level::Objective::Score(target) => target,
-                other => panic!("level one changed shape: {other:?}"),
-            };
-            assert_eq!(tg_objective_need(handle, 0), expected);
-            assert_eq!(tg_objective_have(handle, 0), 0);
-            assert_eq!(tg_objective_color(handle, 0), 255);
+            // Read the ladder rather than pinning level one's shape here, so
+            // redesigning a level does not break the ABI's test. What is being
+            // checked is that every objective comes across whole.
+            let level = &crate::level::levels()[0];
+            assert_eq!(tg_objective_count(handle) as usize, level.objectives.len());
+            for (at, objective) in level.objectives.iter().enumerate() {
+                let at = at as u32;
+                assert_eq!(tg_objective_kind(handle, at), objective.kind_code());
+                assert_eq!(tg_objective_color(handle, at), objective.color() as u32);
+                assert!(tg_objective_need(handle, at) > 0, "an objective asks for nothing");
+                assert_eq!(tg_objective_have(handle, at), 0, "a level opens part done");
+            }
             // Reading past the end is answered, not trapped.
             assert_eq!(tg_objective_need(handle, 99), 0);
             tg_destroy(handle);

@@ -6,8 +6,11 @@
 
 import { EMPTY_CELL, EventKind, Flag, Phase, Special } from './engine.js';
 
-/// The first `rules.colors` of these are what gets dealt, so the order is the
-/// game's gem set and not just a list. Six are in play today.
+/// The game's gem set, indexed by the color numbers the engine deals. A level
+/// usually takes the first few, but it may name any set instead, so this is a
+/// lookup rather than a prefix: a four color level can be ruby, amber,
+/// sapphire and emerald, and `engine.colors` is how many it deals rather than
+/// how far along this list it reaches.
 ///
 /// Every shape is drawn with its corners rounded off. Nothing here comes to a
 /// point: a board of sharp silhouettes reads as spiky rather than as gems, and

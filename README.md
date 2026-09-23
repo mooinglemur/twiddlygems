@@ -144,11 +144,13 @@ the ceiling, and it is what a score mark's rule asks for, so it is the state
 the silver and gold numbers are read against. Measuring a mark against a run
 that happened to hold two unlocks would only measure that run's luck.
 
-As it stands the floor bot clears level 1 99% of the time and levels 4 and up
-almost never, while the attentive bot clears everything, using a tenth of its
-moves on the opening levels and half to four fifths of them on the closing ones.
-Real players sit somewhere between the two, so these numbers bound the
-difficulty rather than fix it: the ladder still wants playtesting.
+As it stands the attentive bot clears everything holding nothing, while the
+floor bot clears level 2 two thirds of the time and levels 4 and up almost
+never. First Light is the exception at both ends: it is a designed three move
+puzzle rather than a board to swipe at, so the attentive bot solves it every
+time in two moves and the floor bot gets there 4% of the time. Real players sit
+somewhere between the two, so these numbers bound the difficulty rather than
+fix it: the ladder still wants playtesting.
 
 The last table reads how far a run that has found nothing gets. A level that
 wants its move items before it will go down is a fine level, and with several
@@ -296,13 +298,24 @@ special's own code rather than by the order a run is given them: the numbers
 end up in seeds and must not move, while the teaching order should stay free to
 re-tune.
 
-**Silver and gold** are read off the bots, holding everything, which is what
-their rules ask for. `make balance` reports how often each reaches each mark,
-and the numbers in the ladder are set so the attentive bot takes gold most of
-the time (or the location is one nobody can check) and the floor bot mostly
-does not (or gold is what clearing the level already pays). As it stands the
-attentive bot takes gold on 56 to 100% of its wins and the floor bot on 8 to
-100% of its far rarer ones.
+**Silver and gold** are read off the bots, and off both ends of the same level.
+`make balance` prints what a mark has to clear: the score a run holding nothing
+reaches, at its middle and at the far end of its tail, beside what a run
+holding everything reaches. A mark is set above the bare tail and inside the
+supplied range.
+
+That is not only a matter of taste. Both marks ask for all five unlocks in
+logic, so a mark a bare run reaches anyway is a location that pays for nothing
+and a rule that is not true. **The opening level is gated on it**: a run with
+no specials may reach one of its marks no more than once in a hundred, and
+`make balance` exits non-zero otherwise. The rest of the ladder is bracketed
+rather than designed, reaches its own marks bare all day, and the same column
+says so; widen the gate as levels are redesigned.
+
+First Light is the one designed so far. Three moves on a narrow board makes a
+long tail: a bare run scores about 6,800 in the middle and once in a few
+hundred cascades into 50,000, so its marks sit at 30,000 and 45,000, which a
+supplied run reaches on 60% and 36% of its wins.
 
 **A mark is checked the moment the score crosses it**, from the clear onward
 rather than once the board has stopped. The flourish in between is still play:
@@ -585,9 +598,11 @@ opens a new way in, that being where gems enter.
 
 **A layout is an ASCII sketch**, one string per row: `.` open and `#` wall,
 `o` and `O` for one layer of jelly and two, `=` and `-` for a whole brick and a
-cracked one, `A` to `H` and `a` to `h` for seals of a color, and `1` to `8` for
-a gem of a color placed before anything is dealt. Colors count from one in a
-sketch so that no digit can be misread as the `o` beside it.
+cracked one, `A` to `H` and `a` to `h` for seals of a color, and `0` to `7` for
+a gem of that color placed before anything is dealt. A digit is the color's own
+number, the same one a seal or an objective names, so there is one way to count
+colors rather than two. Mind that `0` and `O` are different marks: a ruby and a
+double layer of jelly.
 
 A placed gem is an opening arrangement and nothing more. The deal fills around
 it, but the first clear refills its cell at random like any other, because a

@@ -123,16 +123,17 @@ impl Board {
     /// - `o` one layer of jelly, `O` two
     /// - `=` a whole brick, `-` a cracked one
     /// - `A` to `H` a whole seal of color 0 to 7, `a` to `h` a cracked one
-    /// - `1` to `8` a gem of color 0 to 7, placed before anything is dealt
+    /// - `0` to `7` a gem of that color, placed before anything is dealt
     ///
     /// The lesser of each pair is the lighter mark: one layer of jelly is `o`
     /// against `O` for two, a cracked brick is a single rule against a double,
     /// and a cracked seal is lower case.
     ///
-    /// Colors count from `1` rather than from `0` so that no digit can be
-    /// mistaken for the `o` beside it in the same sketch. A placed gem is a
-    /// starting position and nothing more: the first clear refills its cell at
-    /// random like any other.
+    /// A placed gem's digit is the color's own number, the same one a seal or
+    /// an objective names, so there is one way to count colors rather than two.
+    /// Mind that `0` and `O` are different marks: a ruby and a double layer of
+    /// jelly. A placed gem is a starting position and nothing more, and the
+    /// first clear refills its cell at random like any other.
     ///
     /// Rows shorter than `cols` are padded with open cells, so ragged art
     /// still yields a rectangle.
@@ -158,7 +159,7 @@ impl Board {
                         cell.brick = 1;
                         cell.brick_color = ch as u8 - b'a';
                     }
-                    '1'..='8' => cell.gem = Some(Gem::plain(ch as u8 - b'1')),
+                    '0'..='7' => cell.gem = Some(Gem::plain(ch as u8 - b'0')),
                     _ => {}
                 }
             }
@@ -615,17 +616,19 @@ mod tests {
 
     #[test]
     fn layout_places_gems_by_digit() {
-        // Colors count from 1 in a sketch and from 0 in the engine, so that a
-        // digit cannot be read as the `o` beside it.
-        let board = Board::from_layout(&["1.8", "o3O"]);
+        // A digit is the color's own number, the same one a seal or an
+        // objective names. `0` and `O` are different marks and a font that
+        // blurs them is not the engine's problem: one is a ruby and the other
+        // is two layers of jelly.
+        let board = Board::from_layout(&["0.7", "o2O"]);
         assert_eq!(board.gem(Pos::new(0, 0)), Some(Gem::plain(0)));
         assert_eq!(board.gem(Pos::new(0, 2)), Some(Gem::plain(7)));
         assert_eq!(board.gem(Pos::new(0, 1)), None, "a dot places nothing");
-        // A cell can be jellied and placed at once; they are different marks
-        // on different layers, and only one of them can be written per cell.
         assert_eq!(board.gem(Pos::new(1, 1)), Some(Gem::plain(2)));
         assert_eq!(board.jelly(Pos::new(1, 0)), 1);
         assert_eq!(board.gem(Pos::new(1, 0)), None);
+        assert_eq!(board.jelly(Pos::new(1, 2)), 2, "an O is jelly, not a gem");
+        assert_eq!(board.gem(Pos::new(1, 2)), None);
     }
 
     #[test]
