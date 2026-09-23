@@ -1,7 +1,7 @@
 """What the rules promise, asked of Archipelago's own state machine."""
 
 from . import TwiddlyGemsTestBase
-from .. import GAME_DATA, ITEMS_BY_NAME
+from .. import GAME_DATA, ITEMS_BY_NAME, SETTINGS
 
 
 def count_of(name: str):
@@ -62,22 +62,18 @@ class TestDefault(TwiddlyGemsTestBase):
     def test_a_gold_wants_that_levels_own_moves(self) -> None:
         # Gold means beating a level as well as it can be beaten, so
         # everything that level has to offer should be in hand first. The
-        # moves for it may be found anywhere at all, including on a later
-        # level, which is exactly why they cannot be kept on this one.
+        # upgrade for it may be found anywhere at all, including on a later
+        # level, which is exactly why it cannot be kept on this one.
         self.collect_by_name(UNLOCKS)
         self.assertTrue(self.can_reach_location("Level 2 Silver"))
         self.assertFalse(self.can_reach_location("Level 2 Gold"))
 
-        # One at a time: `collect_by_name` takes every copy in the pool at
-        # once, which would skip straight past the half that is the point.
-        moves = self.get_items_by_name("Level 2 Progressive Moves")
-        self.assertGreaterEqual(len(moves), 2, "the pool is short of that level's moves")
-        self.collect(moves[0])
-        self.assertFalse(
-            self.can_reach_location("Level 2 Gold"),
-            "one of the two move items was enough for gold",
-        )
-        self.collect(moves[1])
+        # One item, holding the whole of what that level grants. The pool may
+        # hold more than one of it, because leftover locations are topped up
+        # with upgrades, so this takes a single copy rather than all of them.
+        upgrades = self.get_items_by_name("Level 2 Moves Upgrade")
+        self.assertGreaterEqual(len(upgrades), 1, "that level's upgrade is not in the pool")
+        self.collect(upgrades[0])
         self.assertTrue(self.can_reach_location("Level 2 Gold"))
 
     def test_a_chain_is_open_to_anybody(self) -> None:
@@ -88,16 +84,25 @@ class TestDefault(TwiddlyGemsTestBase):
             self.assertTrue(self.can_reach_location(f"{length} Chain"))
 
     def test_an_item_count_that_points_at_a_setting_resolves(self) -> None:
-        # How many of a move item the pool holds is written as a pointer at
+        # How many of an item the pool holds may be written as a pointer at
         # the setting that decides rather than as a number, because the
-        # apworld is generated once and read by everybody. This is that
-        # pointer being followed.
+        # apworld is generated once and read by everybody.
         #
-        # Counting the pool would not show it: the world tops up its empty
-        # locations with more move items, so what ends up in the pool is the
-        # setting plus however much filler landed on the same level.
-        self.assertEqual(self.world._count(count_of("Level 4 Progressive Moves")), 2)
+        # Nothing uses it at the moment: every item is one of one. The
+        # resolver still has to work, because the settings that need it are
+        # the next ones in, and an unused path that nothing checks is one
+        # that breaks quietly. So this asks it directly, with a pointer built
+        # here rather than one taken from the tables.
         self.assertEqual(self.world._count(count_of("Rainbow")), 1)
+        self.assertEqual(self.world._count(count_of("Level 4 Moves Upgrade")), 1)
+
+        goal = next(setting for setting in SETTINGS if setting["key"] == "goal")
+        pointer = {"resolver": "FromOption", "option": goal["ap_class"], "field": "value"}
+        self.assertEqual(
+            self.world._count(pointer),
+            self.world.options.goal.value,
+            "a count did not follow its pointer to the setting",
+        )
 
     def test_the_goal_is_the_end_of_the_ladder(self) -> None:
         # Beaten with everything, and not before. A goal that asks for nothing
@@ -135,29 +140,8 @@ class TestGoldEverywhereIsTheGoal(TwiddlyGemsTestBase):
         # the branches of the goal rule are doing their own work rather than
         # all collapsing onto the same thing.
         self.collect_by_name(UNLOCKS)
-        self.collect_by_name(f"Level {len(LEVELS)} Progressive Moves")
+        self.collect_by_name(f"Level {len(LEVELS)} Moves Upgrade")
         self.assertTrue(self.can_reach_location(f"Level {len(LEVELS)} Gold"))
         self.assertBeatable(False)
         self.collect_all_but([])
         self.assertBeatable(True)
-
-
-class TestOneMovePerLevel(TwiddlyGemsTestBase):
-    """The setting turned down, which changes the pool and the rules together."""
-
-    options = {"moves_per_level": 1}
-
-    def test_the_pool_and_the_rule_move_together(self) -> None:
-        # One item per level asked for, and gold satisfied by one, both read
-        # off the same setting. Either half alone would be a run that cannot
-        # be finished: a gold wanting two of something there is only one of is
-        # a location nobody can reach.
-        self.assertEqual(self.world._count(count_of("Level 2 Progressive Moves")), 1)
-
-        self.collect_by_name(UNLOCKS)
-        self.assertFalse(self.can_reach_location("Level 2 Gold"))
-        self.collect(self.get_items_by_name("Level 2 Progressive Moves")[0])
-        self.assertTrue(
-            self.can_reach_location("Level 2 Gold"),
-            "gold still wants two moves when the setting says one",
-        )

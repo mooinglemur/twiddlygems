@@ -120,6 +120,17 @@ pub struct LevelSpec {
     pub rules: Rules,
     /// Moves the player gets. 0 means unlimited.
     pub moves: u32,
+    /// How many moves this level's upgrade is worth, on top of [`moves`].
+    ///
+    /// Declared rather than worked out from the budget. What a level is worth
+    /// coming back to better equipped is a design decision about that level,
+    /// and a formula that gets it right for a twenty move board is only ever
+    /// guessing at a three move one. It is also the number a progressive
+    /// version has to add up to, so it wants to be somewhere a person can read
+    /// it off the level rather than somewhere they have to derive it.
+    ///
+    /// [`moves`]: LevelSpec::moves
+    pub moves_upgrade: u32,
     pub objectives: Vec<Objective>,
     /// Scores worth coming back for, over and above simply clearing the level.
     ///
@@ -139,11 +150,19 @@ impl LevelSpec {
             name,
             rules: Rules::default(),
             moves,
+            moves_upgrade: 0,
             objectives,
             silver: 0,
             gold: 0,
             layout: None,
         }
+    }
+
+    /// What this level's moves upgrade is worth. See
+    /// [`LevelSpec::moves_upgrade`].
+    fn upgrade(mut self, moves: u32) -> Self {
+        self.moves_upgrade = moves;
+        self
     }
 
     /// The two scores worth coming back for. See [`LevelSpec::silver`].
@@ -339,14 +358,17 @@ pub fn levels() -> Vec<LevelSpec> {
             // means a long tail, so these are set off the far end of it rather
             // than off the middle: two hundred bare runs top out around 25,000
             // and a supplied one sits near 31,000.
-            .tiers(30_000, 45_000),
+            .tiers(30_000, 45_000)
+            .upgrade(4),
         LevelSpec::new("Finding Fours", 22, vec![Objective::Score(7_000)])
             .colors(5)
-            .tiers(12_000, 22_000),
+            .tiers(12_000, 22_000)
+            .upgrade(10),
         // Color goals ask you to aim rather than to clear whatever is nearest.
         LevelSpec::new("Ruby Hunt", 22, vec![Objective::Color { color: 0, count: 30 }])
             .colors(5)
-            .tiers(23_000, 41_000),
+            .tiers(23_000, 41_000)
+            .upgrade(10),
         LevelSpec::new(
             "Two Tastes",
             26,
@@ -355,36 +377,44 @@ pub fn levels() -> Vec<LevelSpec> {
                 Objective::Color { color: 3, count: 28 },
             ],
         )
-        .tiers(18_000, 33_000),
+        .tiers(18_000, 33_000)
+        .upgrade(12),
         // Jelly arrives: now position matters, not just volume.
         LevelSpec::new("Sticky Middle", 16, vec![Objective::Jelly])
             .with_layout(JELLY_PATCH)
-            .tiers(13_000, 24_000),
+            .tiers(13_000, 24_000)
+            .upgrade(8),
         LevelSpec::new(
             "Crowded House",
             26,
             vec![Objective::Score(13_000), Objective::Color { color: 4, count: 26 }],
         )
-        .tiers(17_000, 30_000),
+        .tiers(17_000, 30_000)
+        .upgrade(12),
         // Walls break the board into tubes and make cascades harder to aim.
         LevelSpec::new("Crossroads", 20, vec![Objective::Jelly, Objective::Score(12_000)])
             .with_layout(CROSS)
-            .tiers(13_000, 24_000),
+            .tiers(13_000, 24_000)
+            .upgrade(10),
         LevelSpec::new("Pillars", 32, vec![Objective::Jelly])
             .with_layout(PILLARS)
-            .tiers(14_000, 25_000),
+            .tiers(14_000, 25_000)
+            .upgrade(16),
         LevelSpec::new("Hourglass", 40, vec![Objective::Jelly])
             .with_layout(HOURGLASS)
-            .tiers(26_000, 47_000),
+            .tiers(26_000, 47_000)
+            .upgrade(20),
         // The jelly is under the brick shelves, so it cannot be reached until
         // the bricks come down, and nothing falls into those pockets until the
         // gems above spill around the ends.
         LevelSpec::new("Quarry", 34, vec![Objective::Jelly])
             .with_layout(QUARRY)
-            .tiers(13_000, 24_000),
+            .tiers(13_000, 24_000)
+            .upgrade(16),
         LevelSpec::new("Landslide", 40, vec![Objective::Brick])
             .with_layout(SLOPE)
-            .tiers(25_000, 44_000),
+            .tiers(25_000, 44_000)
+            .upgrade(20),
         // A goal per color rather than one lumped total, so the level is about
         // bringing each color to its own seals rather than breaking whichever
         // happened to be easiest to reach.
@@ -400,7 +430,8 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(VAULT)
         .palette(&[0, 1, 2, 3])
-        .tiers(310_000, 550_000),
+        .tiers(310_000, 550_000)
+        .upgrade(14),
         LevelSpec::new(
             "Last Call",
             30,
@@ -409,7 +440,8 @@ pub fn levels() -> Vec<LevelSpec> {
                 Objective::Color { color: 2, count: 32 },
             ],
         )
-        .tiers(27_000, 48_000),
+        .tiers(27_000, 48_000)
+        .upgrade(14),
     ]
 }
 
@@ -593,6 +625,32 @@ mod tests {
                 "{}: the gems it places are already a match at {:?}",
                 level.name,
                 matches[0].cells,
+            );
+        }
+    }
+
+    #[test]
+    fn every_level_declares_what_its_upgrade_is_worth() {
+        // A level that declares nothing has an item in the pool that does
+        // nothing when it arrives, and a gold that asks for it anyway. The
+        // number is a design decision, so there is no sensible default to fall
+        // back on: it has to be written down.
+        for (index, level) in levels().iter().enumerate() {
+            assert!(
+                level.moves_upgrade > 0,
+                "level {} ({}) grants nothing for finding its upgrade",
+                index + 1,
+                level.name,
+            );
+            // Nothing says a level cannot be worth doubling, but a level worth
+            // more than that is more likely a typo than a decision.
+            assert!(
+                level.moves_upgrade <= level.moves.max(4),
+                "level {} ({}) grants {} moves on a budget of {}",
+                index + 1,
+                level.name,
+                level.moves_upgrade,
+                level.moves,
             );
         }
     }

@@ -21,7 +21,7 @@ use std::path::Path;
 
 use twiddlygems::level::levels;
 use twiddlygems::options::{
-    Kind, Options, Setting, MOVES_PER_LEVEL as MOVES_SETTING, SETTINGS,
+    Kind, Options, Setting, SETTINGS,
 };
 use twiddlygems::progression::{
     goal, item_name, item_pool, items, location_name, locations, requirement, Count, Item,
@@ -110,9 +110,9 @@ fn option_table() -> Json {
 
 /// What the Python will call one setting's option class, fully qualified.
 ///
-/// Worked out here rather than by a convention implemented on both sides:
-/// `moves_per_level` becomes `MovesPerLevel`, and the name travels in the data
-/// so the two cannot disagree about it.
+/// Worked out here rather than by a convention implemented on both sides: a
+/// key of `gem_frequency` becomes `GemFrequency`, and the name travels in the
+/// data so the two cannot disagree about it.
 fn ap_class(setting: &Setting) -> String {
     let mut name = String::new();
     for word in setting.key.split('_') {
@@ -200,14 +200,15 @@ fn location_table(levels: usize) -> Json {
 
 /// How many of an item the pool holds.
 ///
-/// A number for the unlocks, because five is five. A setting for the move
-/// items, because a player can ask for more or fewer, and the apworld is
-/// generated once and read by everybody: a number baked in here would be
-/// whatever the engine was built with.
+/// One of each today: five unlocks, and one moves upgrade per level carrying
+/// the whole of what that level grants. When the upgrade can be split into one
+/// item per move this becomes a setting rather than a number, because the
+/// apworld is generated once and read by everybody, so a count baked in here
+/// would be whatever the engine happened to be built with.
 fn copies(item: Item) -> Count {
     match item {
         Item::Unlock(_) => Count::Exactly(1),
-        Item::Moves { .. } => Count::Setting(MOVES_SETTING),
+        Item::Moves { .. } => Count::Exactly(1),
     }
 }
 

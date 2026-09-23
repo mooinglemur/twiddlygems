@@ -1838,6 +1838,7 @@ mod tests {
             name: "test",
             rules: Rules { rows, cols, colors, ..Rules::default() },
             moves,
+            moves_upgrade: 0,
             objectives: vec![Objective::Score(1_000_000)],
             silver: 0,
             gold: 0,

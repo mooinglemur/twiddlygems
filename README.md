@@ -208,15 +208,21 @@ Levels themselves no longer switch specials off: a level says what belongs on
 it, the run says what it may make, and a match gets whatever survives both.
 That is why coming back to the opening level later plays differently.
 
-The other item is **progressive moves**, which add to one named level's budget.
-Several can land on the same level and each adds again, and what one is worth
-is a quarter of that level's own budget rather than a flat number, so an item
-means about as much on a forty move level as on a sixteen. They are never
-needed to clear anything: every level has to be beatable on its own budget or
-the ladder dead-ends, so what they buy is a better run at one rather than a
-first clear. One arriving mid level goes straight on the counter in front of
-the player, because an item that did nothing for the level it was sent to would
-not be much of an item.
+The other item is a **moves upgrade**, which tops up one named level's budget.
+What it is worth is declared by that level rather than worked out from its
+length: what a board is worth coming back to better equipped is a decision
+about that board, and a formula that suits a twenty move level is only guessing
+at a three move one. They are never needed to clear anything: every level has
+to be beatable on its own budget or the ladder dead-ends, so what they buy is a
+better run at a level rather than a first clear. One arriving mid level goes
+straight on the counter in front of the player, because an item that did
+nothing for the level it was sent to would not be much of an item.
+
+One item carries the whole of a level's upgrade today. Splitting it into one
+item per move, so that finding four of Pillars' sixteen is worth four moves,
+is the version that makes them properly progressive, and it waits on somewhere
+to put them: the ladder grants 166 moves across its thirteen levels and has 50
+locations. The Archipelago gem is that somewhere.
 
 Items are found at **locations**: clearing each level, clearing it past each of
 its two score marks, and reaching a chain of each length from two to twelve.
@@ -282,11 +288,12 @@ four ladder lengths, because a fill that is safe for one seed and not another
 is a run somebody cannot finish. Another checks that walk can still fail, by
 giving a location a rule its own item would satisfy.
 
-**Two moves per level, not three.** A ladder of `L` levels offers `3L`
-locations on the levels themselves and five chains short enough to count on,
-and three each makes a pool of `5 + 3L` against exactly `3L + 5` places: a fill
-with no slack deadlocks on the last item, and there is nowhere for the traps
-and usable items to go. Going back up wants more locations rather than a
+**The pool has to fit in the locations, under every setting.** A ladder of `L`
+levels offers `3L` locations on the levels themselves and eleven chains, and a
+test walks every combination of settings against every ladder length rather
+than the defaults alone: a combination nobody can generate is a combination the
+yaml should not offer. It is also the gate a one-item-per-move upgrade has to
+pass before it can be offered, and today it would not. More locations, not a
 cleverer fill.
 
 **Items and locations are named by the engine**, because those strings are the

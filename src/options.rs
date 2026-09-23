@@ -18,16 +18,13 @@
 /// rather than trying to apply a change to a game in progress.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Options {
-    /// How many move items each level's budget can be topped up with, and so
-    /// how many of them gold asks for.
-    pub moves_per_level: u32,
     /// What finishing the game means.
     pub goal: Goal,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { moves_per_level: 2, goal: Goal::GoldOnLastLevel }
+        Options { goal: Goal::GoldOnLastLevel }
     }
 }
 
@@ -81,7 +78,6 @@ impl Options {
     /// added, which is the drift this whole arrangement exists to avoid.
     pub fn get(&self, at: usize) -> Option<u32> {
         match SETTINGS.get(at)?.key {
-            MOVES_PER_LEVEL => Some(self.moves_per_level),
             GOAL => Some(self.goal.value()),
             _ => None,
         }
@@ -95,7 +91,6 @@ impl Options {
             return false;
         }
         match setting.key {
-            MOVES_PER_LEVEL => self.moves_per_level = value,
             GOAL => match Goal::from_value(value) {
                 Some(goal) => self.goal = goal,
                 None => return false,
@@ -106,8 +101,6 @@ impl Options {
     }
 }
 
-/// The key of the setting that decides [`Options::moves_per_level`].
-pub const MOVES_PER_LEVEL: &str = "moves_per_level";
 /// The key of the setting that decides [`Options::goal`].
 pub const GOAL: &str = "goal";
 
@@ -191,19 +184,12 @@ pub static SETTINGS: &[Setting] = &[
         ]),
         default: 0,
     },
-    Setting {
-        key: MOVES_PER_LEVEL,
-        label: "Moves per level",
-        about: "How many times each level's move budget can be topped up, \
-                and how many of them its gold asks for.",
-        // One at the bottom because a solo run should have something to hand
-        // over for clearing a level, and two at the top because the ladder has
-        // only so many places to hide things: three fills every usable
-        // location on a thirteen level ladder and leaves the fill no slack.
-        // The Archipelago gem is the location that would raise this.
-        kind: Kind::Range { low: 1, high: 2 },
-        default: 2,
-    },
+    // A level's moves upgrade has no setting of its own yet. Each level
+    // declares what its upgrade is worth and one item carries the whole of it,
+    // so there is nothing to choose. The choice that belongs here is whether
+    // to split that total into one item per move, and it waits on the
+    // Archipelago gem: the ladder grants 166 moves across thirteen levels and
+    // has 50 locations, so one item per move needs somewhere else to put them.
 ];
 
 /// Where to find one by key.
@@ -270,22 +256,43 @@ mod tests {
     #[test]
     fn a_value_a_setting_does_not_allow_is_refused() {
         let goal = setting_index(GOAL).unwrap();
-        let moves = setting_index(MOVES_PER_LEVEL).unwrap();
         let mut options = Options::default();
         assert!(!options.set(goal, 99), "the goal took a value that is not a goal");
-        assert!(!options.set(moves, 0), "moves per level went below its floor");
-        assert!(!options.set(moves, 3), "moves per level went past its ceiling");
         assert!(!options.set(SETTINGS.len(), 0), "a setting that does not exist was set");
         assert_eq!(options, Options::default(), "a refused setting changed something anyway");
+
+        // Ranges have no instance in the table today, so the refusal at each
+        // end is checked against one built here. The next setting to be added
+        // is a range, and this is the behavior it will rely on.
+        let span = Setting {
+            key: "test",
+            label: "Test",
+            about: "A range, for the check below.",
+            kind: Kind::Range { low: 1, high: 4 },
+            default: 2,
+        };
+        assert!(!span.allows(0), "a range took a value below its floor");
+        assert!(!span.allows(5), "a range took a value past its ceiling");
+        assert!(span.allows(1) && span.allows(4), "a range refused its own ends");
     }
 
     #[test]
     fn a_range_stops_at_its_ends_and_a_choice_goes_round() {
         // Which is the difference between a pair of buttons and a row of
         // chips, and the screen should not have to know which is which.
-        let moves = &SETTINGS[setting_index(MOVES_PER_LEVEL).unwrap()];
-        assert_eq!(moves.step(2, 1), 2, "a range walked past its ceiling");
-        assert_eq!(moves.step(1, -1), 1, "a range walked past its floor");
+        //
+        // The range is built here rather than taken from the table for the
+        // reason above: there is none in it at the moment.
+        let span = Setting {
+            key: "test",
+            label: "Test",
+            about: "A range, for the check below.",
+            kind: Kind::Range { low: 1, high: 4 },
+            default: 2,
+        };
+        assert_eq!(span.step(4, 1), 4, "a range walked past its ceiling");
+        assert_eq!(span.step(1, -1), 1, "a range walked past its floor");
+        assert_eq!(span.step(2, 1), 3, "a range would not move");
 
         let goal = &SETTINGS[setting_index(GOAL).unwrap()];
         assert_eq!(goal.step(3, 1), 0, "a choice did not wrap round");

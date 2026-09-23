@@ -15,7 +15,7 @@
 
 use crate::board::Special;
 use crate::level::LevelSpec;
-use crate::options::{Goal, Options, GOAL as GOAL_SETTING, MOVES_PER_LEVEL as MOVES_SETTING};
+use crate::options::{Goal, Options, GOAL as GOAL_SETTING};
 use crate::rng::Rng;
 use crate::rules::SpecialSet;
 
@@ -379,10 +379,12 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
             tools(),
             Requirement::Has {
                 item: Item::Moves { level: index },
-                // However many that player asked for, rather than however many
-                // this build was compiled with. The apworld is generated once
-                // and read by everybody.
-                count: Count::Setting(MOVES_SETTING),
+                // One, because a level's upgrade is one item holding the whole
+                // of what that level grants. When it can be split into pieces
+                // this becomes however many pieces that player asked for,
+                // which is a setting rather than a number, because the apworld
+                // is generated once and read by everybody.
+                count: Count::Exactly(1),
             },
         ]),
         // A chain is made on whatever board is in front of you, and the
@@ -446,7 +448,7 @@ pub fn item_name(item: Item) -> String {
             Special::Rocket => "Rocket".to_string(),
             Special::None => "Nothing".to_string(),
         },
-        Item::Moves { level } => format!("Level {} Progressive Moves", level + 1),
+        Item::Moves { level } => format!("Level {} Moves Upgrade", level + 1),
     }
 }
 
@@ -594,19 +596,19 @@ impl Inventory {
     /// one that never wanted rockets does not get them because the player found
     /// the unlock elsewhere. Moves only ever go on, on top of the budget the
     /// level was tuned to be beatable with.
+    ///
+    /// The upgrade lands whole and lands once. There is one of them per level
+    /// in the pool, so a second copy is not something a seed can produce; if a
+    /// multiworld sends one anyway it changes nothing, because the level's
+    /// declared total is the total however many arrive. Splitting it into
+    /// pieces that add up to the same number is what the progressive version
+    /// will do, once there are locations enough to hold them all.
     pub fn apply(&self, level: usize, spec: &mut LevelSpec) {
         spec.rules.specials = spec.rules.specials.intersect(self.specials);
-        spec.moves += self.moves_found(level) * move_step(spec.moves);
+        if self.moves_found(level) > 0 {
+            spec.moves += spec.moves_upgrade;
+        }
     }
-}
-
-/// What one move item is worth on a level whose own budget is `base`.
-///
-/// A share of the level's budget rather than a flat number, so an item means
-/// about as much on a forty move level as on a sixteen. The floor keeps it
-/// worth finding on the shortest levels there could ever be.
-pub fn move_step(base: u32) -> u32 {
-    (base / 4).max(2)
 }
 
 /// What a solo run finds at a location.
@@ -654,24 +656,19 @@ pub fn solo_item_at(
 }
 
 /// The whole pool a run has to find, in the order a solo placement lays it
-/// out: the unlocks first, because everything else waits on them, then each
-/// level's move items.
-pub fn item_pool(levels: usize, options: &Options) -> Vec<Item> {
+/// out: the unlocks first, because everything else waits on them, then one
+/// moves upgrade per level.
+pub fn item_pool(levels: usize, _options: &Options) -> Vec<Item> {
     UNLOCKS
         .iter()
         .map(|special| Item::Unlock(*special))
         .chain(
             // Top of the ladder downward. A level's gold cannot be filled
-            // until that level's own moves are all placed somewhere else, so
-            // finishing the deepest level's set first opens golds early and
-            // keeps them opening ahead of the fill. Bottom upward leaves the
-            // last few items with nowhere but the chains.
-            (0..levels).rev().flat_map(|level| {
-                std::iter::repeat_n(
-                    Item::Moves { level },
-                    options.moves_per_level as usize,
-                )
-            }),
+            // until that level's own upgrade is placed somewhere else, so
+            // finishing the deepest level first opens golds early and keeps
+            // them opening ahead of the fill. Bottom upward leaves the last
+            // few items with nowhere but the chains.
+            (0..levels).rev().map(|level| Item::Moves { level }),
         )
         .collect()
 }
@@ -798,12 +795,13 @@ mod tests {
     use crate::options::{setting_index, Kind, SETTINGS};
     use crate::rules::Rules;
 
-    /// A level with a move budget, for the arithmetic below.
-    fn spec(moves: u32) -> LevelSpec {
+    /// A level with a move budget and an upgrade, for the arithmetic below.
+    fn spec(moves: u32, moves_upgrade: u32) -> LevelSpec {
         LevelSpec {
             name: "test",
             rules: Rules::default(),
             moves,
+            moves_upgrade,
             objectives: vec![Objective::Score(1)],
             silver: 0,
             gold: 0,
@@ -816,7 +814,7 @@ mod tests {
         let inventory = Inventory::empty();
         assert!(inventory.specials().is_empty());
 
-        let mut level = spec(20);
+        let mut level = spec(20, 5);
         assert_eq!(level.rules.specials, SpecialSet::ALL, "a level offers everything by default");
         inventory.apply(0, &mut level);
         assert!(level.rules.specials.is_empty(), "and a run with nothing may make none of it");
@@ -848,31 +846,66 @@ mod tests {
     }
 
     #[test]
-    fn move_items_stack_on_the_level_they_name() {
-        // Unlike an unlock, a second one is worth having, and it lands on that
-        // level rather than on the run.
+    fn a_count_can_be_asked_of_a_setting_rather_than_written_down() {
+        // No rule uses this at the moment: a level's upgrade is one item, so
+        // its gold asks for exactly one. It is how an option-dependent rule
+        // is expressed, though, and the next few settings all need it, so it
+        // is worth holding to its behavior rather than leaving it to rot.
+        let mut options = Options::default();
+        options.goal = Goal::ClearEveryLevel;
+        assert_eq!(Count::Exactly(3).resolve(&options), 3);
+        assert_eq!(
+            Count::Setting(GOAL_SETTING).resolve(&options),
+            Goal::ClearEveryLevel.value(),
+            "a count read the wrong setting",
+        );
+        // A rule is a promise about what is enough, and the safest reading of
+        // a setting that is not there is not to gate on it at all.
+        assert_eq!(Count::Setting("no_such_setting").resolve(&options), 0);
+    }
+
+    #[test]
+    fn a_moves_upgrade_lands_on_the_level_it_names() {
+        // It tops up that level's budget and no other. Which level it is for
+        // is part of the item, so the inventory is a per-level tally rather
+        // than a count on the run.
         let mut inventory = Inventory::empty();
         assert!(inventory.receive(Item::Moves { level: 3 }));
-        assert!(inventory.receive(Item::Moves { level: 3 }), "a second is still news");
-        assert_eq!(inventory.moves_found(3), 2);
-        assert_eq!(inventory.moves_found(4), 0, "it did not spill onto the next level");
+        assert_eq!(inventory.moves_found(3), 1);
+        assert_eq!(inventory.moves_found(4), 0, "it spilled onto the next level");
 
-        let mut level = spec(20);
+        let mut level = spec(20, 7);
         inventory.apply(3, &mut level);
-        assert_eq!(level.moves, 20 + 2 * move_step(20));
+        assert_eq!(level.moves, 27);
 
-        let mut elsewhere = spec(20);
+        let mut elsewhere = spec(20, 7);
         inventory.apply(4, &mut elsewhere);
         assert_eq!(elsewhere.moves, 20, "another level should be untouched");
     }
 
     #[test]
-    fn a_move_item_is_worth_a_share_of_the_level_rather_than_a_flat_number() {
-        // One item should mean about as much on a long level as on a short
-        // one, and be worth finding even on the shortest there could be.
-        assert_eq!(move_step(40), 10);
-        assert_eq!(move_step(20), 5);
-        assert!(move_step(4) >= 2, "a tiny level still owes something for one");
+    fn an_upgrade_is_worth_what_the_level_declares_and_no_more() {
+        // Not a share of the budget: what a level is worth coming back to
+        // better equipped is that level's own business, so two levels of the
+        // same length can be worth different amounts.
+        let mut inventory = Inventory::empty();
+        inventory.receive(Item::Moves { level: 0 });
+
+        for (moves, upgrade) in [(20, 5), (20, 12), (3, 4), (40, 1)] {
+            let mut level = spec(moves, upgrade);
+            inventory.apply(0, &mut level);
+            assert_eq!(level.moves, moves + upgrade);
+        }
+
+        // And the whole of it arrives at once, so the declared number is the
+        // total whatever a multiworld sends over. Splitting it into pieces
+        // that add up to the same number is the progressive version's job.
+        let mut twice = Inventory::empty();
+        twice.receive(Item::Moves { level: 0 });
+        twice.receive(Item::Moves { level: 0 });
+        let mut level = spec(20, 7);
+        twice.apply(0, &mut level);
+        assert_eq!(level.moves, 27, "a second copy went past the level's declared total");
     }
 
     #[test]
@@ -883,7 +916,7 @@ mod tests {
         for special in UNLOCKS {
             inventory.receive(Item::Unlock(special));
         }
-        let mut level = spec(20);
+        let mut level = spec(20, 5);
         level.rules.specials = SpecialSet { rocket: false, ..SpecialSet::ALL };
         inventory.apply(0, &mut level);
         assert!(!level.rules.specials.rocket, "the level's own answer is final");
@@ -1007,10 +1040,11 @@ mod tests {
     }
 
     #[test]
-    fn every_level_is_improvable_the_same_number_of_times() {
-        // Each level should be worth going back to as often as any other,
-        // whether its own clear carries the items, its neighbor's marks do, or
-        // a chain does.
+    fn every_level_has_its_upgrade_placed_somewhere() {
+        // Each level should be worth going back to, whether its own clear
+        // carries the item, its neighbor's marks do, or a chain does. A level
+        // whose upgrade never made it into the world is a level that can only
+        // ever be played on its bare budget.
         for (levels, seed, options) in every_run() {
             let placed = solo_placement(levels, seed, &options);
             for level in 0..levels {
@@ -1018,12 +1052,12 @@ mod tests {
                     .iter()
                     .filter(|held| **held == Some(Item::Moves { level }))
                     .count();
-                // At least, not exactly: what is left over once the pool is
-                // placed becomes filler, and filler is more moves.
+                // At least one, not exactly one: what is left over once the
+                // pool is placed becomes filler, and filler is more upgrades.
                 assert!(
-                    found >= options.moves_per_level as usize,
-                    "dealt from {seed:#x} as {options:?}, level {} of {levels} can be \
-                     improved only {found} times",
+                    found >= 1,
+                    "dealt from {seed:#x} as {options:?}, level {} of {levels} has no \
+                     upgrade anywhere in the world",
                     level + 1,
                 );
             }
@@ -1250,16 +1284,20 @@ mod tests {
     fn the_pool_fits_in_the_locations_there_are() {
         // Archipelago has to put every item somewhere. More items than places
         // to hide them is a generation that cannot be made.
-        for levels in LADDERS {
+        //
+        // Every setting, not just the defaults: a combination nobody can
+        // generate is a combination the yaml should not offer. This is the
+        // check that a one-item-per-move upgrade has to pass before it can be
+        // offered, and today it would not: the ladder grants 166 moves and
+        // there are 50 places to put things.
+        for (levels, options) in LADDERS.iter().flat_map(|levels| {
+            setups().into_iter().map(move |options| (*levels, options))
+        }) {
             let places = locations(levels).len();
-            // The most any setting can ask for, since that is the one that
-            // has to fit: a range whose top end overflows is a setting nobody
-            // can safely choose.
-            let most = SETTINGS[setting_index(MOVES_SETTING).unwrap()].step(0, i32::MAX);
-            let pool = UNLOCKS.len() + levels * most as usize;
+            let pool = item_pool(levels, &options).len();
             assert!(
                 pool <= places,
-                "{levels} levels give {pool} items at {most} moves each, and only {places} \
+                "{levels} levels as {options:?} give {pool} items and only {places} \
                  places to hide them",
             );
         }
@@ -1298,17 +1336,23 @@ mod tests {
             assert_eq!(at.id(), id, "and it does not answer to that number any more");
         }
 
+        // Names as well as numbers, because both are the promise. An item's
+        // name is what a spoiler log, a tracker and another player's client
+        // call it, so renaming one breaks a seed exactly as surely as
+        // renumbering it. This half of the table was numbers only, and a
+        // rename went straight through it unnoticed.
         let things = [
-            (1, Item::Unlock(Special::LineH)),
-            (2, Item::Unlock(Special::LineV)),
-            (3, Item::Unlock(Special::Cross)),
-            (4, Item::Unlock(Special::Rainbow)),
-            (5, Item::Unlock(Special::Rocket)),
-            (1_000, Item::Moves { level: 0 }),
-            (1_049, Item::Moves { level: 49 }),
+            (1, "Horizontal Line Clear", Item::Unlock(Special::LineH)),
+            (2, "Vertical Line Clear", Item::Unlock(Special::LineV)),
+            (3, "Cross Clear", Item::Unlock(Special::Cross)),
+            (4, "Rainbow", Item::Unlock(Special::Rainbow)),
+            (5, "Rocket", Item::Unlock(Special::Rocket)),
+            (1_000, "Level 1 Moves Upgrade", Item::Moves { level: 0 }),
+            (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
         ];
-        for (id, item) in things {
-            assert_eq!(item.id(), id, "{} changed its number", item_name(item));
+        for (id, name, item) in things {
+            assert_eq!(item.id(), id, "{name} changed its number");
+            assert_eq!(item_name(item), name, "item {id} changed meaning");
         }
     }
 

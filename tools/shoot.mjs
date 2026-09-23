@@ -247,8 +247,8 @@ for (const [name, metrics] of [
     (() => {
       const { hud } = window.twiddlygems;
       hud.logItem({ said: 'Found ', what: 'Horizontal Line Clear', where: 'Level 2 Clear' });
-      hud.logItem({ said: 'Found ', what: 'Level 3 Progressive Moves', where: 'Level 2 Gold' });
-      hud.logItem({ said: 'Received ', what: 'Level 4 Progressive Moves', where: null });
+      hud.logItem({ said: 'Found ', what: 'Level 3 Moves Upgrade', where: 'Level 2 Gold' });
+      hud.logItem({ said: 'Received ', what: 'Level 4 Moves Upgrade', where: null });
     })()
   `);
   await sleep(200);

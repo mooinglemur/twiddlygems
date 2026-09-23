@@ -945,10 +945,11 @@ mod tests {
         let before = session.game().moves_left;
         let budget = session.game().spec.moves;
 
+        let upgrade = session.game().spec.moves_upgrade;
+        assert!(upgrade > 0, "the opening level grants nothing, so this proves nothing");
         assert!(session.receive(Item::Moves { level: 0 }));
-        let step = crate::progression::move_step(budget);
-        assert_eq!(session.game().moves_left, before + step);
-        assert_eq!(session.game().spec.moves, budget + step, "and the budget grew with it");
+        assert_eq!(session.game().moves_left, before + upgrade);
+        assert_eq!(session.game().spec.moves, budget + upgrade, "and the budget grew with it");
     }
 
     #[test]
