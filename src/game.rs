@@ -1310,6 +1310,7 @@ impl Game {
         // Worked out before the board is touched, because it reads what is
         // standing beside the clear.
         let ap_struck = self.ap_gems_struck(&blast);
+        let mut collected = 0;
         for p in blast
             .cleared
             .iter()
@@ -1318,7 +1319,13 @@ impl Game {
             .chain(ap_struck.iter().copied())
         {
             self.events.push(Event::at(EV_AP_CLEAR, p, 255, Special::Archipelago, cascade));
+            collected += 1;
         }
+        // A check taken is a check gone, so the level has one fewer worth
+        // dropping. Without this the cap is only on how many sit on the board
+        // at once: collect one, the board has room again, and another falls
+        // for a check that is no longer there.
+        self.ap_gems_wanted = self.ap_gems_wanted.saturating_sub(collected);
 
         for (p, special) in &blast.fired {
             self.events.push(Event::at(EV_SPECIAL_FIRED, *p, 255, *special, cascade));
@@ -4079,14 +4086,30 @@ mod tests {
     }
 
     #[test]
-    fn nothing_deals_one_at_random() {
-        // They arrive by being placed, never out of the refill. A board that
-        // dealt them would hand out checks nobody earned.
+    fn the_opening_deal_never_places_one() {
+        // They fall in during play and only then. A board that opened with
+        // one would hand over a check before the player had done anything,
+        // and a level drawn with a layout would be deciding where checks go.
+        //
+        // At odds far denser than the yaml offers and with plenty wanted, so
+        // this cannot pass by one merely not happening to be drawn: if the
+        // deal went through the same path the refill does, every one of these
+        // boards would open covered in them.
         for seed in 0..40 {
-            let mut game = Game::new(spec(8, 8, 6, 20), seed);
+            let mut level = spec(8, 8, 6, 20);
+            level.rules.ap_gem_odds = 2;
+            let mut game = Game::new(level, seed);
+            game.ap_gems_wanted = 99;
             assert!(
                 game.board.ap_gems().is_empty(),
                 "seed {seed} dealt an Archipelago gem onto a fresh board",
+            );
+
+            // A reshuffle deals a fresh board too, and it is still not play.
+            game.shuffle_board();
+            assert!(
+                game.board.ap_gems().is_empty(),
+                "seed {seed} put one on the board when it reshuffled",
             );
         }
     }

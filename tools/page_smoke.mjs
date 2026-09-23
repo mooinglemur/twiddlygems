@@ -609,9 +609,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // where the player is told. Which item that is belongs to the placement, so
   // this asks that it was named and said where it came from, not which one it
   // was.
+  //
+  // Any location, not this level's own: the panel shows the last item the run
+  // was handed, and a winning move can pay a chain or an AP gem in the same
+  // breath as the clear. That the level's own item was announced is checked
+  // against the feed below, which keeps every line rather than the last.
   assert.match(
     elements.get('overlay-body').textContent,
-    new RegExp(`Found .+ \\(Level ${LEVEL + 1} (Clear|Silver|Gold)\\)\\.`),
+    /Found .+ \((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain)\)\./,
     'clearing the level announced nothing',
   );
 
@@ -626,12 +631,13 @@ click(overlayButton('Close'), 'the level picker has no way out');
     lines.some((line) => line.endsWith(`(Level ${LEVEL + 1} Clear)`)),
     `clearing the level never reached the item feed, which holds ${JSON.stringify(lines)}`,
   );
-  // A chain along the way pays too, and every line has to say where its item
-  // came from: the location is what makes the feed readable when a multiworld
-  // is sending things in from everywhere.
+  // A chain along the way pays too, and so does an AP gem if one fell, and
+  // every line has to say where its item came from: the location is what
+  // makes the feed readable when a multiworld is sending things in from
+  // everywhere.
   assert.ok(
     lines.every((line) =>
-      /^Found \S.*\((Level \d+ (Clear|Silver|Gold)|\d+ Chain)\)$/.test(line),
+      /^Found \S.*\((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain)\)$/.test(line),
     ),
     `the feed has a line it cannot place: ${JSON.stringify(lines)}`,
   );

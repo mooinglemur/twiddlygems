@@ -987,6 +987,41 @@ mod tests {
     }
 
     #[test]
+    fn a_level_drops_no_more_gems_than_it_has_checks_for() {
+        // Not just no more at once: no more over the whole playthrough. A gem
+        // that falls after the level's last check is taken is one the player
+        // clears for nothing, which reads as the check being broken.
+        // At odds the yaml does not offer, so this cannot pass by a second gem
+        // simply not happening to fall: one refilled gem in two is one of
+        // these, and a level refills hundreds.
+        let mut session =
+            Session::set_up(7, Options { ap_gems: 1, ap_gem_odds: 2, ..Options::default() });
+        collect_one_gem(&mut session);
+        assert!(session.checked().contains(&Location::ApGem { level: 0, index: 0 }.id()));
+
+        // Play the rest of the level out. The one check is gone, so nothing
+        // more should ever fall here.
+        for _ in 0..4000 {
+            if session.game().status() != Status::Playing {
+                break;
+            }
+            if session.game().accepts_input() {
+                match session.game().hint() {
+                    Some((a, b)) => {
+                        session.game_mut().try_swap(a, b);
+                    }
+                    None => break,
+                }
+            }
+            session.update(16.0);
+            assert!(
+                session.game().board.ap_gems().is_empty(),
+                "a gem fell after the level's only check had been taken",
+            );
+        }
+    }
+
+    #[test]
     fn a_run_asking_for_no_gems_is_dealt_none() {
         let mut session = Session::set_up(7, Options { ap_gems: 0, ..Options::default() });
         assert_eq!(session.game().ap_gems_wanted, 0);

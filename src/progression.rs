@@ -517,9 +517,12 @@ pub fn location_name(location: Location) -> String {
         Location::LevelSilver(index) => format!("Level {} Silver", index + 1),
         Location::LevelGold(index) => format!("Level {} Gold", index + 1),
         Location::Chain(length) => format!("{length} Chain"),
-        Location::ApGem { level, index } => {
-            format!("Level {} Archipelago Gem {}", level + 1, index + 1)
-        }
+        // "AP Gem" rather than the word spelled out: this is what the feed
+        // shows while a level is being played, where a line has to be read at
+        // a glance and "Archipelago" is most of its width. Every other reader
+        // of these names gets the same one, which is the point of there being
+        // only one.
+        Location::ApGem { level, index } => format!("Level {} AP Gem {}", level + 1, index + 1),
     }
 }
 
@@ -1620,10 +1623,10 @@ mod tests {
             (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
         ];
         for (id, name) in [
-            (4_000, "Level 1 Archipelago Gem 1"),
-            (4_009, "Level 1 Archipelago Gem 10"),
-            (4_010, "Level 2 Archipelago Gem 1"),
-            (4_499, "Level 50 Archipelago Gem 10"),
+            (4_000, "Level 1 AP Gem 1"),
+            (4_009, "Level 1 AP Gem 10"),
+            (4_010, "Level 2 AP Gem 1"),
+            (4_499, "Level 50 AP Gem 10"),
         ] {
             let at = Location::from_id(id).expect("a number in use is a location");
             assert_eq!(location_name(at), name, "location {id} changed meaning");

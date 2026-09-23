@@ -99,9 +99,9 @@ class TestDefault(TwiddlyGemsTestBase):
 
         # And the world built only those: asking for a location it did not
         # create raises.
-        self.world.get_location("Level 1 Archipelago Gem 1")
+        self.world.get_location("Level 1 AP Gem 1")
         with self.assertRaises(KeyError):
-            self.world.get_location("Level 1 Archipelago Gem 2")
+            self.world.get_location("Level 1 AP Gem 2")
 
     def test_a_chain_is_open_to_anybody(self) -> None:
         # A chain is made on whatever board is in front of you, and the
@@ -151,9 +151,9 @@ class TestGemsTurnedUp(TwiddlyGemsTestBase):
         self.assertEqual(self.world._ap_gems_per_level(), 6)
         in_play = [at for at in self.world._locations_in_play() if "gem_index" in at]
         self.assertEqual(len(in_play), len(LEVELS) * 6)
-        self.world.get_location("Level 1 Archipelago Gem 6")
+        self.world.get_location("Level 1 AP Gem 6")
         with self.assertRaises(KeyError):
-            self.world.get_location("Level 1 Archipelago Gem 7")
+            self.world.get_location("Level 1 AP Gem 7")
 
 
 class TestNoGems(TwiddlyGemsTestBase):

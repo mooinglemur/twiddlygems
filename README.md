@@ -239,9 +239,13 @@ of them carries the same absent color, so anything reading colors raw would see
 three in a row as a run of three. Both the matcher and the swap that predicts
 matches go through the same `match_color`, which is where that absence lives.
 
-They fall in with the refill, one gem in a few hundred, while the level still
-has checks waiting in them. Both halves of that are settings: how many checks a
-level holds, and how often one falls. The first is a floor rather than a count,
+They fall in with the refill, one gem in a few dozen, while the level still has
+checks waiting in them, and never in the opening deal or a reshuffle: a board
+that opened with one would hand over a check before the player had done
+anything. A level drops no more of them than it has checks left, over the whole
+playthrough rather than merely at once, so there is never one to clear that
+pays nothing. Both halves of the rate are settings: how many checks a level
+holds, and how often one falls. The first is a floor rather than a count,
 because the options that decide how many items a run has do not know how many
 places there are to put them, so when the pool outgrows everywhere else the
 gems make up the difference. Ten to a level is the ceiling, and every one of

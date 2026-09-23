@@ -33,7 +33,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { goal: Goal::GoldOnLastLevel, ap_gems: 1, ap_gem_odds: 256 }
+        Options { goal: Goal::GoldOnLastLevel, ap_gems: 1, ap_gem_odds: 64 }
     }
 }
 
@@ -223,23 +223,21 @@ pub static SETTINGS: &[Setting] = &[
         // from 64 to 16384 is not a control anybody can use. Doubling each
         // step is how a frequency is actually thought about.
         kind: Kind::Choice(&[
+            Choice { key: "one_in_16", label: "1 in 16", value: 16 },
+            Choice { key: "one_in_32", label: "1 in 32", value: 32 },
             Choice { key: "one_in_64", label: "1 in 64", value: 64 },
+            Choice { key: "one_in_96", label: "1 in 96", value: 96 },
             Choice { key: "one_in_128", label: "1 in 128", value: 128 },
-            Choice { key: "one_in_256", label: "1 in 256", value: 256 },
-            Choice { key: "one_in_512", label: "1 in 512", value: 512 },
-            Choice { key: "one_in_1024", label: "1 in 1024", value: 1_024 },
-            Choice { key: "one_in_2048", label: "1 in 2048", value: 2_048 },
-            Choice { key: "one_in_4096", label: "1 in 4096", value: 4_096 },
-            Choice { key: "one_in_8192", label: "1 in 8192", value: 8_192 },
-            Choice { key: "one_in_16384", label: "1 in 16384", value: 16_384 },
         ]),
         // Measured rather than guessed: `make balance` plays levels out at
-        // each of these and counts how long a gem takes to fall. At one in
-        // 256 a gem turns up in about a third of playthroughs, so a level's
-        // one check costs two or three runs at it. One in 512 was four times
-        // that, which is a grind rather than a surprise, and one in 64 puts
-        // one on nearly every board.
-        default: 256,
+        // each of these and counts how long a gem takes to fall. One in 64
+        // puts one on most boards, which is what a check a player is meant to
+        // collect should feel like. The sparser end is the dial for somebody
+        // who wants them to be an event, and it stops at 128 because past
+        // that a run's own checks turn into a grind: one in 256 already cost
+        // three playthroughs of a level for its single check, and one in 512
+        // cost five.
+        default: 64,
     },
     // A level's moves upgrade has no setting of its own yet. Each level
     // declares what its upgrade is worth and one item carries the whole of it,

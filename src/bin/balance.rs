@@ -124,7 +124,7 @@ fn gem_rate(seeds: u64) {
         "one in", "L2 gems", "L2 runs", "L8 gems", "L8 runs", "runs per gem",
     );
     let ladder = bare();
-    for odds in [64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384] {
+    for odds in [16, 32, 64, 96, 128, 256, 512] {
         let mut row = Vec::new();
         for index in [1_usize, 7] {
             let mut gems = 0;
