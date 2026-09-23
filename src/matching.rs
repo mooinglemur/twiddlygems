@@ -250,13 +250,22 @@ pub struct SwapView<'a> {
 }
 
 impl<'a> SwapView<'a> {
+    /// The color a match could be built from here after the swap.
+    ///
+    /// The matching color rather than the raw one, so this answers the same
+    /// question [`find_matches`] will: whatever is predicted here has to be
+    /// what actually happens, and a rocket, a rainbow and an Archipelago gem
+    /// all carry a color byte that takes no part in matching. An Archipelago
+    /// gem is the one that bites, because every one of them carries the same
+    /// [`NO_COLOR`](crate::board::NO_COLOR): read raw, two of them beside a
+    /// third would look like a run.
     pub fn color(&self, p: Pos) -> Option<u8> {
         if p == self.a {
-            self.board.color(self.b)
+            self.board.match_color(self.b)
         } else if p == self.b {
-            self.board.color(self.a)
+            self.board.match_color(self.a)
         } else {
-            self.board.color(p)
+            self.board.match_color(p)
         }
     }
 }
@@ -321,13 +330,13 @@ pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
         (Some(ga), Some(gb)) => (ga, gb),
         _ => return false,
     };
-    // An Archipelago gem is worth swapping against a rainbow or against
-    // another of its own kind, either of which takes every one on the board.
-    // Against anything else it will not move at all, and a board offering only
-    // that is a board with no move on it.
-    if ga.special == Special::Archipelago || gb.special == Special::Archipelago {
-        return matches!(ga.special, Special::Archipelago | Special::Rainbow)
-            && matches!(gb.special, Special::Archipelago | Special::Rainbow);
+    // Two Archipelago gems take every one on the board, and so does one
+    // against a rainbow, which the next line covers. Against an ordinary gem
+    // it is an ordinary move: the gem it changes places with may land in a
+    // match, and the check below is what sees that. The gem itself never does,
+    // because it has no matching color.
+    if ga.special == Special::Archipelago && gb.special == Special::Archipelago {
+        return true;
     }
     if ga.special == Special::Rainbow || gb.special == Special::Rainbow {
         return true;

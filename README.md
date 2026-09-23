@@ -225,11 +225,19 @@ to put them: the ladder grants 166 moves across its thirteen levels and has 50
 locations besides its gems. The Archipelago gems are that somewhere.
 
 **The Archipelago gem** is a check sitting on the board rather than a gem to
-match. It has no color, it will not swap with an ordinary gem, and what
-collects it is anything going off in the four cells beside it, the way a brick
-is broken. Swapped against a rainbow or against another of its own kind it
-takes every one on the board at once. It falls with gravity, unlike a brick,
-which is why it is a kind of gem rather than a property of a cell.
+match. It has no color and matches nothing, and what collects it is anything
+going off in the four cells beside it, the way a brick is broken. Swapped
+against a rainbow or against another of its own kind it takes every one on the
+board at once. It falls with gravity, unlike a brick, which is why it is a kind
+of gem rather than a property of a cell.
+
+It does swap with an ordinary gem, though it can never match: moving it is how
+a gem stuck behind one gets where it is going, and the match the other gem
+lands in often clears right beside where the Archipelago gem has just arrived,
+which collects it. The one thing that has to be watched here is that every one
+of them carries the same absent color, so anything reading colors raw would see
+three in a row as a run of three. Both the matcher and the swap that predicts
+matches go through the same `match_color`, which is where that absence lives.
 
 They fall in with the refill, one gem in a few hundred, while the level still
 has checks waiting in them. Both halves of that are settings: how many checks a

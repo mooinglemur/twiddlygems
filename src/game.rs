@@ -543,10 +543,7 @@ impl Game {
         if !self.accepts_input() || !a.is_adjacent(b) {
             return false;
         }
-        let (Some(ga), Some(gb)) = (self.board.gem(a), self.board.gem(b)) else {
-            return false;
-        };
-        if !Self::may_swap(ga, gb) {
+        if self.board.gem(a).is_none() || self.board.gem(b).is_none() {
             return false;
         }
         self.selected = None;
@@ -555,26 +552,6 @@ impl Game {
         self.phase = Phase::Swapping { elapsed: 0.0, reverting: false };
         self.events.push(Event::at(EV_SWAP, a, 255, Special::None, 0));
         true
-    }
-
-    /// Whether these two gems may change places at all.
-    ///
-    /// Everything on the board may, except that an Archipelago gem will not
-    /// budge for an ordinary one. It is a check rather than a gem: pushing it
-    /// around the board is not how it is collected, and letting it be shoved
-    /// about would make it just another piece to shuffle while its own rule,
-    /// clearing beside it, went unused.
-    ///
-    /// What it does answer to is a rainbow or another of its own kind, either
-    /// of which takes every one on the board at once.
-    fn may_swap(a: Gem, b: Gem) -> bool {
-        match (a.special, b.special) {
-            (Special::Archipelago, Special::Archipelago) => true,
-            (Special::Archipelago, other) | (other, Special::Archipelago) => {
-                other == Special::Rainbow
-            }
-            _ => true,
-        }
     }
 
     // ---- the clock -------------------------------------------------------
@@ -1196,7 +1173,18 @@ impl Game {
         // Before the rainbow's own cases, because a rainbow swapped against an
         // Archipelago gem must not go looking for that gem's color: it has
         // none, and the sweep below would come back empty.
-        if ga.special == Special::Archipelago || gb.special == Special::Archipelago {
+        //
+        // Only against a rainbow or another of its own kind. An Archipelago
+        // gem swapped with an ordinary one is an ordinary move that happens to
+        // shift a check around: what comes of it is whatever match the gem it
+        // traded places with lands in, and nothing here.
+        let takes_them_all = matches!(
+            (ga.special, gb.special),
+            (Special::Archipelago, Special::Archipelago)
+                | (Special::Archipelago, Special::Rainbow)
+                | (Special::Rainbow, Special::Archipelago)
+        );
+        if takes_them_all {
             let mut seeds = self.board.ap_gems();
             let mut spent = Vec::new();
             // The rainbow is spent on them and goes off with them. Two
@@ -3919,19 +3907,65 @@ mod tests {
     }
 
     #[test]
-    fn an_archipelago_gem_will_not_budge_for_an_ordinary_gem() {
-        // Pushing it around is not how it is collected, and letting it be
-        // shoved about would make it one more piece to shuffle.
+    fn an_archipelago_gem_swaps_with_an_ordinary_one_to_set_up_a_match() {
+        // It cannot match, but it can be moved, and moving it is how a gem
+        // stuck behind one gets where it is going. Two in a row with the third
+        // of their color below the gem: swapping the two of them completes the
+        // row, and the clear happens beside where the gem has just landed, so
+        // it is collected as well.
         let mut game = Game::new(spec(6, 6, 4, 20), 9);
-        ap_board(&mut game, Pos::new(2, 2));
-        let (gem, ap) = (Pos::new(2, 1), Pos::new(2, 2));
+        ap_board(&mut game, Pos::new(0, 2));
+        game.board.set_gem(Pos::new(0, 0), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(0, 1), Some(Gem::plain(1)));
+        game.board.set_gem(Pos::new(1, 2), Some(Gem::plain(1)));
+        let (ap, gem) = (Pos::new(0, 2), Pos::new(1, 2));
 
-        assert!(!game.try_swap(ap, gem), "an ordinary gem moved it");
-        assert!(!game.try_swap(gem, ap), "and it moved when pushed the other way");
-        assert!(game.board.is_ap_gem(ap), "it left its cell anyway");
         assert!(
-            !matching::is_useful_swap(&game.board, &game.spec.rules, gem, ap),
-            "the hint would offer a swap the player cannot make",
+            matching::is_useful_swap(&game.board, &game.spec.rules, ap, gem),
+            "the hint does not see the move",
+        );
+        assert!(game.try_swap(ap, gem), "the swap was refused");
+        let events = settle(&mut game);
+        assert!(
+            events.iter().any(|e| e.kind == EV_CLEAR && e.color == 1),
+            "the row it completed never cleared",
+        );
+        assert_eq!(
+            events.iter().filter(|e| e.kind == EV_AP_CLEAR).count(),
+            1,
+            "the clear happened right beside it and did not collect it",
+        );
+    }
+
+    #[test]
+    fn swapping_one_never_makes_a_match_of_the_gem_itself() {
+        // Every Archipelago gem carries the same absence of a color, so a
+        // swap judged on the raw color byte would read three of them in a row
+        // as a run and offer a move that matches nothing.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        // A board with no run of three in it and none a step away: two colors
+        // alternating along each row, and every row a different pair.
+        for p in game.board.positions().collect::<Vec<_>>() {
+            game.board.set_gem(p, Some(Gem::plain(((p.r + 2 * p.c) % 4) as u8)));
+        }
+        assert!(
+            matching::find_matches(&game.board, &game.spec.rules).is_empty(),
+            "the board this is built on already matches, so it proves nothing",
+        );
+
+        // Two of them in a row, and a third one swap below the gap.
+        game.board.set_gem(Pos::new(2, 0), Some(Gem::archipelago()));
+        game.board.set_gem(Pos::new(2, 1), Some(Gem::archipelago()));
+        game.board.set_gem(Pos::new(3, 2), Some(Gem::archipelago()));
+
+        assert!(
+            !matching::is_useful_swap(
+                &game.board,
+                &game.spec.rules,
+                Pos::new(2, 2),
+                Pos::new(3, 2),
+            ),
+            "three Archipelago gems in a row were offered as a match",
         );
     }
 

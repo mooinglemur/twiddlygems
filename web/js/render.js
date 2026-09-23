@@ -720,19 +720,21 @@ export class Renderer {
 
 /// The six spheres of the Archipelago mark, clockwise from the top.
 ///
-/// The logo's own arrangement, which is scattered rather than spectral, in the
-/// game's hues pulled about two fifths of the way toward grey. Drawn in the
-/// board's full-strength colors it would be six saturated circles in a ring
-/// beside a rainbow, which is six saturated colors in a disc, and at a cell's
-/// size those read as the same object. Muted, it reads as what it is: a thing
-/// from another world that does not belong to the gem set.
+/// The logo's own colors, sampled off it, in its own arrangement: red, green,
+/// purple, orange, blue, yellow, which is scattered rather than spectral.
+///
+/// Muted on purpose, and left that way rather than lifted to the board's own
+/// strength. At full saturation this would be six bright circles in a ring
+/// beside a rainbow, which is six bright colors in a disc, and at a cell's
+/// size those read as the same object. Drained, it reads as what it is: a
+/// thing from another world that does not belong to the gem set.
 const AP_LOBES = [
-  '#bf606d',
-  '#5fa581',
-  '#9a75d4',
-  '#c68463',
-  '#5f88d4',
-  '#c8b367',
+  '#99625e',
+  '#6e9566',
+  '#987f99',
+  '#a27357',
+  '#5d6890',
+  '#aba071',
 ];
 
 /// How long one revolution of an Archipelago gem takes. Slower than the
