@@ -84,10 +84,15 @@ const FINALE_JITTER_MS: f32 = 700.0;
 /// follow, brisk enough that a forty move surplus is not a minute of waiting.
 const CASH_IN_STEP_MS: f32 = 300.0;
 
-/// A beat between the board coming to rest on a won level and the level being
-/// declared over, so the last thing the player sees is the board they cleared
-/// rather than a panel sliding over it.
-const WIN_HOLD_MS: f32 = 1_000.0;
+/// A beat between the board coming to rest and the level being declared over,
+/// so the last thing the player sees is the board rather than a panel sliding
+/// over it.
+///
+/// Both endings get it. A win wants a moment to look at what was cleared, and
+/// a loss wants one more than that: the panel arriving on the same frame as
+/// the last gem lands reads as though the game snatched the board away, and
+/// the move that ran the counter out is never seen to finish.
+const END_HOLD_MS: f32 = 1_000.0;
 
 /// What a leftover move can be turned into.
 ///
@@ -244,8 +249,9 @@ pub enum Phase {
     /// The goals are met and the moves left over are being spent, one at a
     /// time, so the counter can be watched running down.
     CashingIn { elapsed: f32 },
-    /// The board has come to rest on a won level. A beat to look at it before
-    /// the level is declared over and a panel covers it.
+    /// The board has come to rest and the level is over, one way or the other.
+    /// A beat to look at it before the result is declared and a panel covers
+    /// it. Which way it went is settled by then; see [`Game::declare_over`].
     Finishing { elapsed: f32 },
     /// The level is over; nothing advances until it is reloaded.
     Finished,
@@ -554,7 +560,7 @@ impl Game {
                 Phase::Falling { elapsed } => (self.fall_ms, elapsed),
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
                 Phase::CashingIn { elapsed } => (CASH_IN_STEP_MS, elapsed),
-                Phase::Finishing { elapsed } => (WIN_HOLD_MS, elapsed),
+                Phase::Finishing { elapsed } => (END_HOLD_MS, elapsed),
             };
             let advanced = elapsed + remaining;
             if let Phase::Launching { .. } = self.phase {
@@ -595,7 +601,7 @@ impl Game {
             Phase::Falling { .. } => self.finish_fall(),
             Phase::Shuffling { .. } => self.finish_shuffle(),
             Phase::CashingIn { .. } => self.finish_cash_in_step(),
-            Phase::Finishing { .. } => self.declare_won(),
+            Phase::Finishing { .. } => self.declare_over(),
             Phase::Idle | Phase::Finished => {}
         }
     }
@@ -1295,10 +1301,10 @@ impl Game {
             self.phase = Phase::Finishing { elapsed: 0.0 };
             return;
         }
+        // Out of moves and stuck both hold the same beat a win does, and say
+        // nothing until it is up: the last move deserves to be watched land.
         if self.spec.moves > 0 && self.moves_left == 0 {
-            self.status = Status::Lost;
-            self.phase = Phase::Finished;
-            self.events.push(Event::plain(EV_LOST, 0));
+            self.phase = Phase::Finishing { elapsed: 0.0 };
             return;
         }
         if matching::find_move(&self.board, &self.spec.rules).is_none() {
@@ -1306,9 +1312,7 @@ impl Game {
                 self.phase = Phase::Shuffling { elapsed: 0.0 };
                 self.events.push(Event::plain(EV_SHUFFLE, 0));
             } else {
-                self.status = Status::Lost;
-                self.phase = Phase::Finished;
-                self.events.push(Event::plain(EV_LOST, 0));
+                self.phase = Phase::Finishing { elapsed: 0.0 };
             }
             return;
         }
@@ -1418,11 +1422,26 @@ impl Game {
         self.events.push(Event::at(EV_CASH_IN, at, gem.color, placed, 1));
     }
 
-    /// The level is over and won. The beat before this is [`Phase::Finishing`].
-    fn declare_won(&mut self) {
-        self.status = Status::Won;
+    /// The level is over. The beat before this is [`Phase::Finishing`].
+    ///
+    /// Which way it went is read back from whether the goals were ever met
+    /// rather than carried along on the phase, because that is the same
+    /// question: a level ends won when its objectives are behind it and lost
+    /// when the moves ran out or the board died with them still ahead.
+    ///
+    /// Both the status and the event land here rather than where the board
+    /// came to rest, so nothing outside can tell the level is over until the
+    /// beat has been held. The panel goes up on the status, so setting it
+    /// early would be the same as having no beat at all.
+    fn declare_over(&mut self) {
         self.phase = Phase::Finished;
-        self.events.push(Event::plain(EV_WON, 0));
+        if self.announced_clear {
+            self.status = Status::Won;
+            self.events.push(Event::plain(EV_WON, 0));
+        } else {
+            self.status = Status::Lost;
+            self.events.push(Event::plain(EV_LOST, 0));
+        }
     }
 
     /// Specials sitting on the board waiting for something to set them off.
@@ -1739,7 +1758,7 @@ impl Game {
                 }
             }
             // Nothing moves during these: the board sits where it is while the
-            // counter runs down, or while a won board is looked at.
+            // counter runs down, or while a finished board is looked at.
             Phase::Idle | Phase::CashingIn { .. } | Phase::Finishing { .. } | Phase::Finished => {}
         }
     }
@@ -3769,6 +3788,43 @@ mod tests {
             held += 1;
         }
         assert_eq!(game.status(), Status::Won);
+        assert!(held > 40, "the beat lasted only {held} frames");
+        assert!(held < 100, "the beat lasted {held} frames, which is a wait rather than a beat");
+    }
+
+    #[test]
+    fn a_lost_board_is_looked_at_before_the_level_is_declared_over() {
+        // The same beat a win gets. Without it the panel lands on the frame
+        // the last gem does, so the move that ran the counter out is never
+        // seen to finish and the board is snatched away mid-fall.
+        //
+        // The default objective is a score nothing here will reach, so one
+        // move is one loss.
+        let mut game = Game::new(spec(4, 4, 6, 1), 507);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let mut frames = 0;
+        let mut lost_early = false;
+        while !matches!(game.phase(), Phase::Finishing { .. }) && frames < 800 {
+            game.update(16.0);
+            lost_early |= game.events().iter().any(|e| e.kind == EV_LOST);
+            frames += 1;
+        }
+        assert!(matches!(game.phase(), Phase::Finishing { .. }), "the level never held");
+        assert_eq!(game.status(), Status::Playing, "it declared the loss before the beat");
+        assert!(!lost_early, "it announced the loss before the beat");
+
+        let mut held = 0;
+        while matches!(game.phase(), Phase::Finishing { .. }) && held < 400 {
+            game.update(16.0);
+            held += 1;
+        }
+        assert_eq!(game.status(), Status::Lost);
+        assert!(
+            game.events().iter().any(|e| e.kind == EV_LOST),
+            "the beat ended without the loss being announced",
+        );
         assert!(held > 40, "the beat lasted only {held} frames");
         assert!(held < 100, "the beat lasted {held} frames, which is a wait rather than a beat");
     }
