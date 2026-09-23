@@ -21,7 +21,11 @@ impl Pos {
     }
 }
 
-/// What a gem does when it is cleared.
+/// What kind of gem this is, and what it does when it is cleared.
+///
+/// The last two are not markings on a gem but whole gems of their own, which
+/// is how the renderer treats them too: a rocket and a rainbow replace the
+/// gem rather than sitting on top of one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Special {
     None,
@@ -36,6 +40,20 @@ pub enum Special {
     /// Holds its cell until the clear has finished resolving, then flies off
     /// and takes out one other gem. Nothing falls until it lands.
     Rocket,
+    /// An Archipelago gem: a check sitting on the board.
+    ///
+    /// Not something a match can ever leave behind and not something a run
+    /// unlocks, which is why it is absent from [`SpecialSet`] and from the
+    /// item pool. It has no color and never matches. What clears it is
+    /// anything going off beside it, the way a brick is broken, or being
+    /// swapped against a rainbow or against another of its own kind, either
+    /// of which takes every one on the board.
+    ///
+    /// It lives here rather than on the [`Cell`] because it falls: a brick
+    /// stays where it was drawn and this does not.
+    ///
+    /// [`SpecialSet`]: crate::rules::SpecialSet
+    Archipelago,
 }
 
 impl Special {
@@ -47,11 +65,17 @@ impl Special {
             Special::Cross => 3,
             Special::Rainbow => 4,
             Special::Rocket => 5,
+            Special::Archipelago => 6,
         }
     }
 
+    /// Whether this gem goes off when it is cleared.
+    ///
+    /// The Archipelago gem does not: clearing it checks a location and that
+    /// is all, so it must not be swept up by anything looking for specials
+    /// waiting to be set off.
     pub fn is_special(self) -> bool {
-        self != Special::None
+        !matches!(self, Special::None | Special::Archipelago)
     }
 }
 
@@ -61,9 +85,27 @@ pub struct Gem {
     pub special: Special,
 }
 
+/// The color byte of a gem that has no color of its own. The same value an
+/// empty cell reports, because it means the same thing to anything reading
+/// colors: there is nothing here to match.
+pub const NO_COLOR: u8 = 255;
+
 impl Gem {
     pub fn plain(color: u8) -> Self {
         Gem { color, special: Special::None }
+    }
+
+    /// An Archipelago gem. See [`Special::Archipelago`].
+    pub fn archipelago() -> Self {
+        Gem { color: NO_COLOR, special: Special::Archipelago }
+    }
+
+    /// Whether this gem matches by color at all.
+    ///
+    /// Everything on the board does except the Archipelago gem, which is a
+    /// check rather than a gem and answers only to what goes off beside it.
+    pub fn matchable(self) -> bool {
+        self.special != Special::Archipelago
     }
 }
 
@@ -124,6 +166,7 @@ impl Board {
     /// - `=` a whole brick, `-` a cracked one
     /// - `A` to `H` a whole seal of color 0 to 7, `a` to `h` a cracked one
     /// - `0` to `7` a gem of that color, placed before anything is dealt
+    /// - `*` an Archipelago gem
     ///
     /// The lesser of each pair is the lighter mark: one layer of jelly is `o`
     /// against `O` for two, a cracked brick is a single rule against a double,
@@ -160,6 +203,7 @@ impl Board {
                         cell.brick_color = ch as u8 - b'a';
                     }
                     '0'..='7' => cell.gem = Some(Gem::plain(ch as u8 - b'0')),
+                    '*' => cell.gem = Some(Gem::archipelago()),
                     _ => {}
                 }
             }
@@ -207,18 +251,35 @@ impl Board {
 
     /// The color a match may be built from.
     ///
-    /// Rockets and rainbows are items sitting on the board rather than gems in
-    /// the pool of colors, and neither takes part in matching. A rocket is
-    /// waiting to launch, and left matchable a cascade could clear it before it
-    /// ever fires, quietly costing the player the reward they earned. A rainbow
-    /// answers to any color, which is exactly why it belongs to none.
+    /// Rockets, rainbows and Archipelago gems are things sitting on the board
+    /// rather than gems in the pool of colors, and none of them takes part in
+    /// matching. A rocket is waiting to launch, and left matchable a cascade
+    /// could clear it before it ever fires, quietly costing the player the
+    /// reward they earned. A rainbow answers to any color, which is exactly
+    /// why it belongs to none. An Archipelago gem answers to no color at all:
+    /// left matchable, three of them in a row would match each other, since
+    /// they all carry the same [`NO_COLOR`].
     pub fn match_color(&self, p: Pos) -> Option<u8> {
         match self.gem(p) {
-            Some(gem) if gem.special != Special::Rocket && gem.special != Special::Rainbow => {
+            Some(gem)
+                if gem.special != Special::Rocket
+                    && gem.special != Special::Rainbow
+                    && gem.matchable() =>
+            {
                 Some(gem.color)
             }
             _ => None,
         }
+    }
+
+    /// Whether an Archipelago gem is sitting here.
+    pub fn is_ap_gem(&self, p: Pos) -> bool {
+        self.gem(p).is_some_and(|gem| gem.special == Special::Archipelago)
+    }
+
+    /// Every Archipelago gem on the board.
+    pub fn ap_gems(&self) -> Vec<Pos> {
+        self.positions().filter(|p| self.is_ap_gem(*p)).collect()
     }
 
     pub fn set_gem(&mut self, p: Pos, gem: Option<Gem>) {

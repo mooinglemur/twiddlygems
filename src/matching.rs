@@ -321,6 +321,14 @@ pub fn is_useful_swap(board: &Board, rules: &Rules, a: Pos, b: Pos) -> bool {
         (Some(ga), Some(gb)) => (ga, gb),
         _ => return false,
     };
+    // An Archipelago gem is worth swapping against a rainbow or against
+    // another of its own kind, either of which takes every one on the board.
+    // Against anything else it will not move at all, and a board offering only
+    // that is a board with no move on it.
+    if ga.special == Special::Archipelago || gb.special == Special::Archipelago {
+        return matches!(ga.special, Special::Archipelago | Special::Rainbow)
+            && matches!(gb.special, Special::Archipelago | Special::Rainbow);
+    }
     if ga.special == Special::Rainbow || gb.special == Special::Rainbow {
         return true;
     }
@@ -352,7 +360,9 @@ pub fn find_move(board: &Board, rules: &Rules) -> Option<(Pos, Pos)> {
 /// phase.
 fn blast(board: &Board, p: Pos, special: Special, rainbow_color: u8, out: &mut Vec<Pos>) {
     match special {
-        Special::None | Special::Rocket => {}
+        // An Archipelago gem is a check, not a charge: clearing it hands over
+        // what it was hiding and takes nothing else with it.
+        Special::None | Special::Rocket | Special::Archipelago => {}
         Special::LineH => {
             for c in 0..board.cols {
                 out.push(Pos::new(p.r, c));

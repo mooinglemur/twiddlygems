@@ -31,6 +31,9 @@ export const Special = {
   CROSS: 3,
   RAINBOW: 4,
   ROCKET: 5,
+  /// An Archipelago gem: a check sitting on the board rather than a gem to
+  /// match. Never something a match leaves behind, and never unlocked.
+  ARCHIPELAGO: 6,
 };
 
 export const Flag = {
@@ -69,6 +72,9 @@ export const EventKind = {
   /// A leftover move was spent on this cell. `special` is what it left there,
   /// or `Special.NONE` when the run had nothing to place.
   CASH_IN: 17,
+  /// An Archipelago gem was collected. Distinct from `CLEAR`, which says a gem
+  /// left the board: one struck by a beam raises both.
+  AP_CLEAR: 18,
 };
 
 /// The location an item event names when it came from no location here at

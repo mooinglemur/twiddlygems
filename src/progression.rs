@@ -446,7 +446,9 @@ pub fn item_name(item: Item) -> String {
             Special::Cross => "Cross Clear".to_string(),
             Special::Rainbow => "Rainbow".to_string(),
             Special::Rocket => "Rocket".to_string(),
-            Special::None => "Nothing".to_string(),
+            // Neither is an item anybody is handed: one is the absence of a
+            // gem kind and the other is a location wearing a gem's clothes.
+            Special::None | Special::Archipelago => "Nothing".to_string(),
         },
         Item::Moves { level } => format!("Level {} Moves Upgrade", level + 1),
     }
@@ -543,8 +545,11 @@ impl Inventory {
                     Special::Cross => &mut self.specials.cross,
                     Special::Rainbow => &mut self.specials.rainbow,
                     Special::Rocket => &mut self.specials.rocket,
-                    // Not an unlock anyone can hold; there is no gem to gate.
-                    Special::None => return false,
+                    // Neither is an unlock anyone can hold. There is no gem
+                    // to gate for one, and the other is never gated at all:
+                    // an Archipelago gem is a location, and a run that could
+                    // not see its own locations would have nowhere to look.
+                    Special::None | Special::Archipelago => return false,
                 };
                 let is_new = !*slot;
                 *slot = true;

@@ -485,7 +485,8 @@ export class Renderer {
       if (cells[i * 4 + 3] & Flag.SELECTED) {
         selected = true;
       }
-      if (cells[i * 4 + 1] === Special.RAINBOW) {
+      const special = cells[i * 4 + 1];
+      if (special === Special.RAINBOW || special === Special.ARCHIPELAGO) {
         spinning = true;
       }
       if (selected && spinning) {
@@ -557,14 +558,21 @@ export class Renderer {
 
     for (let i = 0; i < cells.length / 4; i += 1) {
       const color = cells[i * 4];
+      const special = cells[i * 4 + 1];
       // A blocker holds no gem, and a seal puts the color it answers to in
       // this byte, so the flag is what says whether there is a gem here.
-      if (color === EMPTY_CELL || cells[i * 4 + 3] & Flag.BRICK) {
+      //
+      // An empty cell and an Archipelago gem both report no color, because
+      // the gem genuinely has none, so the color byte alone cannot tell them
+      // apart: what separates them is that an empty cell carries no special
+      // either. Reading emptiness off the color alone drew the gem as a hole
+      // in the board.
+      const empty = color === EMPTY_CELL && special === Special.NONE;
+      if (empty || cells[i * 4 + 3] & Flag.BRICK) {
         continue;
       }
       const r = Math.floor(i / cols);
       const c = i % cols;
-      const special = cells[i * 4 + 1];
       const flags = cells[i * 4 + 3];
       let scale = offsets[i * 3 + 2];
       if (scale <= 0.01) {
@@ -584,8 +592,13 @@ export class Renderer {
 
       if (special === Special.ROCKET) {
         airborne.push([x, y, scale, color, offsets[i * 3], offsets[i * 3 + 1]]);
+      } else if (special === Special.ARCHIPELAGO) {
+        // The one gem drawn from scratch every frame rather than blitted: its
+        // turn is a rotation in three dimensions, which no amount of turning a
+        // flat sprite reproduces. See `drawApGemBody`.
+        drawApGemBody(ctx, x, y, cell * 0.42 * scale, (timeMs / AP_TURN_MS) * TAU);
       } else if (special === Special.RAINBOW) {
-        // The one cached gem that turns: it is drawn spinning.
+        // A cached gem turned as it is blitted, which a flat spin allows.
         this.blitTurned(x, y, scale, color, special, (timeMs / 1400) % TAU);
       } else {
         this.blit(x, y, scale, color, special);
@@ -704,6 +717,27 @@ export class Renderer {
     ctx.restore();
   }
 }
+
+/// The six spheres of the Archipelago mark, clockwise from the top.
+///
+/// The logo's own arrangement, which is scattered rather than spectral, in the
+/// game's hues pulled about two fifths of the way toward grey. Drawn in the
+/// board's full-strength colors it would be six saturated circles in a ring
+/// beside a rainbow, which is six saturated colors in a disc, and at a cell's
+/// size those read as the same object. Muted, it reads as what it is: a thing
+/// from another world that does not belong to the gem set.
+const AP_LOBES = [
+  '#bf606d',
+  '#5fa581',
+  '#9a75d4',
+  '#c68463',
+  '#5f88d4',
+  '#c8b367',
+];
+
+/// How long one revolution of an Archipelago gem takes. Slower than the
+/// rainbow's turn, which is a spin; this is a rotation you are meant to watch.
+const AP_TURN_MS = 2600;
 
 /// The gem color the three marked specials wear on a tracker icon. One color
 /// for all three, because what tells them apart is the marking: five icons in
@@ -945,6 +979,81 @@ function drawExhaust(ctx, x, y, r, angle) {
 }
 
 /// A rainbow at rest: wedges of every color, spun as it is blitted.
+/**
+ * An Archipelago gem: six spheres on a ring, the ring turning about the
+ * vertical axis.
+ *
+ * The ring lies in the screen plane, so a sphere's height never moves and its
+ * width breathes with the phase: a quarter turn in, the whole thing is edge-on
+ * and reads as a vertical stack. Depth decides the drawing order, the size and
+ * the shading, which is what makes the far side pass behind the near side
+ * rather than through it.
+ *
+ * Drawn live rather than blitted from a cached sprite, which is the one gem
+ * that is. A cache would need an entry per phase, and measured against a
+ * frame's budget the saving is nothing: ten of these drawn from scratch every
+ * frame cost about 1% of 16ms. They are rare, they carry no clipping, and a
+ * live draw turns smoothly instead of stepping through however many phases
+ * were cached.
+ */
+function drawApGemBody(ctx, x, y, r, phase) {
+  // The rosette is mostly holes, so it reads smaller than a solid gem of the
+  // same extent; sized a touch over the gem's own circle to hold its cell.
+  const ring = r * 0.76;
+  const lobe = r * 0.42;
+  const cos = Math.cos(phase);
+  const sin = Math.sin(phase);
+
+  const spheres = AP_LOBES.map((fill, i) => {
+    const a = -Math.PI / 2 + (i * TAU) / 6;
+    const across = ring * Math.cos(a);
+    return { x: x + across * cos, y: y + ring * Math.sin(a), z: -across * sin, fill };
+  });
+  // Far side first.
+  spheres.sort((a, b) => a.z - b.z);
+
+  for (const sphere of spheres) {
+    // A touch of perspective. The near side being larger and brighter is most
+    // of what sells the turn.
+    const depth = sphere.z / ring;
+    const size = lobe * (1 + depth * 0.1);
+    const shade = ctx.createRadialGradient(
+      sphere.x - size * 0.34,
+      sphere.y - size * 0.38,
+      size * 0.1,
+      sphere.x,
+      sphere.y,
+      size,
+    );
+    shade.addColorStop(0, shiftLightness(sphere.fill, 0.42 + depth * 0.06));
+    shade.addColorStop(0.55, shiftLightness(sphere.fill, depth * 0.08));
+    shade.addColorStop(1, shiftLightness(sphere.fill, -0.38 + depth * 0.06));
+
+    ctx.beginPath();
+    ctx.arc(sphere.x, sphere.y, size, 0, TAU);
+    ctx.fillStyle = shade;
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(14,11,26,0.85)';
+    ctx.lineWidth = Math.max(1, r * 0.055);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(sphere.x - size * 0.3, sphere.y - size * 0.34, size * 0.19, 0, TAU);
+    ctx.fillStyle = `rgba(255,255,255,${0.62 + depth * 0.2})`;
+    ctx.fill();
+  }
+}
+
+/// Lightens a hex color toward white or darkens it toward black.
+function shiftLightness(hex, amount) {
+  const n = parseInt(hex.slice(1), 16);
+  const shift = (channel) =>
+    Math.max(0, Math.min(255, Math.round(
+      amount > 0 ? channel + (255 - channel) * amount : channel * (1 + amount),
+    )));
+  return `rgb(${shift((n >> 16) & 255)},${shift((n >> 8) & 255)},${shift(n & 255)})`;
+}
+
 function drawRainbowBody(ctx, x, y, r) {
   for (let i = 0; i < PALETTE.length; i += 1) {
     ctx.beginPath();

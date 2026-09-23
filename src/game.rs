@@ -189,6 +189,14 @@ pub const EV_CLEARED: u8 = 16;
 /// earning its reward.
 pub const EV_CASH_IN: u8 = 17;
 
+/// An Archipelago gem was collected.
+///
+/// Separate from [`EV_CLEAR`], which says a gem left the board: one of these
+/// can leave the board through a beam's path and raise both, and the two mean
+/// different things. This one is the check being taken, which is what the
+/// session turns into an item and what a multiworld is told about.
+pub const EV_AP_CLEAR: u8 = 18;
+
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
 #[derive(Clone, Copy, Debug)]
@@ -527,7 +535,10 @@ impl Game {
         if !self.accepts_input() || !a.is_adjacent(b) {
             return false;
         }
-        if self.board.gem(a).is_none() || self.board.gem(b).is_none() {
+        let (Some(ga), Some(gb)) = (self.board.gem(a), self.board.gem(b)) else {
+            return false;
+        };
+        if !Self::may_swap(ga, gb) {
             return false;
         }
         self.selected = None;
@@ -536,6 +547,26 @@ impl Game {
         self.phase = Phase::Swapping { elapsed: 0.0, reverting: false };
         self.events.push(Event::at(EV_SWAP, a, 255, Special::None, 0));
         true
+    }
+
+    /// Whether these two gems may change places at all.
+    ///
+    /// Everything on the board may, except that an Archipelago gem will not
+    /// budge for an ordinary one. It is a check rather than a gem: pushing it
+    /// around the board is not how it is collected, and letting it be shoved
+    /// about would make it just another piece to shuffle while its own rule,
+    /// clearing beside it, went unused.
+    ///
+    /// What it does answer to is a rainbow or another of its own kind, either
+    /// of which takes every one on the board at once.
+    fn may_swap(a: Gem, b: Gem) -> bool {
+        match (a.special, b.special) {
+            (Special::Archipelago, Special::Archipelago) => true,
+            (Special::Archipelago, other) | (other, Special::Archipelago) => {
+                other == Special::Rainbow
+            }
+            _ => true,
+        }
     }
 
     // ---- the clock -------------------------------------------------------
@@ -893,6 +924,34 @@ impl Game {
         self.progress.seals_now = self.board.seal_cells();
     }
 
+    /// Every Archipelago gem this clear reached by going off beside it.
+    ///
+    /// The same reach a brick answers to, and for the same reason: an
+    /// Archipelago gem is collected by clearing against it rather than by
+    /// matching it. A beam that runs straight through one needs nothing here,
+    /// because the gem is in the beam's path and is cleared with everything
+    /// else in the row.
+    ///
+    /// Unlike a brick it takes no damage, only collection: one hit and it is
+    /// gone, since there is nothing to wear down.
+    fn ap_gems_struck(&self, blast: &matching::Detonation) -> Vec<Pos> {
+        let mut struck: Vec<Pos> = Vec::new();
+        for (p, _) in blast.cleared.iter().zip(&blast.cracks).filter(|(_, hits)| **hits) {
+            for side in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                let neighbor = Pos::new(p.r + side.0, p.c + side.1);
+                if self.board.is_ap_gem(neighbor)
+                    && !struck.contains(&neighbor)
+                    // Already going off in this same clear, so collecting it
+                    // twice would announce one check as two.
+                    && !blast.cleared.contains(&neighbor)
+                {
+                    struck.push(neighbor);
+                }
+            }
+        }
+        struck
+    }
+
     /// Runs the next stage of a settle and puts the board into the fall that
     /// animates it, reporting whether there was a stage to run.
     fn begin_settle_stage(&mut self) -> bool {
@@ -1126,6 +1185,23 @@ impl Game {
             _ => return Activation::none(),
         };
 
+        // Before the rainbow's own cases, because a rainbow swapped against an
+        // Archipelago gem must not go looking for that gem's color: it has
+        // none, and the sweep below would come back empty.
+        if ga.special == Special::Archipelago || gb.special == Special::Archipelago {
+            let mut seeds = self.board.ap_gems();
+            let mut spent = Vec::new();
+            // The rainbow is spent on them and goes off with them. Two
+            // Archipelago gems swapped together are seeds already.
+            for (p, gem) in [(a, ga), (b, gb)] {
+                if gem.special == Special::Rainbow {
+                    seeds.push(p);
+                    spent.push(p);
+                }
+            }
+            return Activation { seeds, spent, jitter_ms: matching::RAINBOW_SPREAD_MS };
+        }
+
         let (rainbow, partner) = match (ga.special, gb.special) {
             (Special::Rainbow, Special::Rainbow) => {
                 // Both are spent, so neither fires again on its own color.
@@ -1235,6 +1311,18 @@ impl Game {
         }
         self.progress.jelly_left = self.board.jelly_cells();
         self.strike_bricks(&blast, cascade);
+        // Worked out before the board is touched, because it reads what is
+        // standing beside the clear.
+        let ap_struck = self.ap_gems_struck(&blast);
+        for p in blast
+            .cleared
+            .iter()
+            .copied()
+            .filter(|p| self.board.is_ap_gem(*p))
+            .chain(ap_struck.iter().copied())
+        {
+            self.events.push(Event::at(EV_AP_CLEAR, p, 255, Special::Archipelago, cascade));
+        }
 
         for (p, special) in &blast.fired {
             self.events.push(Event::at(EV_SPECIAL_FIRED, *p, 255, *special, cascade));
@@ -1259,6 +1347,9 @@ impl Game {
             .zip(blast.delays.iter().copied())
             .filter(|(p, _)| !resolution.creations.iter().any(|(made, _)| made == p))
             .collect();
+        // Struck from the side rather than caught in the blast, so they pop
+        // with the clear that took them rather than instantly.
+        self.clearing.extend(ap_struck.into_iter().map(|p| (p, 0.0)));
         self.phase = Phase::Clearing { elapsed: 0.0 };
     }
 
@@ -3791,6 +3882,171 @@ mod tests {
         assert_eq!(game.status(), Status::Won);
         assert!(held > 40, "the beat lasted only {held} frames");
         assert!(held < 100, "the beat lasted {held} frames, which is a wait rather than a beat");
+    }
+
+    /// A board with an Archipelago gem in the middle of it and nothing else
+    /// placed, so the gems around it can be arranged per test.
+    fn ap_board(game: &mut Game, at: Pos) {
+        for p in game.board.positions().collect::<Vec<_>>() {
+            game.board.set_gem(p, Some(Gem::plain(((p.r * 3 + p.c * 7) % 4) as u8)));
+        }
+        game.board.set_gem(at, Some(Gem::archipelago()));
+    }
+
+    #[test]
+    fn an_archipelago_gem_never_matches() {
+        // It has no color, and every one of them carries the same absence of
+        // one. Left matchable, three in a row would match each other.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        for c in 0..6 {
+            game.board.set_gem(Pos::new(2, c), Some(Gem::archipelago()));
+        }
+        assert!(
+            matching::find_matches(&game.board, &game.spec.rules)
+                .iter()
+                .all(|group| group.cells.iter().all(|p| p.r != 2)),
+            "a row of Archipelago gems matched itself",
+        );
+        assert_eq!(game.board.match_color(Pos::new(2, 0)), None);
+    }
+
+    #[test]
+    fn an_archipelago_gem_will_not_budge_for_an_ordinary_gem() {
+        // Pushing it around is not how it is collected, and letting it be
+        // shoved about would make it one more piece to shuffle.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        ap_board(&mut game, Pos::new(2, 2));
+        let (gem, ap) = (Pos::new(2, 1), Pos::new(2, 2));
+
+        assert!(!game.try_swap(ap, gem), "an ordinary gem moved it");
+        assert!(!game.try_swap(gem, ap), "and it moved when pushed the other way");
+        assert!(game.board.is_ap_gem(ap), "it left its cell anyway");
+        assert!(
+            !matching::is_useful_swap(&game.board, &game.spec.rules, gem, ap),
+            "the hint would offer a swap the player cannot make",
+        );
+    }
+
+    #[test]
+    fn a_rainbow_swapped_against_one_takes_every_one_on_the_board() {
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        ap_board(&mut game, Pos::new(2, 2));
+        for p in [Pos::new(0, 0), Pos::new(5, 5), Pos::new(4, 1)] {
+            game.board.set_gem(p, Some(Gem::archipelago()));
+        }
+        let rainbow = Pos::new(2, 1);
+        game.board.set_gem(rainbow, Some(Gem { color: 0, special: Special::Rainbow }));
+
+        assert!(
+            matching::is_useful_swap(&game.board, &game.spec.rules, rainbow, Pos::new(2, 2)),
+            "a rainbow beside one is not offered as a move",
+        );
+        assert!(game.try_swap(rainbow, Pos::new(2, 2)), "the rainbow would not swap with it");
+        let events = settle(&mut game);
+        assert_eq!(
+            events.iter().filter(|e| e.kind == EV_AP_CLEAR).count(),
+            4,
+            "a rainbow should take every one on the board, not just the one it touched",
+        );
+        assert!(game.board.ap_gems().is_empty(), "one was left behind");
+    }
+
+    #[test]
+    fn two_of_them_swapped_together_take_every_one_on_the_board() {
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        ap_board(&mut game, Pos::new(2, 2));
+        for p in [Pos::new(2, 3), Pos::new(5, 5)] {
+            game.board.set_gem(p, Some(Gem::archipelago()));
+        }
+        assert!(
+            matching::is_useful_swap(&game.board, &game.spec.rules, Pos::new(2, 2), Pos::new(2, 3)),
+            "two of them side by side is not offered as a move",
+        );
+        assert!(game.try_swap(Pos::new(2, 2), Pos::new(2, 3)));
+        let events = settle(&mut game);
+        assert_eq!(events.iter().filter(|e| e.kind == EV_AP_CLEAR).count(), 3);
+        assert!(game.board.ap_gems().is_empty());
+    }
+
+    #[test]
+    fn clearing_beside_one_collects_it() {
+        // The ordinary way to take one: anything going off in the four cells
+        // around it, the same reach that breaks a brick.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        ap_board(&mut game, Pos::new(0, 0));
+        // A row of three under it, made by swapping the third into line.
+        for c in 0..3 {
+            game.board.set_gem(Pos::new(1, c), Some(Gem::plain(1)));
+        }
+        game.board.set_gem(Pos::new(1, 2), Some(Gem::plain(2)));
+        game.board.set_gem(Pos::new(2, 2), Some(Gem::plain(1)));
+        assert!(game.try_swap(Pos::new(1, 2), Pos::new(2, 2)));
+
+        let events = settle(&mut game);
+        assert_eq!(
+            events.iter().filter(|e| e.kind == EV_AP_CLEAR).count(),
+            1,
+            "a match beside it did not collect it",
+        );
+        assert!(!game.board.is_ap_gem(Pos::new(0, 0)), "it stayed on the board");
+    }
+
+    #[test]
+    fn a_match_that_never_reaches_one_leaves_it_alone() {
+        // The other half of the rule above: it is collected by being cleared
+        // against, not by a clear happening somewhere on the same board.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        ap_board(&mut game, Pos::new(0, 0));
+        for c in 3..6 {
+            game.board.set_gem(Pos::new(5, c), Some(Gem::plain(1)));
+        }
+        game.board.set_gem(Pos::new(5, 5), Some(Gem::plain(2)));
+        game.board.set_gem(Pos::new(4, 5), Some(Gem::plain(1)));
+        assert!(game.try_swap(Pos::new(5, 5), Pos::new(4, 5)));
+
+        let events = settle(&mut game);
+        assert_eq!(
+            events.iter().filter(|e| e.kind == EV_AP_CLEAR).count(),
+            0,
+            "a match across the board collected it",
+        );
+    }
+
+    #[test]
+    fn an_archipelago_gem_falls_like_any_other_gem() {
+        // Unlike a brick, which holds its cell. This is why it lives on the
+        // gem rather than on the cell.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        ap_board(&mut game, Pos::new(0, 3));
+        game.board.set_gem(Pos::new(1, 3), None);
+        game.board.set_gem(Pos::new(2, 3), None);
+
+        game.begin_fall();
+        for _ in 0..200 {
+            game.update(16.0);
+            if game.phase() == Phase::Idle {
+                break;
+            }
+        }
+        assert!(!game.board.is_ap_gem(Pos::new(0, 3)), "it stayed up where it was drawn");
+        assert_eq!(
+            game.board.ap_gems().len(),
+            1,
+            "it should have fallen, not vanished or multiplied",
+        );
+    }
+
+    #[test]
+    fn nothing_deals_one_at_random() {
+        // They arrive by being placed, never out of the refill. A board that
+        // dealt them would hand out checks nobody earned.
+        for seed in 0..40 {
+            let mut game = Game::new(spec(8, 8, 6, 20), seed);
+            assert!(
+                game.board.ap_gems().is_empty(),
+                "seed {seed} dealt an Archipelago gem onto a fresh board",
+            );
+        }
     }
 
     #[test]
