@@ -58,6 +58,9 @@ export class Hud {
     /// climbing through it. Set from the `CLEARED` event.
     this.cleared = false;
     this.shownTier = -1;
+    /// The best score the open popover was filled with, so it is only rebuilt
+    /// when that number moves. -1 because a level never beaten has 0.
+    this.shownBest = -1;
   }
 
   /**
@@ -185,6 +188,7 @@ export class Hud {
   fillScoreMarks() {
     const { engine, dom } = this;
     const tier = this.tier();
+    this.shownBest = engine.levelBestScore(engine.levelIndex);
     const { silver, gold } = engine.tiers;
     const rows = [
       { at: silver, name: 'Silver', tier: Tier.SILVER },
@@ -194,7 +198,8 @@ export class Hud {
       .map((mark) => {
         const row = document.createElement('div');
         const taken = tier >= mark.tier;
-        row.className = `score-mark ${TIER_CLASS[mark.tier]}`;
+        row.className = 'score-mark';
+        row.classList.add(TIER_CLASS[mark.tier]);
         if (taken) {
           row.classList.add('taken');
         }
@@ -219,6 +224,24 @@ export class Hud {
       none.textContent = 'This level has no marks.';
       rows.push(none);
     }
+
+    // What this run has actually beaten the level with, under the two numbers
+    // it is being measured against. Only ever a score from an attempt that
+    // won: a level is beaten from the moment it is cleared, and an attempt
+    // that ran out of moves is not one of them, however well it was scoring.
+    const best = this.shownBest;
+    const yours = document.createElement('div');
+    yours.className = 'score-mark';
+    yours.classList.add('best');
+    const label = document.createElement('span');
+    label.className = 'name';
+    label.textContent = 'Your best';
+    const at = document.createElement('span');
+    at.className = 'at';
+    at.textContent = best > 0 ? best.toLocaleString() : 'not yet';
+    yours.append(label, at);
+    rows.push(yours);
+
     dom.scoreMarks.replaceChildren(...rows);
   }
 
@@ -248,6 +271,12 @@ export class Hud {
   update(renderer = null) {
     const { engine, dom } = this;
     this.showTier();
+    // The best score climbs through the flourish the same way the live one
+    // does, so a popover left open while a level is being beaten has to keep
+    // up. Only when the number actually moves: this runs every frame.
+    if (this.marksVisible && engine.levelBestScore(engine.levelIndex) !== this.shownBest) {
+      this.fillScoreMarks();
+    }
 
     const score = engine.score;
     if (this.shownScore !== score) {

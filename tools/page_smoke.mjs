@@ -380,11 +380,14 @@ assert.equal(
   const said = marks.children.map((row) =>
     row.children.map((part) => part.textContent ?? part).join(' '),
   );
-  assert.equal(said.length, 2, `the marks popover shows ${JSON.stringify(said)}`);
+  assert.equal(said.length, 3, `the marks popover shows ${JSON.stringify(said)}`);
   assert.match(said[0], /^Silver [\d,]+$/, `the silver mark reads ${JSON.stringify(said[0])}`);
   assert.match(said[1], /^Gold [\d,]+$/, `the gold mark reads ${JSON.stringify(said[1])}`);
-  // Neither is behind yet, so neither is checked and neither wears its metal
-  // as something already won.
+  // And what the run has actually done here, which on a level it has never
+  // beaten is nothing at all rather than a zero.
+  assert.equal(said[2], 'Your best not yet', `the best reads ${JSON.stringify(said[2])}`);
+  // Neither mark is behind yet, so neither is checked and neither wears its
+  // metal as something already won.
   assert.ok(
     marks.children.every((row) => !row.classList.contains('taken')),
     'a mark is checked off on a level that has never been cleared',
@@ -625,6 +628,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.equal(engine.movesLeft, 0, 'the leftover moves were not cashed in');
 
   assert.ok(phases.has(Phase.CASHING_IN), 'the leftover moves were never spent on screen');
+  // And before any of that, a beat with the board still, so the clear that
+  // won the level can be seen reaching the goals it counted for. The engine
+  // holds it; how long is the page's business, which is why an engine told
+  // nothing holds not at all.
+  assert.ok(
+    phases.has(Phase.TALLYING),
+    'the flourish started without waiting for the goals to finish showing',
+  );
   assert.ok(
     counterWhileSpending.size > 3,
     `the counter went to zero in one step rather than running down: ${[...counterWhileSpending]}`,
@@ -768,6 +779,37 @@ click(overlayButton('Close'), 'the level picker has no way out');
     [...elements.get('score').classList.set].some((cls) => /^tier-/.test(cls)),
     'the score forgot what this level had already been beaten to',
   );
+
+  // The popover says what the level was beaten with as well as what it is
+  // being measured against, and that number survives a restart the same way
+  // the color does: it belongs to the level, not to the attempt.
+  const beaten = engine.levelBestScore(LEVEL);
+  assert.ok(beaten > 0, 'a level this run has won has no best score against it');
+  dispatch('score-box', 'click', {});
+  const best = elements.get('score-marks').children.at(-1);
+  assert.ok(best.classList.contains('best'), 'the popover has no row for what the run has done');
+  assert.equal(
+    best.children.map((part) => part.textContent).join(' '),
+    `Your best ${beaten.toLocaleString()}`,
+  );
+  // And a mark it reached is checked off rather than left as a target.
+  assert.ok(
+    elements.get('score-marks').children.some((row) => row.classList.contains('taken')),
+    'the level was beaten past a mark and the popover still offers it',
+  );
+  gesture('pointerdown');
+
+  // It goes in the save, because no location records it: a level cleared
+  // below its silver checks the same one whatever it scored.
+  const record = JSON.parse(store.get(SAVE_KEY));
+  assert.ok(Array.isArray(record.bestScores), 'the save does not record what levels were beaten with');
+  assert.equal(record.bestScores[LEVEL], beaten, 'the save disagrees with the run');
+
+  // And comes back on reload, without being handed back twice over.
+  const rebuilt = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, SEED);
+  record.bestScores.forEach((score, at) => rebuilt.restoreBestScore(at, score));
+  record.bestScores.forEach((score, at) => rebuilt.restoreBestScore(at, score));
+  assert.equal(rebuilt.levelBestScore(LEVEL), beaten, 'a reloaded run forgot its best score');
 }
 
 // Ending a run from that same menu asks first, then throws the progress away

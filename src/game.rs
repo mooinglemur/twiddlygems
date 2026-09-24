@@ -254,6 +254,15 @@ pub enum Phase {
     Launching { elapsed: f32 },
     Falling { elapsed: f32 },
     Shuffling { elapsed: f32 },
+    /// The goals are met and the board is holding still while the front end
+    /// finishes saying so.
+    ///
+    /// A goal does not finish the moment its last gem goes: what the clear
+    /// counted takes a moment to reach the goal on screen, and the count
+    /// falling is the payoff. The flourish waits for that rather than starting
+    /// over the top of it. How long is [`Game::goal_hold_ms`], which is the
+    /// page's number because the page owns the animation.
+    Tallying { elapsed: f32 },
     /// The goals are met and the moves left over are being spent, one at a
     /// time, so the counter can be watched running down.
     CashingIn { elapsed: f32 },
@@ -277,6 +286,7 @@ impl Phase {
             Phase::Finished => 6,
             Phase::CashingIn { .. } => 7,
             Phase::Finishing { .. } => 8,
+            Phase::Tallying { .. } => 9,
         }
     }
 }
@@ -381,6 +391,18 @@ pub struct Game {
     /// The board settles several times during the flourish that follows, and
     /// only the first of those is news.
     announced_clear: bool,
+    /// Whether the beat for the goals to finish showing themselves met has
+    /// been taken; see [`Phase::Tallying`]. Once a level, even though the
+    /// board settles several times during the flourish that follows.
+    tallied: bool,
+    /// How long that beat is, in milliseconds, or 0 for none.
+    ///
+    /// The page's number rather than the engine's, because the page owns the
+    /// animation it is waiting for: an engine constant here would be a second
+    /// copy of a duration only the front end knows, and it would go stale the
+    /// first time that animation was retimed. Zero for a board opened without
+    /// a page in front of it, which is every test.
+    pub goal_hold_ms: f32,
     /// How many Archipelago gems this level still has checks waiting in, which
     /// is what caps how many the refill lets in.
     ///
@@ -415,6 +437,8 @@ impl Game {
             selected: None,
             warned_low_moves: false,
             announced_clear: false,
+            tallied: false,
+            goal_hold_ms: 0.0,
             ap_gems_wanted: 0,
             events: Vec::new(),
             cells_buf: Vec::new(),
@@ -453,6 +477,7 @@ impl Game {
         self.selected = None;
         self.warned_low_moves = false;
         self.announced_clear = false;
+        self.tallied = false;
         self.events.clear();
         self.deal();
         self.origin = self.settled_origin();
@@ -577,6 +602,7 @@ impl Game {
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
                 Phase::CashingIn { elapsed } => (CASH_IN_STEP_MS, elapsed),
                 Phase::Finishing { elapsed } => (END_HOLD_MS, elapsed),
+                Phase::Tallying { elapsed } => (self.goal_hold_ms, elapsed),
             };
             let advanced = elapsed + remaining;
             if let Phase::Launching { .. } = self.phase {
@@ -605,6 +631,7 @@ impl Game {
             Phase::Shuffling { .. } => Phase::Shuffling { elapsed },
             Phase::CashingIn { .. } => Phase::CashingIn { elapsed },
             Phase::Finishing { .. } => Phase::Finishing { elapsed },
+            Phase::Tallying { .. } => Phase::Tallying { elapsed },
             other => other,
         };
     }
@@ -618,6 +645,10 @@ impl Game {
             Phase::Shuffling { .. } => self.finish_shuffle(),
             Phase::CashingIn { .. } => self.finish_cash_in_step(),
             Phase::Finishing { .. } => self.declare_over(),
+            // The goals have finished showing themselves met, so the decision
+            // that was held back is taken now. `tallied` is already set, so
+            // this reaches the flourish rather than holding again.
+            Phase::Tallying { .. } => self.settle(),
             Phase::Idle | Phase::Finished => {}
         }
     }
@@ -1382,6 +1413,17 @@ impl Game {
                 self.announced_clear = true;
                 self.events.push(Event::plain(EV_CLEARED, self.moves_left.min(65_535) as u16));
             }
+            // Once, and before anything else happens: what the winning clear
+            // counted is still crossing the screen toward the goals it
+            // counted for, and watching them finish is the point of the win.
+            // See [`Phase::Tallying`].
+            if !self.tallied {
+                self.tallied = true;
+                if self.goal_hold_ms > 0.0 {
+                    self.phase = Phase::Tallying { elapsed: 0.0 };
+                    return;
+                }
+            }
             // Leftover moves are spent one at a time so the counter can be
             // watched running down; only once it reaches zero does the board
             // go off.
@@ -1853,7 +1895,11 @@ impl Game {
             }
             // Nothing moves during these: the board sits where it is while the
             // counter runs down, or while a finished board is looked at.
-            Phase::Idle | Phase::CashingIn { .. } | Phase::Finishing { .. } | Phase::Finished => {}
+            Phase::Idle
+            | Phase::Tallying { .. }
+            | Phase::CashingIn { .. }
+            | Phase::Finishing { .. }
+            | Phase::Finished => {}
         }
     }
 
@@ -3756,6 +3802,71 @@ mod tests {
             events.iter().position(|e| e.kind == EV_CLEARED)
                 < events.iter().position(|e| e.kind == EV_WON),
             "the level ended before it was announced as cleared",
+        );
+    }
+
+    #[test]
+    fn a_beaten_level_holds_still_while_its_goals_finish_showing() {
+        // The clear that wins a level is still crossing the screen toward the
+        // goals it counted for, and watching them reach their totals is the
+        // payoff. The flourish waits that out rather than starting over the
+        // top of it.
+        //
+        // How long is the page's number, because the page owns the animation:
+        // told nothing, a board does not hold at all, which is what every
+        // other test here relies on.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+
+        let mut bare = Game::new(level.clone(), 513);
+        let (a, b) = bare.hint().expect("a fresh board has a move");
+        bare.try_swap(a, b);
+        let mut held_bare = 0;
+        for _ in 0..4000 {
+            if bare.phase() == Phase::Idle || bare.phase() == Phase::Finished {
+                break;
+            }
+            if matches!(bare.phase(), Phase::Tallying { .. }) {
+                held_bare += 1;
+            }
+            bare.update(16.0);
+        }
+        assert_eq!(held_bare, 0, "a board told nothing about a page held anyway");
+
+        let mut game = Game::new(level, 513);
+        game.goal_hold_ms = 800.0;
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let mut held = 0;
+        let mut spent_while_holding = 0;
+        let mut seen = Vec::new();
+        for _ in 0..4000 {
+            if game.phase() == Phase::Idle || game.phase() == Phase::Finished {
+                break;
+            }
+            if matches!(game.phase(), Phase::Tallying { .. }) {
+                held += 1;
+                spent_while_holding +=
+                    game.events().iter().filter(|e| e.kind == EV_CASH_IN).count();
+            }
+            game.update(16.0);
+            seen.extend_from_slice(game.events());
+        }
+
+        // 800ms at 16ms a frame, give or take the frame it starts on.
+        assert!((48..=51).contains(&held), "the board held for {held} frames rather than 50");
+        assert_eq!(spent_while_holding, 0, "the flourish started over the top of the hold");
+        assert_eq!(game.status(), Status::Won, "holding lost the level");
+        assert_eq!(game.moves_left, 0, "holding swallowed the flourish");
+
+        // Once a level, not once per settle: the board comes to rest between
+        // every round of the flourish, and each of those would hold again.
+        let rounds = seen.iter().filter(|e| e.kind == EV_CASH_IN).count();
+        assert!(rounds > 1, "this seed spends nothing, so nothing here is being tested");
+        assert!(
+            held < 60,
+            "the board held {held} frames, which is more than one beat's worth",
         );
     }
 

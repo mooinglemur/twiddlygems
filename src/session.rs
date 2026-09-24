@@ -45,6 +45,21 @@ pub struct Session {
     /// own seed. Working it out walks the whole ladder by reachability, which
     /// is not something to do on the frame a level is cleared.
     placement: Vec<Option<Item>>,
+    /// The best score each level has been beaten with, this run, by level.
+    ///
+    /// Kept beside the marks rather than worked out on the page, because when
+    /// a score counts is the same question the marks answer and it should not
+    /// have two answers: a level is beaten from the moment it is cleared, the
+    /// score climbs through the flourish after that, and an attempt that ran
+    /// out of moves scored nothing that any of this is about.
+    ///
+    /// Zero means the level has never been beaten. Not part of the
+    /// progression, so no location holds it and no rule reads it.
+    best_scores: Vec<u64>,
+    /// How long a beaten level holds still while the page finishes showing
+    /// its goals met; see [`Phase::Tallying`]. The page's number, handed over
+    /// once and applied to every level this run deals.
+    goal_hold_ms: f32,
     /// What the run was dealt from, kept so changing a setting can deal the
     /// same run again rather than a different one.
     seed: u64,
@@ -132,6 +147,8 @@ impl Session {
             inventory,
             checked: Vec::new(),
             placement: solo_placement(levels.len(), fill_seed(seed), &options),
+            best_scores: vec![0; levels.len()],
+            goal_hold_ms: 0.0,
             seed,
             options,
             events: Vec::new(),
@@ -285,6 +302,7 @@ impl Session {
         let gems = self.ap_gems_for(self.index);
         self.game =
             open_level(self.index, &self.levels[self.index], &self.inventory, seed, gems);
+        self.game.goal_hold_ms = self.goal_hold_ms;
         self.sync_name();
     }
 
@@ -405,6 +423,34 @@ impl Session {
     ///
     /// Read back off the checked locations, so what the level select shows and
     /// what the run has actually found cannot drift apart.
+    /// How long a beaten level holds still before its flourish starts, so the
+    /// goals can be seen reaching their totals. See [`Phase::Tallying`].
+    ///
+    /// Takes effect on the level in play as well as every one dealt after it,
+    /// because the page sets it once at startup and a level is already open by
+    /// then.
+    pub fn set_goal_hold(&mut self, ms: f32) {
+        self.goal_hold_ms = if ms.is_finite() && ms > 0.0 { ms } else { 0.0 };
+        self.game.goal_hold_ms = self.goal_hold_ms;
+    }
+
+    /// The best score this run has beaten the level at `index` with, or 0 if
+    /// it never has. See [`Session::best_scores`].
+    pub fn best_score(&self, index: usize) -> u64 {
+        self.best_scores.get(index).copied().unwrap_or(0)
+    }
+
+    /// Hands a best score back to a run being rebuilt from a save.
+    ///
+    /// Only ever upward, the way the live one moves: a save cannot take away
+    /// something this run has already beaten a level with, and restoring the
+    /// same save twice cannot lower it.
+    pub fn restore_best_score(&mut self, index: usize, score: u64) {
+        if let Some(best) = self.best_scores.get_mut(index) {
+            *best = (*best).max(score);
+        }
+    }
+
     pub fn best_tier(&self, index: usize) -> Tier {
         let reached = |at: Location| self.checked.contains(&at.id());
         if reached(Location::LevelGold(index)) {
@@ -465,6 +511,11 @@ impl Session {
             self.check(Location::LevelClear(self.index));
             let (silver, gold) = (self.levels[self.index].silver, self.levels[self.index].gold);
             let score = self.game.progress.score;
+            // Taken every frame alongside the marks, and for the same reason:
+            // the score is still climbing through the flourish, so the number
+            // a beaten level ends on is not the one it was cleared with.
+            let best = &mut self.best_scores[self.index];
+            *best = (*best).max(score);
             if silver > 0 && score >= silver {
                 self.check(Location::LevelSilver(self.index));
             }
@@ -742,6 +793,65 @@ mod tests {
             "clearing the same level paid its location twice",
         );
         assert!(session.inventory().has(held), "and it kept what it found");
+    }
+
+    #[test]
+    fn a_level_remembers_the_best_score_it_was_beaten_with() {
+        let mut session = run_finding_no_unlock();
+        assert_eq!(session.best_score(0), 0, "a run that has played nothing has a best score");
+
+        force_win_at(&mut session, 9_000);
+        assert_eq!(session.best_score(0), 9_000);
+
+        // A worse attempt does not take it away: the number belongs to the
+        // level, not to the last go at it, which is the same rule the marks
+        // follow.
+        session.retry();
+        force_win_at(&mut session, 4_000);
+        assert_eq!(session.best_score(0), 9_000, "a worse attempt lowered the best");
+
+        session.retry();
+        force_win_at(&mut session, 21_000);
+        assert_eq!(session.best_score(0), 21_000, "a better attempt did not raise it");
+
+        // Per level, and only where it was earned.
+        assert_eq!(session.best_score(1), 0, "a level never played has a score");
+        assert_eq!(session.best_score(999), 0, "a level that does not exist has a score");
+    }
+
+    #[test]
+    fn a_lost_level_scores_nothing_it_can_keep() {
+        // The best score is what a level was *beaten* with, which is the same
+        // question the marks answer. An attempt that ran out of moves scored
+        // points, and none of them are what any of this is about.
+        let mut session = run_finding_no_unlock();
+        session.game_mut().progress.score = 50_000;
+        for _ in 0..4000 {
+            if session.game().phase() == Phase::Finished {
+                break;
+            }
+            if let Some((a, b)) = session.game().hint() {
+                session.game_mut().try_swap(a, b);
+            }
+            session.update(16.0);
+        }
+        assert_eq!(session.game().status(), Status::Lost, "this run was supposed to lose");
+        assert_eq!(session.best_score(0), 0, "a level that was never beaten kept a score");
+    }
+
+    #[test]
+    fn a_restored_best_score_comes_back_and_cannot_be_talked_down() {
+        let mut session = Session::new(7);
+        session.restore_best_score(2, 31_000);
+        assert_eq!(session.best_score(2), 31_000);
+
+        // A save cannot take away what the run has already done, and reading
+        // the same save twice cannot lower it.
+        session.restore_best_score(2, 12_000);
+        assert_eq!(session.best_score(2), 31_000, "a stale save lowered a best score");
+        // Nor can it reach past the end of the ladder.
+        session.restore_best_score(999, 5);
+        assert_eq!(session.best_score(999), 0);
     }
 
     #[test]

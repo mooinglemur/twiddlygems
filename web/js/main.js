@@ -4,7 +4,7 @@
 
 import { EventKind, Special, loadEngine, Phase, Status } from './engine.js';
 import { Audio } from './audio.js';
-import { Renderer } from './render.js';
+import { GOAL_EFFECT_MS, Renderer } from './render.js';
 import { attachInput } from './input.js';
 import { Hud } from './hud.js';
 
@@ -52,7 +52,14 @@ const dom = {
 
 /** Progress lives in the browser; the engine is told about it on start. */
 function readSave() {
-  const fallback = { seed: freshSeed(), unlocked: 1, level: 0, checked: [], options: {} };
+  const fallback = {
+    seed: freshSeed(),
+    unlocked: 1,
+    level: 0,
+    checked: [],
+    bestScores: [],
+    options: {},
+  };
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (!raw) {
@@ -69,6 +76,10 @@ function readSave() {
       unlocked: Number.isInteger(save.unlocked) ? save.unlocked : 1,
       level: Number.isInteger(save.level) ? save.level : 0,
       checked: seeded && Array.isArray(save.checked) ? save.checked.filter(Number.isInteger) : [],
+      // What each level was beaten with, by level. Not derivable from the
+      // locations: a level cleared below its silver checks the same one
+      // whatever it scored, so the number has to be written down.
+      bestScores: Array.isArray(save.bestScores) ? save.bestScores.filter(Number.isFinite) : [],
       // By key rather than by position, because a setting added later would
       // shift the positions and quietly hand a returning run somebody else's
       // settings. A key the engine no longer has is simply skipped.
@@ -93,6 +104,10 @@ function writeSave(engine, seed) {
         // player unlocked and quietly takes back everything they earned on
         // the way, which is worse than losing both.
         checked: engine.checked,
+        // And what each level was beaten with, which no location records: a
+        // level cleared below its silver checks the same one whatever it
+        // scored.
+        bestScores: engine.bestScores,
         // And what sort of run it is, since the settings decide how many
         // items there are and what the rules ask for. A reload that forgot
         // them would rebuild a different game around the same saved finds.
@@ -139,6 +154,11 @@ async function boot() {
   }
 
   hud.engine = engine;
+  // A beaten level holds still until the goals have finished showing
+  // themselves met, and how long that takes is this file's business rather
+  // than the engine's: it is the flight time of the motes. Handed over before
+  // anything else, so it survives the run being dealt again below.
+  engine.setGoalHold(GOAL_EFFECT_MS);
   // First of all, because setting one deals the run again: anything restored
   // before this would be thrown away with the session it was restored into.
   for (const option of engine.options) {
@@ -153,6 +173,7 @@ async function boot() {
   for (const id of save.checked) {
     engine.restore(id);
   }
+  save.bestScores.forEach((score, index) => engine.restoreBestScore(index, score));
   if (save.level > 0) {
     engine.loadLevel(save.level);
   }

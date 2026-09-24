@@ -463,6 +463,48 @@ pub unsafe extern "C" fn tg_level_best(handle: *const Handle, index: u32) -> u32
     session!(handle, 0).session.best_tier(index as usize).code()
 }
 
+/// How long a beaten level holds still before spending its leftover moves, so
+/// the goals can be seen reaching their totals. Milliseconds; 0 for no hold,
+/// which is what a board with no page in front of it does.
+///
+/// The page's number because the page owns the animation being waited for.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_set_goal_hold(handle: *mut Handle, ms: f32) {
+    let handle = session_mut!(handle, ());
+    handle.session.set_goal_hold(ms);
+}
+
+/// The best score this run has beaten the level at `index` with, or 0 if it
+/// never has.
+///
+/// An `f64` for the same reason the score is: a run's total outgrows a `u32`
+/// and the page has no integer wider than this one.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_best_score(handle: *const Handle, index: u32) -> f64 {
+    session!(handle, 0.0).session.best_score(index as usize) as f64
+}
+
+/// Hands a best score back to a run being rebuilt from a save, the way
+/// [`tg_restore`] hands back a location. Never announces anything, and never
+/// lowers a score the run has already beaten the level with.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_restore_best_score(handle: *mut Handle, index: u32, score: f64) {
+    let handle = session_mut!(handle, ());
+    // A page is free to hand over nonsense; anything that is not a score is
+    // no score at all.
+    let score = if score.is_finite() && score > 0.0 { score as u64 } else { 0 };
+    handle.session.restore_best_score(index as usize, score);
+}
+
 /// Which locations this run has already checked, as little-endian `u32` ids.
 ///
 /// Written into the save, so a returning run keeps what it found and stays

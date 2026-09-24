@@ -124,6 +124,16 @@ html, body {
 .score-mark:not(.taken) { opacity: 0.62; }
 .score-mark .name { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .score-mark .at { font-weight: 700; margin-left: auto; }
+/* What the run has actually done, under what it is being measured against.
+   Ruled off, because it is an answer rather than another target, and at full
+   strength whether or not a mark is behind it. */
+.score-mark.best {
+  color: var(--ink);
+  opacity: 1;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  padding-top: 10px;
+  margin-top: 2px;
+}
 .label { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
 
 #moves-box { display: flex; align-items: baseline; gap: 6px; }

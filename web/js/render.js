@@ -81,6 +81,12 @@ const TOAST_OUT = 0.4;
 const TRIBUTES_PER_GOAL = 9;
 const TRIBUTE_MS = 1_240;
 const MAX_TRIBUTES = 480;
+/// The longest a mote can take to get where it is going: the latest one off
+/// the cell, on the longest flight. What a beaten level waits out before it
+/// starts spending its leftover moves, so the goals are seen reaching their
+/// totals rather than being talked over. The engine is told this number
+/// because the engine holds the beat and this file owns the animation.
+export const GOAL_EFFECT_MS = 220 + TRIBUTE_MS * 1.15;
 /// How long the glow around a goal lasts after something lands in it, and how
 /// far past the chip it reaches.
 const GOAL_FLASH_MS = 320;

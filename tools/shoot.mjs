@@ -272,7 +272,9 @@ for (const [name, metrics] of [
   const cashingIn = await evaluate(`
     (async () => {
       const { engine, Phase } = { ...window.twiddlygems, Phase: { CASHING_IN: 7 } };
-      for (let i = 0; i < 400; i += 1) {
+      // Room for the beat a beaten level holds while its goals finish showing
+      // themselves met, which sits between the winning move and the flourish.
+      for (let i = 0; i < 700; i += 1) {
         if (engine.phase === Phase.CASHING_IN) {
           return true;
         }

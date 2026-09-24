@@ -20,6 +20,10 @@ export const Phase = {
   CASHING_IN: 7,
   /// A beat on a won board before the level is declared over.
   FINISHING: 8,
+  /// A beat on a won board before the flourish starts, so the goals can be
+  /// seen reaching their totals rather than being talked over. How long is
+  /// this file's business: see `tg_set_goal_hold`.
+  TALLYING: 9,
 };
 
 export const Status = { PLAYING: 0, WON: 1, LOST: 2 };
@@ -235,6 +239,25 @@ export class Engine {
     return this.wasm.tg_level_best(this.handle, index);
   }
 
+  /** The best score this run has beaten a level with, or 0 if it never has. */
+  levelBestScore(index) {
+    return this.wasm.tg_level_best_score(this.handle, index);
+  }
+
+  /** Every level's best score, for the save. */
+  get bestScores() {
+    const scores = [];
+    for (let i = 0; i < this.levelCount; i += 1) {
+      scores.push(this.levelBestScore(i));
+    }
+    return scores;
+  }
+
+  /** Hands one back on load. Quiet, and never lowers what the run has done. */
+  restoreBestScore(index, score) {
+    this.wasm.tg_restore_best_score(this.handle, index, score);
+  }
+
   /** Hands one back on load, rebuilding what it gave without announcing it. */
   restore(id) {
     this.wasm.tg_restore(this.handle, id);
@@ -333,7 +356,29 @@ export class Engine {
    * could describe.
    */
   setOption(index, value) {
-    return this.wasm.tg_set_option(this.handle, index, value) === 1;
+    const ok = this.wasm.tg_set_option(this.handle, index, value) === 1;
+    // Changing a setting deals the whole run again, which takes the hold with
+    // it. See `setGoalHold`.
+    this.pushGoalHold();
+    return ok;
+  }
+
+  /**
+   * How long a beaten level holds still before spending its leftover moves,
+   * so the goals can be seen reaching their totals.
+   *
+   * The page's number rather than the engine's, because the page owns the
+   * animation being waited for. Kept here as well as handed over, because a
+   * run dealt again (a setting changed, a fresh run started) opens a session
+   * that has never been told.
+   */
+  setGoalHold(ms) {
+    this.goalHoldMs = ms;
+    this.pushGoalHold();
+  }
+
+  pushGoalHold() {
+    this.wasm.tg_set_goal_hold(this.handle, this.goalHoldMs ?? 0);
   }
 
   /**
@@ -418,6 +463,7 @@ export class Engine {
     }
     this.wasm.tg_destroy(this.handle);
     this.handle = next;
+    this.pushGoalHold();
     this.readGeometry();
   }
 }
