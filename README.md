@@ -950,9 +950,15 @@ and gold on every level, because somebody may want a relaxed slot on purpose.
 What the default should not be is the one that asks for nothing.
 
 A world submits as many items as it has locations, and this game has more
-places to look than things to find: fifty locations against eighteen distinct
-items. The rest is filler, and the filler is more moves on some level, the only
-item here that cannot make a seed easier or harder to finish.
+places to look than things to find. The rest is **Filler**, an item that does
+nothing and says so.
+
+It used to be a spare moves upgrade, back when several of them stacked on one
+level. They do not any more: a level's upgrade lands whole and once, so a
+second copy changed nothing while still announcing itself as a find, which is
+worse than an item that admits to being nothing. A spare unlock was never an
+option either, being a second answer to a question the rules have settled. When
+there are traps and consumables, they go here instead.
 
 ## Where this is going
 

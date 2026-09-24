@@ -49,6 +49,18 @@ pub enum Item {
     /// beatable on its own budget or the ladder dead-ends. What they buy is a
     /// better run at one: more moves is more score.
     Moves { level: usize },
+    /// Nothing at all, for a location with nothing better in it.
+    ///
+    /// There are more places to look than things to find, which is the shape
+    /// that leaves room for another world's items in a multiworld. What goes
+    /// in the leftovers on this side has to be something, and until there are
+    /// traps and consumables to put there, this is the honest something.
+    ///
+    /// It was a spare moves upgrade before, which stopped meaning anything the
+    /// moment an upgrade started landing whole and once: a second copy changed
+    /// nothing, so a run could clear a level, be handed an item it already had
+    /// all of, and be none the wiser. Better a name that says so.
+    Filler,
 }
 
 impl Item {
@@ -64,6 +76,7 @@ impl Item {
         match self {
             Item::Unlock(special) => special.code() as u32,
             Item::Moves { level } => MOVES_ID_BASE + level as u32,
+            Item::Filler => FILLER_ID,
         }
     }
 
@@ -73,6 +86,7 @@ impl Item {
         match self {
             Item::Unlock(_) => 0,
             Item::Moves { .. } => 1,
+            Item::Filler => 2,
         }
     }
 
@@ -81,6 +95,8 @@ impl Item {
         match self {
             Item::Unlock(special) => special.code() as u16,
             Item::Moves { level } => level as u16,
+            // Nothing to say about it; there is only the one.
+            Item::Filler => 0,
         }
     }
 }
@@ -250,6 +266,9 @@ pub const AP_GEMS_PER_LEVEL: u32 = 10;
 
 /// Where the move items start. The unlocks sit below it on their own codes.
 const MOVES_ID_BASE: u32 = 1_000;
+
+/// Filler's own number, in a thousand of its own like every other kind.
+const FILLER_ID: u32 = 2_000;
 
 /// What Archipelago's own numbers are offset by.
 ///
@@ -485,6 +504,10 @@ pub fn items(levels: usize) -> Vec<Item> {
         .iter()
         .map(|special| Item::Unlock(*special))
         .chain((0..levels).map(|level| Item::Moves { level }))
+        // Last, and in the table despite never being in the pool: a run has
+        // to be able to name what it was handed, and this is what the
+        // leftover locations hold.
+        .chain(std::iter::once(Item::Filler))
         .collect()
 }
 
@@ -507,6 +530,7 @@ pub fn item_name(item: Item) -> String {
             Special::None | Special::Archipelago => "Nothing".to_string(),
         },
         Item::Moves { level } => format!("Level {} Moves Upgrade", level + 1),
+        Item::Filler => "Filler".to_string(),
     }
 }
 
@@ -613,6 +637,10 @@ pub fn item_index(item: Item, levels: usize) -> Option<usize> {
     match item {
         Item::Unlock(special) => UNLOCKABLE.iter().position(|other| *other == special),
         Item::Moves { level } => (level < levels).then_some(UNLOCKABLE.len() + level),
+        // Last, because appending is the only safe way to change this order:
+        // an item's place in the table is what an event carries instead of its
+        // name, and everything already numbered has to keep its number.
+        Item::Filler => Some(UNLOCKABLE.len() + levels),
     }
 }
 
@@ -659,12 +687,15 @@ pub struct Inventory {
     /// How many move items have landed on each level, indexed by level. Short
     /// or empty for levels nothing has been found for yet.
     moves: Vec<u32>,
+    /// How much of nothing the run has been handed. Kept only so
+    /// [`Inventory::count`] can answer honestly.
+    filler: u32,
 }
 
 impl Inventory {
     /// A run that has been given nothing.
     pub fn empty() -> Self {
-        Inventory { specials: SpecialSet::NONE, moves: Vec::new() }
+        Inventory { specials: SpecialSet::NONE, moves: Vec::new(), filler: 0 }
     }
 
     /// Takes an item in. Returns whether the run is better off for it, which
@@ -699,6 +730,13 @@ impl Inventory {
                 self.moves[level] += 1;
                 true
             }
+            // Changes nothing about what the run may do, and is still worth
+            // announcing: the player checked a location and was handed
+            // something, and silence there would read as the check failing.
+            Item::Filler => {
+                self.filler += 1;
+                true
+            }
         }
     }
 
@@ -710,6 +748,7 @@ impl Inventory {
                 !probe.receive(item)
             }
             Item::Moves { level } => self.moves.get(level).copied().unwrap_or(0) > 0,
+            Item::Filler => self.filler > 0,
         }
     }
 
@@ -728,6 +767,10 @@ impl Inventory {
         match item {
             Item::Unlock(_) => u32::from(self.has(item)),
             Item::Moves { level } => self.moves_found(level),
+            // Counted rather than waved away, so this answers truthfully
+            // whatever asks. Nothing does: no rule can sensibly be built on
+            // how much nothing a run has been handed.
+            Item::Filler => self.filler,
         }
     }
 
@@ -878,24 +921,15 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     // world's items there. Without it a run can clear a level and be handed
     // nothing, which reads as a bug rather than as a quiet location.
     //
-    // More moves is the filler we have: harmless wherever it lands, and it can
-    // only ever open golds rather than close them, so dropping it in after the
-    // pool is placed cannot strand anything.
+    // A spare moves upgrade used to go here, back when several of them stacked
+    // on one level. They do not any more, so a second copy would change
+    // nothing at all: the player would be handed an item they already had the
+    // whole of, and told they had found something. Filler says what it is.
     expand(&usable, levels, &inventory, &mut reached, options);
     for at in &usable {
         let Some(index) = location_index(*at, levels) else { continue };
         if held[index].is_none() && reached.has(*at) {
-            // Never a gold's own level, even though by now it would be
-            // harmless: the location is already open, so it cannot be
-            // required to reach itself. It reads as a mistake, and a rule
-            // that is sometimes broken is not a rule.
-            let mut level = rng.below(levels as u32) as usize;
-            if let Location::LevelGold(index) = at {
-                if level == *index {
-                    level = (level + 1) % levels;
-                }
-            }
-            held[index] = Some(Item::Moves { level });
+            held[index] = Some(Item::Filler);
         }
     }
     held
@@ -1171,10 +1205,14 @@ mod tests {
                     left.swap_remove(at);
                     continue;
                 }
-                // Anything beyond the pool is filler, which is only ever more
-                // moves: an unlock turning up twice would be a real fault.
-                assert!(
-                    matches!(held, Item::Moves { .. }),
+                // Anything beyond the pool is Filler and nothing else. A
+                // second unlock would be a real fault, and so now would a
+                // second moves upgrade: a level's upgrade lands whole and
+                // once, so a spare is an item that does nothing while
+                // announcing itself as a find.
+                assert_eq!(
+                    *held,
+                    Item::Filler,
                     "{} was placed but is not in the pool",
                     item_name(*held),
                 );
@@ -1259,7 +1297,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 Item::Unlock(special) => Some(*special),
-                Item::Moves { .. } => None,
+                Item::Moves { .. } | Item::Filler => None,
             })
             .collect();
         let mut by_code = unlocks.clone();
@@ -1621,6 +1659,7 @@ mod tests {
             (5, "Rocket", Item::Unlock(Special::Rocket)),
             (1_000, "Level 1 Moves Upgrade", Item::Moves { level: 0 }),
             (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
+            (2_000, "Filler", Item::Filler),
         ];
         for (id, name) in [
             (4_000, "Level 1 AP Gem 1"),
@@ -1647,12 +1686,13 @@ mod tests {
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), ids.len(), "two items share a number");
-        // And the two kinds stay in their own ranges, so a new kind of item
-        // can be added without renumbering either.
+        // And each kind stays in its own range, so a new kind of item can be
+        // added without renumbering any of the others.
         assert!(
             items(50).iter().all(|item| match item {
                 Item::Unlock(_) => item.id() < MOVES_ID_BASE,
-                Item::Moves { .. } => item.id() >= MOVES_ID_BASE,
+                Item::Moves { .. } => (MOVES_ID_BASE..FILLER_ID).contains(&item.id()),
+                Item::Filler => item.id() == FILLER_ID,
             }),
             "an item is numbered outside its own range",
         );

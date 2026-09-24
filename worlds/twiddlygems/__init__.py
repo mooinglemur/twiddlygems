@@ -59,8 +59,11 @@ CLASSIFICATIONS = {
 ITEMS_BY_NAME = {item["name"]: item for item in ITEMS}
 
 #: The items there may be more of than the pool asks for. The engine says
-#: which, for the same reason it says everything else here.
+#: which, for the same reason it says everything else here. There is one, and
+#: a world with none of them could not fill its own locations, so this is
+#: checked at import rather than found out during a generation.
 TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
+assert TOP_UP_NAMES, "the engine named no item that may top up empty locations"
 
 
 def _build_options() -> type[PerGameCommonOptions]:
@@ -183,13 +186,14 @@ class TwiddlyGemsWorld(World):
         )
 
     def get_filler_item_name(self) -> str:
-        """More moves on some level, which is the only harmless item there is.
+        """What goes in a location with nothing better in it.
 
-        Everything else changes what a board can do. A copy past the two a
-        level's gold asks for is pure score, so it can land anywhere without
-        making a seed easier or harder to finish.
+        There is exactly one such item and the engine says which, the same way
+        it says everything else here. A spare unlock would be a second answer
+        to a question the rules have settled, and a spare moves upgrade is
+        worth nothing, since a level's upgrade lands whole and once.
         """
-        return self.random.choice(TOP_UP_NAMES)
+        return TOP_UP_NAMES[0]
 
     def _count(self, count: Any) -> int:
         """How many of an item this run's pool holds.

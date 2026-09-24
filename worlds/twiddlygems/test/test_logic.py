@@ -103,6 +103,33 @@ class TestDefault(TwiddlyGemsTestBase):
         with self.assertRaises(KeyError):
             self.world.get_location("Level 1 AP Gem 2")
 
+    def test_the_leftover_locations_hold_filler_and_nothing_borrowed(self) -> None:
+        # There are more places to look than things to find, so the rest are
+        # topped up. What with matters: a spare unlock would be a second
+        # answer to a question the rules have settled, and a spare moves
+        # upgrade is worth nothing at all, because a level's upgrade lands
+        # whole and once. Either would tell the player they had found
+        # something when they had not.
+        self.assertEqual(self.world.get_filler_item_name(), "Filler")
+
+        mine = [item for item in self.multiworld.itempool if item.player == self.player]
+        self.assertEqual(
+            len(mine),
+            len(self.world._locations_in_play()),
+            "a world submits as many items as it has locations",
+        )
+        by_name: dict[str, int] = {}
+        for item in mine:
+            by_name[item.name] = by_name.get(item.name, 0) + 1
+
+        for name, count in by_name.items():
+            if name == "Filler":
+                continue
+            self.assertEqual(
+                count, 1, f"{name} was submitted {count} times to fill the world out"
+            )
+        self.assertGreater(by_name.get("Filler", 0), 0, "nothing filled the leftovers")
+
     def test_a_chain_is_open_to_anybody(self) -> None:
         # A chain is made on whatever board is in front of you, and the
         # opening one is in front of everybody. The deep ones are rare rather
