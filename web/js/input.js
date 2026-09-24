@@ -52,7 +52,7 @@ export function attachInput(canvas, renderer, engine, onAction) {
       return;
     }
     if (!drag.swiped) {
-      // A press that never travelled is a tap on the cell it started in.
+      // A press that never traveled is a tap on the cell it started in.
       const outcome = engine.tap(drag.cell.r, drag.cell.c);
       if (outcome !== 0) {
         onAction(outcome === 3 ? 'swap' : 'select');

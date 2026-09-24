@@ -2,7 +2,7 @@
 // the overlay used for results and level selection.
 
 import { NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
-import { PALETTE, paintSpecialIcon } from './render.js';
+import { PALETTE, paintGoalIcon, paintSpecialIcon } from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
 /// little works, and far short of a session's worth.
@@ -31,6 +31,11 @@ const TRACKED = [Special.LINE_H, Special.LINE_V, Special.CROSS, Special.RAINBOW,
 /// How big a tracker icon is drawn, in CSS pixels. Five of them and their
 /// captions fit a phone's width; the stylesheet shrinks them below that.
 const ICON_SIZE = 40;
+
+/// How big the picture on a goal chip is. Smaller than a tracker icon and
+/// smaller than a gem on the board: it is a label for a number, not a thing to
+/// be looked at, and four of them have to fit across a phone.
+const GOAL_ICON_SIZE = 26;
 
 /// The marks a level can be beaten to, in order, which is also the order the
 /// three pips on a level row sit in. Each is a location an item is found at,
@@ -91,49 +96,68 @@ export class Hud {
     this.cleared = false;
     this.shownTier = -1;
     dom.score.textContent = Math.round(this.shownScore).toLocaleString();
+    // A new level has its own marks, so anything the last one was showing goes.
+    this.showScoreMarks(false);
     this.showTier();
 
     dom.objectives.replaceChildren();
     this.objectiveViews = engine.objectives().map((objective) => {
       const item = document.createElement('li');
       item.className = 'objective';
+      // The chip carries the words, because the art is a picture of the thing
+      // and the number beside it is what is left to do. Set once: neither the
+      // goal nor what it is asking for changes while the level is being
+      // played, only how far along it is.
+      item.title = describe(objective);
 
-      const label = document.createElement('div');
-      label.className = 'objective-label';
-      if (objective.kind === ObjectiveKind.COLOR || objective.kind === ObjectiveKind.SEAL) {
-        const swatch = document.createElement('span');
-        swatch.className = 'objective-swatch';
-        swatch.style.background = PALETTE[objective.color % PALETTE.length].fill;
-        label.append(swatch, describe(objective));
-      } else {
-        label.textContent = describe(objective);
-      }
-
-      const count = document.createElement('div');
+      const count = document.createElement('span');
       count.className = 'objective-count';
 
-      const bar = document.createElement('div');
-      bar.className = 'objective-bar';
-      const fill = document.createElement('div');
-      fill.className = 'objective-fill';
-      bar.append(fill);
+      const icon = document.createElement('canvas');
+      icon.className = 'objective-art';
+      paintGoalIcon(icon, objective, GOAL_ICON_SIZE);
 
-      item.append(label, count, bar);
+      item.append(icon, count);
       dom.objectives.append(item);
-      return { item, count, fill };
+
+      // A score goal is a number to reach, and the score itself is already on
+      // screen a few inches away, so this one says the target once and then
+      // never changes. `target` is what says so: everything else counts down.
+      const target = objective.kind === ObjectiveKind.SCORE;
+      if (target) {
+        count.textContent = objective.need.toLocaleString();
+        item.setAttribute('aria-label', `${describe(objective)}: ${count.textContent}`);
+      }
+      return { item, count, icon, target, objective };
     });
   }
 
   /**
-   * Colors the score by how well the level stands, and names the next mark up
-   * beside it.
+   * The goals that clearing something can be seen to feed, for the renderer to
+   * send motes to.
    *
-   * The mark is the nearest one still out of reach, and once both are behind
-   * there is nothing left to aim at, so it says nothing at all rather than
-   * repeating a number already beaten.
+   * The score is left out: everything on the board feeds it, so a mote going
+   * there would say nothing, and the score is not in this row anyway.
    */
+  goals() {
+    return this.objectiveViews
+      .map((view, at) => ({ view, at }))
+      .filter(({ view }) => !view.target)
+      .map(({ view, at }) => ({
+        kind: view.objective.kind,
+        color: view.objective.color,
+        // Where the engine lists this one, which is not where the renderer
+        // does: the score is a chip but not a destination, so the two lists
+        // stop agreeing the moment a level has both.
+        at,
+        el: view.item,
+        icon: view.icon,
+      }));
+  }
+
+  /** Colors the score by how well the level stands. */
   showTier() {
-    const { engine, dom } = this;
+    const { dom } = this;
     const tier = this.tier();
     if (tier === this.shownTier) {
       return;
@@ -144,23 +168,84 @@ export class Hud {
     if (TIER_CLASS[tier]) {
       dom.score.classList.add(TIER_CLASS[tier]);
     }
-
-    const { silver, gold } = engine.tiers;
-    const next =
-      tier < Tier.SILVER && silver > 0
-        ? { at: silver, mark: 'silver', cls: 'tier-silver' }
-        : tier < Tier.GOLD && gold > 0
-          ? { at: gold, mark: 'gold', cls: 'tier-gold' }
-          : null;
-    dom.scoreTarget.classList.remove(...TIER_CLASSES);
-    dom.scoreTarget.textContent = next ? `${next.mark} ${next.at.toLocaleString()}` : '';
-    if (next) {
-      dom.scoreTarget.classList.add(next.cls);
+    // The popover names which marks are behind, so it goes stale the moment
+    // one of them is passed.
+    if (this.marksVisible) {
+      this.fillScoreMarks();
     }
   }
 
-  /** Per-frame refresh; touches the DOM only where something moved. */
-  update() {
+  /**
+   * What this level can be beaten to, behind a tap of the score.
+   *
+   * Beside the score it was two numbers nobody reads most of the time, sat in
+   * the one corner where the number that is being watched lives. Behind a tap
+   * it is there for whoever wants it and out of the way of everyone else.
+   */
+  fillScoreMarks() {
+    const { engine, dom } = this;
+    const tier = this.tier();
+    const { silver, gold } = engine.tiers;
+    const rows = [
+      { at: silver, name: 'Silver', tier: Tier.SILVER },
+      { at: gold, name: 'Gold', tier: Tier.GOLD },
+    ]
+      .filter((mark) => mark.at > 0)
+      .map((mark) => {
+        const row = document.createElement('div');
+        const taken = tier >= mark.tier;
+        row.className = `score-mark ${TIER_CLASS[mark.tier]}`;
+        if (taken) {
+          row.classList.add('taken');
+        }
+
+        const name = document.createElement('span');
+        name.className = 'name';
+        // The check is in the text rather than in the stylesheet, so a screen
+        // reader is told which of the two are behind along with everyone else.
+        name.textContent = taken ? `${mark.name} ✓` : mark.name;
+
+        const at = document.createElement('span');
+        at.className = 'at';
+        at.textContent = mark.at.toLocaleString();
+
+        row.append(name, at);
+        return row;
+      });
+
+    if (rows.length === 0) {
+      const none = document.createElement('div');
+      none.className = 'score-mark';
+      none.textContent = 'This level has no marks.';
+      rows.push(none);
+    }
+    dom.scoreMarks.replaceChildren(...rows);
+  }
+
+  get marksVisible() {
+    return !this.dom.scoreMarks.classList.contains('hidden');
+  }
+
+  showScoreMarks(on) {
+    const { dom } = this;
+    if (on) {
+      this.fillScoreMarks();
+    }
+    dom.scoreMarks.classList.toggle('hidden', !on);
+    dom.scoreBox.setAttribute('aria-expanded', String(on));
+  }
+
+  toggleScoreMarks() {
+    this.showScoreMarks(!this.marksVisible);
+  }
+
+  /**
+   * Per-frame refresh; touches the DOM only where something moved.
+   *
+   * `renderer` is asked what is still in the air, so a goal's number falls
+   * because the motes reached it rather than a second before they set off.
+   */
+  update(renderer = null) {
     const { engine, dom } = this;
     this.showTier();
 
@@ -184,13 +269,30 @@ export class Hud {
     for (let i = 0; i < this.objectiveViews.length && i < objectives.length; i += 1) {
       const objective = objectives[i];
       const view = this.objectiveViews[i];
-      const text = `${objective.have.toLocaleString()} / ${objective.need.toLocaleString()}`;
-      if (view.count.textContent !== text) {
-        view.count.textContent = text;
-        const ratio = objective.need === 0 ? 1 : objective.have / objective.need;
-        view.fill.style.width = `${Math.min(100, ratio * 100).toFixed(1)}%`;
+      // How much is left, not how far along: the number a player is counting
+      // down is the one they are playing toward, and the total was never
+      // theirs to do anything about.
+      //
+      // Plus whatever the motes have not delivered yet, so that the number
+      // going down is something the motes are seen to do. Rounded up, so a
+      // cell still has its last mote to land before its one comes off.
+      //
+      // The score chip is a target rather than a count, and says the same
+      // thing all level, so it only takes the met check below.
+      if (view.target) {
         view.item.classList.toggle('met', objective.have >= objective.need);
+        continue;
       }
+      const flying = renderer ? renderer.unitsInFlight(i) : 0;
+      const left = Math.max(0, Math.ceil(objective.need - objective.have + flying));
+      const said = left.toLocaleString();
+      if (view.count.textContent !== said) {
+        view.count.textContent = said;
+        view.item.setAttribute('aria-label', `${describe(objective)}: ${said} left`);
+      }
+      // Green when the number says so, not a second before: the last mote
+      // landing is what finishes the goal on screen, so it is what colors it.
+      view.item.classList.toggle('met', left === 0);
     }
   }
 
@@ -334,7 +436,7 @@ export class Hud {
   }
 
   /**
-   * The five unlocks along the top of the tracker, lit or greyed.
+   * The five unlocks along the top of the tracker, lit or grayed.
    *
    * Every one of them is shown from the start rather than appearing as it is
    * found, because the empty slots are half the information: what a run is

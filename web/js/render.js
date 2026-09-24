@@ -4,7 +4,7 @@
 // this file decides is what that looks like. Gems differ by shape as well as
 // hue so the board stays readable without relying on color alone.
 
-import { EMPTY_CELL, EventKind, Flag, Phase, Special } from './engine.js';
+import { EMPTY_CELL, EventKind, Flag, ObjectiveKind, Phase, Special } from './engine.js';
 
 /// The game's gem set, indexed by the color numbers the engine deals. A level
 /// usually takes the first few, but it may name any set instead, so this is a
@@ -45,6 +45,11 @@ const ROCKET_FIN = '#e5484d';
 const ROCKET_PORT = '#8fd0ff';
 const SHARDS_PER_GEM = 9;
 const PUFFS_PER_GEM = 4;
+/// What a cell throws loose when most of it is being sent to a goal instead.
+/// The two together come to about what an ordinary clear throws, so a gem that
+/// counts for something does not turn into a bigger explosion than one that
+/// does not.
+const SHARDS_PER_TRIBUTED_GEM = 4;
 /// Motes ringing a gem as it becomes a special. Fewer than a burst's shards:
 /// a couple of dozen of these can be on screen at once during the run down at
 /// the end of a level.
@@ -68,11 +73,36 @@ const TOAST_MS = 1800;
 const TOAST_IN = 0.18;
 const TOAST_OUT = 0.4;
 
+/// How many motes one cleared cell sends to each goal it counts toward, how
+/// long the flight takes, and the ceiling on how many may be in the air. A
+/// rainbow taking a whole color clears a dozen cells at once, and every one of
+/// them may be feeding two goals, so the ceiling is what keeps a board-wide
+/// clear from drawing two thousand of them.
+const TRIBUTES_PER_GOAL = 9;
+const TRIBUTE_MS = 1_240;
+const MAX_TRIBUTES = 480;
+/// How long the glow around a goal lasts after something lands in it, and how
+/// far past the chip it reaches.
+const GOAL_FLASH_MS = 320;
+const GOAL_FLASH_SPREAD = 5;
+
 export class Renderer {
-  constructor(canvas, engine) {
+  /**
+   * `fx` is the layer over the whole page, or null.
+   *
+   * A second canvas because the board's own ends at the board: what a cleared
+   * gem counts toward is a chip above it, outside the board entirely, and a
+   * mote sent there has to be drawn somewhere that reaches both.
+   */
+  constructor(canvas, engine, fx = null) {
     this.canvas = canvas;
     this.engine = engine;
     this.ctx = canvas.getContext('2d', { alpha: true });
+    this.fx = fx;
+    this.fxCtx = fx ? fx.getContext('2d', { alpha: true }) : null;
+    /// Whether anything is on the fx layer, so it is cleared once when the
+    /// last mote lands rather than every idle frame.
+    this.fxPainted = false;
     this.cell = 0;
     this.pad = 0;
     this.hint = null;
@@ -80,10 +110,61 @@ export class Renderer {
     /// debris is held back until the clear actually reaches it.
     this.pendingBursts = [];
     this.particles = [];
+    /// Motes in flight from a cleared cell to the goal it counted toward, and
+    /// the goals they are flying to. Set by `setGoals` when the HUD rebuilds.
+    this.tributes = [];
+    this.goals = [];
+    this.goalFlash = [];
+    /// Motes in the air per goal, which is what one cell's worth of counting
+    /// looks like on its way over. See `unitsInFlight`.
+    this.goalInFlight = [];
+    /// The board as it stood when it was last drawn: the jelly under each
+    /// cell, and which goals were already met.
+    ///
+    /// Both are read when events arrive, which is one tick after the engine
+    /// has moved them on. A clear peels its cell and moves its counter in the
+    /// same tick as it raises the event, so asking the engine then would say a
+    /// gem sat on nothing and paid a goal that was already met, when in fact
+    /// it peeled the jelly and was the clear that met the goal.
+    this.jellySeen = null;
+    this.goalsMet = [];
     /// A line of text swelling and fading over the board, or null.
     this.toast = null;
     this.lastFrame = null;
     this.layout();
+    this.captureBoard();
+  }
+
+  /**
+   * The goals motes fly to: `{ kind, color, el, icon }` per chip, in the order
+   * the engine lists them, with the score left out because nothing converges
+   * on a number that is already climbing on its own.
+   */
+  setGoals(goals) {
+    this.goals = goals;
+    this.goalFlash = goals.map(() => 0);
+    this.goalsMet = goals.map(() => false);
+    this.goalInFlight = goals.map(() => 0);
+    this.tributes.length = 0;
+  }
+
+  /**
+   * How much of what the engine has already counted has not visibly arrived
+   * yet, in whatever the goal counts, by the engine's own objective index.
+   *
+   * This is what lets the number on a chip go down because the motes reached
+   * it rather than a second before they set off. The engine moves its counter
+   * the moment the gem goes; the chip shows that counter plus whatever is
+   * still in the air, so it only falls as the air clears, and the arithmetic
+   * comes right on its own once nothing is flying.
+   */
+  unitsInFlight(at) {
+    for (let i = 0; i < this.goals.length; i += 1) {
+      if (this.goals[i].at === at) {
+        return this.goalInFlight[i] / TRIBUTES_PER_GOAL;
+      }
+    }
+    return 0;
   }
 
   /// Queues debris for everything the engine just cleared. Each event carries
@@ -91,7 +172,18 @@ export class Renderer {
   addEvents(events, now) {
     for (const event of events) {
       if (event.kind === EventKind.CLEAR) {
-        this.pendingBursts.push({ at: now + event.value, r: event.r, c: event.c, color: event.color });
+        // Worked out now rather than when the burst fires, because a jelly
+        // goal is decided by what was under the gem, and by the time the burst
+        // is due the engine has already peeled it.
+        const goals = this.goalsFor(event);
+        this.owe(goals);
+        this.pendingBursts.push({
+          at: now + event.value,
+          r: event.r,
+          c: event.c,
+          color: event.color,
+          goals,
+        });
       } else if (event.kind === EventKind.ROCKET_HIT) {
         // A strike on a brick carries no gem color, which is how this knows to
         // throw masonry rather than a cyan gem that was never there.
@@ -107,6 +199,8 @@ export class Renderer {
         // Chips when it cracks, a proper shower when it goes. A seal throws
         // its own color, a plain brick throws masonry.
         const sealed = event.color !== EMPTY_CELL;
+        const goals = this.goalsFor(event);
+        this.owe(goals);
         this.pendingBursts.push({
           at: now,
           r: event.r,
@@ -114,6 +208,7 @@ export class Renderer {
           color: sealed ? event.color : 0,
           impact: event.value === 0,
           tint: sealed ? null : BRICK_DEBRIS,
+          goals,
         });
       } else if (event.kind === EventKind.SHUFFLE) {
         // The board is about to rearrange itself. Without a word about it the
@@ -141,14 +236,104 @@ export class Renderer {
     }
   }
 
+  /**
+   * Which goals a cleared cell counted toward, as indices into `this.goals`.
+   *
+   * The same arithmetic the engine does, read from the other side: a gem pays
+   * its color, a brick pays the brick count, a seal pays both that and its own
+   * color, and any of them may pay a jelly goal as well by being the gem that
+   * peeled the last layer off its cell. A cell can feed two goals at once, and
+   * saying so is the point of the effect.
+   *
+   * A goal already met takes nothing more. It is done, and a stream still
+   * running into it would be saying that clearing more of that color was worth
+   * something, which is the one thing it is not.
+   */
+  goalsFor(event) {
+    const hits = [];
+    if (this.goals.length === 0) {
+      return hits;
+    }
+    const cleared = event.kind === EventKind.CLEAR;
+    // Only the layer that takes a cell out of the count: the goal counts cells
+    // with jelly under them, so softening a double layer moves nothing.
+    const lastLayer = cleared && this.jellyAt(event.r, event.c) === 1;
+    // A brick that only cracked is still a brick, and still in the way.
+    const broken = event.kind === EventKind.BRICK && event.value === 0;
+    for (let i = 0; i < this.goals.length; i += 1) {
+      if (this.goalsMet[i]) {
+        continue;
+      }
+      const goal = this.goals[i];
+      const counts =
+        goal.kind === ObjectiveKind.COLOR
+          ? cleared && event.color === goal.color
+          : goal.kind === ObjectiveKind.JELLY
+            ? lastLayer
+            : goal.kind === ObjectiveKind.BRICK
+              ? broken
+              : goal.kind === ObjectiveKind.SEAL && broken && event.color === goal.color;
+      if (counts) {
+        hits.push(i);
+      }
+    }
+    return hits;
+  }
+
+  /**
+   * Counts what a clear is about to deliver as already on its way.
+   *
+   * From the moment the burst is queued rather than the moment its motes
+   * leave: a blast spreads outward, so a cell's burst is held back until the
+   * clear reaches it, and in that gap the engine's counter has already moved.
+   * A chip reading the counter alone would drop its number there and then
+   * take it back when the motes finally set off.
+   */
+  owe(goals) {
+    for (const goal of goals) {
+      this.goalInFlight[goal] += TRIBUTES_PER_GOAL;
+    }
+  }
+
+  /// The jelly under a cell as the board last stood. See `jellySeen`.
+  jellyAt(r, c) {
+    const i = r * this.engine.cols + c;
+    return this.jellySeen && i >= 0 && i < this.jellySeen.length ? this.jellySeen[i] : 0;
+  }
+
+  /// Takes the record the next clear will be read against. See `jellySeen`.
+  captureBoard() {
+    const { cells } = this.engine.snapshot();
+    const count = cells.length / 4;
+    if (!this.jellySeen || this.jellySeen.length !== count) {
+      this.jellySeen = new Uint8Array(count);
+    }
+    for (let i = 0; i < count; i += 1) {
+      this.jellySeen[i] = cells[i * 4 + 2];
+    }
+
+    if (this.goals.length === 0) {
+      return;
+    }
+    const objectives = this.engine.objectives();
+    for (let i = 0; i < this.goals.length; i += 1) {
+      const objective = objectives[this.goals[i].at];
+      this.goalsMet[i] = objective !== undefined && objective.have >= objective.need;
+    }
+  }
+
   /// Drops everything in flight, for a restart or a level change.
   reset() {
     this.pendingBursts.length = 0;
     this.particles.length = 0;
+    this.tributes.length = 0;
+    this.goalFlash = this.goals.map(() => 0);
+    this.goalInFlight = this.goals.map(() => 0);
     this.toast = null;
     this.lastFrame = null;
     this.backdrop = null;
     this.dirty = true;
+    this.captureBoard();
   }
 
   updateParticles(now) {
@@ -166,10 +351,13 @@ export class Renderer {
         if (burst.sparkle) {
           this.sparkle(burst);
         } else {
+          this.tribute(burst);
           this.burst(burst);
         }
       }
     }
+
+    this.updateTributes(dt);
 
     let live = 0;
     for (const particle of this.particles) {
@@ -235,9 +423,213 @@ export class Renderer {
     }
   }
 
+  /**
+   * The part of a cleared cell that goes to the goal it counted toward.
+   *
+   * Drawn on the fx layer rather than the board, because it leaves the board:
+   * a count going up somewhere above the playfield is the one thing a clear
+   * means that the board itself cannot show, and a mote that arcs up to the
+   * chip says which clear moved which number without a word.
+   */
+  tribute({ r, c, color, goals, tint = null }) {
+    if (!this.fx || !goals || goals.length === 0 || this.tributes.length >= MAX_TRIBUTES) {
+      return;
+    }
+    const { cell } = this;
+    const origin = this.boardPoint(r, c);
+    const fill = tint ?? PALETTE[color % PALETTE.length].fill;
+    for (const goal of goals) {
+      for (let i = 0; i < TRIBUTES_PER_GOAL; i += 1) {
+        // The control point of the arc, thrown off the cell in a random
+        // direction: the motes scatter the way debris does before the goal
+        // gathers them in, so the flight reads as the clear being collected
+        // rather than as a line drawn between two points.
+        const angle = Math.random() * TAU;
+        const reach = cell * (0.35 + Math.random() * 0.8);
+        this.tributes.push({
+          goal,
+          x0: origin.x,
+          y0: origin.y,
+          cx: origin.x + Math.cos(angle) * reach,
+          cy: origin.y + Math.sin(angle) * reach,
+          x: origin.x,
+          y: origin.y,
+          size: cell * (0.07 + Math.random() * 0.06),
+          color: Math.random() < 0.4 ? '#fff4cc' : fill,
+          // Negative, so they leave in a trickle rather than as one clump.
+          age: -Math.random() * 220,
+          life: TRIBUTE_MS * (0.85 + Math.random() * 0.3),
+        });
+      }
+    }
+  }
+
+  /// A cell's middle in fx-layer space, which is the board's own space shifted
+  /// by wherever the board sits on the page.
+  boardPoint(r, c) {
+    const board = this.canvas.getBoundingClientRect();
+    const layer = this.fx.getBoundingClientRect();
+    return {
+      x: board.left - layer.left + this.pad + (c + 0.5) * this.cell,
+      y: board.top - layer.top + this.pad + (r + 0.5) * this.cell,
+    };
+  }
+
+  /// Where each goal's chip is, in fx-layer space: the icon to aim at, and the
+  /// chip around it to light up when something lands.
+  goalPoints() {
+    const layer = this.fx.getBoundingClientRect();
+    return this.goals.map((goal) => {
+      const chip = goal.el.getBoundingClientRect();
+      const mark = (goal.icon ?? goal.el).getBoundingClientRect();
+      return {
+        x: mark.left - layer.left + mark.width / 2,
+        y: mark.top - layer.top + mark.height / 2,
+        chip: {
+          x: chip.left - layer.left,
+          y: chip.top - layer.top,
+          w: chip.width,
+          h: chip.height,
+        },
+      };
+    });
+  }
+
+  updateTributes(dt) {
+    for (let i = 0; i < this.goalFlash.length; i += 1) {
+      this.goalFlash[i] = Math.max(0, this.goalFlash[i] - dt / GOAL_FLASH_MS);
+    }
+    if (this.tributes.length === 0) {
+      this.settleDebt();
+      return;
+    }
+
+    const points = this.goalPoints();
+    let live = 0;
+    for (const mote of this.tributes) {
+      mote.age += dt;
+      if (mote.age >= mote.life) {
+        // It landed, so the goal it landed in lights up and is owed that much
+        // less of what is on its way.
+        this.goalFlash[mote.goal] = 1;
+        this.goalInFlight[mote.goal] = Math.max(0, this.goalInFlight[mote.goal] - 1);
+        continue;
+      }
+      const target = points[mote.goal];
+      if (target) {
+        // Read every frame rather than pinned at launch, because the chips
+        // move: the goals wrap to a second row the moment one of them gets a
+        // wider number, and the board is re-laid-out under them.
+        mote.tx = target.x;
+        mote.ty = target.y;
+      }
+      this.tributes[live] = mote;
+      live += 1;
+    }
+    this.tributes.length = live;
+    if (live === 0) {
+      this.settleDebt();
+    }
+  }
+
+  /// With nothing in the air and nothing waiting to go, nothing is owed. Said
+  /// outright rather than left to the arithmetic: a mote never launched (the
+  /// ceiling was reached, or the level changed under it) would otherwise leave
+  /// a chip reading one too many for the rest of the level.
+  settleDebt() {
+    if (this.pendingBursts.length === 0) {
+      this.goalInFlight.fill(0);
+    }
+  }
+
+  /// The layer over the page: motes on their way to a goal, and the goals
+  /// lighting up as they arrive. Cleared once when the last one lands rather
+  /// than wiped every idle frame.
+  paintFx() {
+    if (!this.fx) {
+      return;
+    }
+    const lit = this.goalFlash.some((flash) => flash > 0.01);
+    if (this.tributes.length === 0 && !lit) {
+      if (this.fxPainted) {
+        this.fxCtx.setTransform(this.fxDpr, 0, 0, this.fxDpr, 0, 0);
+        this.fxCtx.clearRect(0, 0, this.fxWidth, this.fxHeight);
+        this.fxPainted = false;
+      }
+      return;
+    }
+
+    const ctx = this.fxCtx;
+    ctx.setTransform(this.fxDpr, 0, 0, this.fxDpr, 0, 0);
+    ctx.clearRect(0, 0, this.fxWidth, this.fxHeight);
+    this.fxPainted = true;
+
+    if (lit) {
+      const points = this.goalPoints();
+      for (let i = 0; i < this.goalFlash.length; i += 1) {
+        const flash = this.goalFlash[i];
+        if (flash <= 0.01 || !points[i]) {
+          continue;
+        }
+        // A halo that swells outward as it fades, drawn around the chip
+        // itself so it reads as that goal taking something in.
+        const { chip } = points[i];
+        const spread = GOAL_FLASH_SPREAD * (1 - flash);
+        ctx.globalAlpha = 0.75 * flash;
+        ctx.strokeStyle = '#fff4cc';
+        ctx.lineWidth = 2;
+        roundRect(
+          ctx,
+          chip.x - spread,
+          chip.y - spread,
+          chip.w + spread * 2,
+          chip.h + spread * 2,
+          12 + spread,
+        );
+        ctx.stroke();
+      }
+    }
+
+    for (const mote of this.tributes) {
+      if (mote.age <= 0 || mote.tx === undefined) {
+        continue;
+      }
+      const t = mote.age / mote.life;
+      // Ease in: it hangs over the cell long enough to be seen leaving, then
+      // runs into the goal.
+      const e = t * t;
+      const here = bezier(mote, e);
+      // The trail is a slice of the path rather than a slice of the clock, and
+      // the ease puts most of the path at the end, so the slice narrows as it
+      // goes. Without that the last stretch draws as a matchstick. It is a
+      // streak of speed, so it is cut to how fast they actually travel: half
+      // of what it was when the flight took half as long.
+      const behind = bezier(mote, Math.max(0, e - 0.038 * (1 - 0.6 * t)));
+      const size = mote.size * (1 - 0.45 * e);
+
+      ctx.globalAlpha = Math.min(1, 6 * t) * Math.min(1, 5 * (1 - t));
+      ctx.strokeStyle = mote.color;
+      ctx.lineCap = 'round';
+      ctx.lineWidth = size * 1.1;
+      ctx.beginPath();
+      ctx.moveTo(behind.x, behind.y);
+      ctx.lineTo(here.x, here.y);
+      ctx.stroke();
+
+      ctx.fillStyle = mote.color;
+      ctx.beginPath();
+      ctx.arc(here.x, here.y, size, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   /// One cell's worth of debris: shards of the gem, and a puff of smoke. A
   /// rocket strike throws the same thing much harder, with a blast ring.
-  burst({ r, c, color, impact = false, tint = null }) {
+  ///
+  /// A cell that is feeding a goal throws less of it loose, because the rest
+  /// of it left for the chip: see `tribute`.
+  burst({ r, c, color, impact = false, tint = null, goals = null }) {
     if (this.particles.length > MAX_PARTICLES) {
       return;
     }
@@ -247,7 +639,12 @@ export class Renderer {
     // A tint for debris that is not a gem and so has no palette entry of its
     // own, which so far means brick.
     const gem = { fill: tint ?? PALETTE[color % PALETTE.length].fill };
-    const shards = impact ? SHARDS_PER_IMPACT : SHARDS_PER_GEM;
+    const tributed = this.fx !== null && goals !== null && goals.length > 0;
+    const shards = impact
+      ? SHARDS_PER_IMPACT
+      : tributed
+        ? SHARDS_PER_TRIBUTED_GEM
+        : SHARDS_PER_GEM;
     const puffs = impact ? PUFFS_PER_IMPACT : PUFFS_PER_GEM;
     const force = impact ? 2.6 : 1;
 
@@ -333,8 +730,25 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
+  /// Sizes the layer over the page to the page. Its CSS box is the whole
+  /// viewport, so all this sets is the backing store behind it.
+  layoutFx() {
+    if (!this.fx) {
+      return;
+    }
+    const rect = this.fx.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+    this.fxWidth = rect.width;
+    this.fxHeight = rect.height;
+    this.fxDpr = dpr;
+    this.fx.width = Math.round(rect.width * dpr);
+    this.fx.height = Math.round(rect.height * dpr);
+    this.fxPainted = false;
+  }
+
   /** Sizes the canvas to the largest whole-cell board its container allows. */
   layout() {
+    this.layoutFx();
     const stage = this.canvas.parentElement;
     const available = stage.getBoundingClientRect();
     const { rows, cols } = this.engine;
@@ -473,7 +887,16 @@ export class Renderer {
     const cols = this.engine.cols;
     const { cells, offsets } = this.engine.snapshot();
 
+    // With the board in hand and before the next tick touches it, which is
+    // what makes it a record of the board as the last clear found it. Reading
+    // it where the events arrive instead would be reading it one tick too
+    // late, after the engine has already peeled what it cleared and counted
+    // it toward the goal it finished.
+    this.captureBoard();
     this.updateParticles(timeMs);
+    // Before the board's own early return: what is going to a goal has left
+    // the board, and an idle board is exactly when the last of it is landing.
+    this.paintFx();
 
     // A board at rest is worth nothing to redraw, and redrawing it is most of
     // what a phone was being asked to do. But "at rest" has to account for
@@ -519,18 +942,13 @@ export class Renderer {
       const r = Math.floor(i / cols);
       const c = i % cols;
       const inset = Math.round(cell * 0.04);
-      // There are two states, so they are drawn as two things rather than as
-      // two steps of one. A faint tint against a slightly less faint one read
-      // as the same cell with a gem sitting on most of it: the double layer
-      // is nearly solid now, and what shows around the gem is unmistakable at
-      // a glance.
-      const doubled = jelly > 1;
-      ctx.fillStyle = doubled ? 'rgba(232,250,255,0.52)' : 'rgba(160,230,255,0.16)';
-      roundRect(ctx, pad + c * cell + inset, pad + r * cell + inset, cell - inset * 2, cell - inset * 2, cell * 0.18);
-      ctx.fill();
-      ctx.strokeStyle = doubled ? 'rgba(255,255,255,0.72)' : 'rgba(200,245,255,0.4)';
-      ctx.lineWidth = Math.max(1, cell * (doubled ? 0.04 : 0.03));
-      ctx.stroke();
+      drawJelly(
+        ctx,
+        pad + c * cell + inset,
+        pad + r * cell + inset,
+        cell - inset * 2,
+        jelly > 1,
+      );
     }
 
     // Bricks stand in the board rather than on it, and they change as they are
@@ -610,9 +1028,9 @@ export class Renderer {
     }
 
     for (const [x, y, scale, color, dx, dy] of airborne) {
-      const travelling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
-      const angle = travelling ? Math.atan2(dy, dx) + Math.PI / 2 : 0;
-      if (travelling) {
+      const traveling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
+      const angle = traveling ? Math.atan2(dy, dx) + Math.PI / 2 : 0;
+      if (traveling) {
         drawExhaust(ctx, x, y, cell * 0.42 * scale, angle);
       }
       this.blitTurned(x, y, scale, color, Special.ROCKET, angle);
@@ -770,6 +1188,49 @@ export function paintSpecialIcon(canvas, special, size) {
   );
 }
 
+/// A point along a mote's arc: from where its cell was, bending past a control
+/// point thrown off it, to wherever its goal is now.
+function bezier(mote, e) {
+  const u = 1 - e;
+  return {
+    x: u * u * mote.x0 + 2 * u * e * mote.cx + e * e * mote.tx,
+    y: u * u * mote.y0 + 2 * u * e * mote.cy + e * e * mote.ty,
+  };
+}
+
+/**
+ * Paints what one goal is asking for, at chip size, into a canvas of its own.
+ *
+ * The board's own painters rather than a swatch or a glyph, for the same
+ * reason the tracker uses them: a goal that shows the thing it wants needs no
+ * words, and a picture of the thing drawn some other way would be a second
+ * answer to what an emerald looks like.
+ */
+export function paintGoalIcon(canvas, goal, size) {
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+  const ctx = canvas.getContext('2d');
+  const side = size * dpr;
+  const gem = PALETTE[goal.color % PALETTE.length];
+
+  if (goal.kind === ObjectiveKind.SEAL) {
+    drawSeal(ctx, side * 0.06, side * 0.06, side * 0.88, gem.fill, gem.edge, false);
+  } else if (goal.kind === ObjectiveKind.BRICK) {
+    drawBrick(ctx, side * 0.06, side * 0.06, side * 0.88, false);
+  } else if (goal.kind === ObjectiveKind.JELLY) {
+    // The double layer, which is the solid one. A single layer is a tint you
+    // can see against a board and not against a chip this size.
+    drawJelly(ctx, side * 0.08, side * 0.08, side * 0.84, true);
+  } else if (goal.kind === ObjectiveKind.SCORE) {
+    drawController(ctx, side / 2, side / 2, side * 0.46);
+  } else {
+    paintGem(ctx, side / 2, side / 2, side * 0.42, goal.color, Special.NONE);
+  }
+}
+
 /**
  * Paints one gem into a sprite: body, highlight, then its special marking.
  *
@@ -850,6 +1311,71 @@ function drawSpecial(ctx, x, y, radius, special) {
   }
 
   ctx.restore();
+}
+
+/**
+ * A game controller, which is what a score goal wears.
+ *
+ * Score is the one goal with nothing on the board to point at, so it gets a
+ * mark for playing rather than a picture of a thing to clear. Drawn as a
+ * silhouette with the pad and two buttons punched out of it: at chip size a
+ * controller with its own d-pad and face buttons drawn on top is mush, and a
+ * shape read against the chip behind it is not.
+ */
+function drawController(ctx, x, y, r) {
+  const w = r * 2;
+  const h = r * 1.28;
+  ctx.save();
+  ctx.beginPath();
+  // The body: two grips with a waist between them, which is what makes the
+  // silhouette a controller rather than a lozenge.
+  ctx.moveTo(x - w * 0.5, y + h * 0.18);
+  ctx.quadraticCurveTo(x - w * 0.56, y - h * 0.5, x - w * 0.2, y - h * 0.42);
+  ctx.lineTo(x + w * 0.2, y - h * 0.42);
+  ctx.quadraticCurveTo(x + w * 0.56, y - h * 0.5, x + w * 0.5, y + h * 0.18);
+  ctx.quadraticCurveTo(x + w * 0.46, y + h * 0.56, x + w * 0.22, y + h * 0.4);
+  ctx.quadraticCurveTo(x, y + h * 0.16, x - w * 0.22, y + h * 0.4);
+  ctx.quadraticCurveTo(x - w * 0.46, y + h * 0.56, x - w * 0.5, y + h * 0.18);
+  ctx.closePath();
+  ctx.fillStyle = '#cfc6e8';
+  ctx.fill();
+  ctx.strokeStyle = '#3b3460';
+  ctx.lineWidth = Math.max(1, r * 0.12);
+  ctx.stroke();
+
+  // Punched out rather than drawn on, so they read at any size the chip is.
+  ctx.clip();
+  ctx.fillStyle = '#2a2448';
+  const arm = r * 0.34;
+  const bar = r * 0.17;
+  const px = x - w * 0.24;
+  ctx.fillRect(px - arm / 2, y - bar / 2, arm, bar);
+  ctx.fillRect(px - bar / 2, y - arm / 2, bar, arm);
+
+  const bx = x + w * 0.24;
+  for (const [dx, dy] of [[-r * 0.16, 0], [r * 0.16, 0], [0, -r * 0.17], [0, r * 0.17]]) {
+    ctx.beginPath();
+    ctx.arc(bx + dx, y + dy, r * 0.11, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/**
+ * Jelly under a cell, and the same thing on a goal chip.
+ *
+ * There are two states, so they are drawn as two things rather than as two
+ * steps of one. A faint tint against a slightly less faint one read as the
+ * same cell with a gem sitting on most of it: the double layer is nearly
+ * solid, and what shows around the gem is unmistakable at a glance.
+ */
+function drawJelly(ctx, x, y, size, doubled) {
+  ctx.fillStyle = doubled ? 'rgba(232,250,255,0.52)' : 'rgba(160,230,255,0.16)';
+  roundRect(ctx, x, y, size, size, size * 0.18);
+  ctx.fill();
+  ctx.strokeStyle = doubled ? 'rgba(255,255,255,0.72)' : 'rgba(200,245,255,0.4)';
+  ctx.lineWidth = Math.max(1, size * (doubled ? 0.04 : 0.03));
+  ctx.stroke();
 }
 
 /**

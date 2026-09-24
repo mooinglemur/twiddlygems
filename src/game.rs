@@ -1875,7 +1875,7 @@ fn cells_between(a: Pos, b: Pos) -> f32 {
 
 /// Distance covered after `elapsed` milliseconds by something that accelerates
 /// evenly for `ramp_ms` and then holds `speed`.
-fn travelled(elapsed: f32, ramp_ms: f32, speed: f32) -> f32 {
+fn traveled(elapsed: f32, ramp_ms: f32, speed: f32) -> f32 {
     if elapsed <= 0.0 {
         0.0
     } else if elapsed < ramp_ms {
@@ -1898,7 +1898,7 @@ fn travel_time(distance: f32, ramp_ms: f32, speed: f32) -> f32 {
 
 /// How far a rocket has flown after `elapsed` milliseconds.
 fn flown_cells(elapsed: f32) -> f32 {
-    travelled(elapsed, LAUNCH_RAMP_MS, LAUNCH_SPEED)
+    traveled(elapsed, LAUNCH_RAMP_MS, LAUNCH_SPEED)
 }
 
 /// How long a rocket needs to cover `distance` cells.
@@ -1908,7 +1908,7 @@ fn flight_time(distance: f32) -> f32 {
 
 /// How far a gem has fallen after `elapsed` milliseconds.
 fn fallen_cells(elapsed: f32) -> f32 {
-    travelled(elapsed, FALL_ACCEL_MS, FALL_SPEED)
+    traveled(elapsed, FALL_ACCEL_MS, FALL_SPEED)
 }
 
 /// How long a gem needs to drop `distance` rows.

@@ -182,9 +182,8 @@ for (const [name, metrics] of [
     // The cost is that the picker is photographed as a finished ladder: no
     // row in these shots is an unlocked level nobody has cleared yet.
     //
-    // Deliberately not on the level being photographed. A level with both
-    // marks behind it has no next one to name, so the score's target went
-    // blank in every gameplay shot and nothing here photographed it at all.
+    // Deliberately not on the level being photographed, so the marks popover
+    // is shot with something still to reach rather than with both behind it.
     // The Archipelago gems are claimed too (4000 up, one to a level at the
     // default setting). An unlock can land in one, because collecting one
     // asks only for being able to play its level, so a run claiming every
@@ -257,6 +256,14 @@ for (const [name, metrics] of [
   `);
   await sleep(200);
   await shoot(`${name}-04-feed`);
+
+  // What the level can be beaten to, which lives behind a tap of the score
+  // now. Nothing an ordinary run does opens it, so it is opened here.
+  await evaluate(`document.getElementById('score-box').click()`);
+  await sleep(200);
+  await shoot(`${name}-04-marks`);
+  await evaluate(`window.twiddlygems.hud.showScoreMarks(false)`);
+  await sleep(120);
 
   // The end of a level: the goal met, the moves left over being spent one at
   // a time, and each gem turning into a special throwing motes. Played out

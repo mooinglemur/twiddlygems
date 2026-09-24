@@ -423,7 +423,7 @@ pub fn most_common_color(board: &Board, rng: &mut Rng) -> u8 {
 /// How long each cell of a blast waits before it pops, per cell of distance
 /// from whatever set it off. A row clearer sweeps outward rather than taking
 /// the whole row at once, and because the delay accumulates through a chain,
-/// one special setting off another sends the clear travelling across the board.
+/// one special setting off another sends the clear traveling across the board.
 ///
 /// At this pace a row sweeps in about a third of a second, and a chain of three
 /// specials takes most of a second to play out.

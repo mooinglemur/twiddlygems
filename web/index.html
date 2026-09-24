@@ -16,13 +16,13 @@
       <span id="level-number">Level 1</span>
       <span id="level-name">&nbsp;</span>
     </div>
-    <div id="score-box">
+    <button id="score-box" type="button" aria-expanded="false" aria-controls="score-marks">
       <span class="label">Score</span>
-      <span id="score-row">
-        <span id="score-target"></span>
-        <span id="score">0</span>
-      </span>
-    </div>
+      <span id="score">0</span>
+    </button>
+    <!-- What this level can be beaten to, behind a tap of the score rather
+         than beside it: two numbers nobody is reading most of the time. -->
+    <div id="score-marks" class="hidden" role="dialog" aria-label="What this level can be beaten to"></div>
   </header>
 
   <ul id="objectives" aria-label="Level objectives"></ul>
@@ -44,6 +44,10 @@
     <button id="retry-button" class="text-button" type="button">Restart</button>
   </footer>
 </div>
+
+<!-- What a clear sends to the goal it counted toward. Over the whole page
+     rather than inside the board, because that is the journey it makes. -->
+<canvas id="fx" aria-hidden="true"></canvas>
 
 <div id="overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="overlay-title">
   <div id="overlay-card">

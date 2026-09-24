@@ -752,7 +752,7 @@ mod tests {
         // The front end builds its controls out of this text and nothing
         // else, so every setting has to come through it with enough to draw
         // one: what it is called, what it does, and either two bounds or a
-        // list of labelled values.
+        // list of labeled values.
         unsafe {
             let handle = tg_create(5, 0);
             let bytes = std::slice::from_raw_parts(

@@ -13,7 +13,7 @@
   --ok: #4ade80;
   /* How well a level has been beaten. Green for a clear, then the two metals.
      Gold is warmer than --accent so the two read apart when both are on
-     screen, and silver is cool rather than grey so it does not look like
+     screen, and silver is cool rather than gray so it does not look like
      disabled text. */
   --tier-clear: #4ade80;
   --tier-silver: #cbd7ea;
@@ -56,6 +56,8 @@ html, body {
 /* ---- bars ---- */
 
 #topbar, #bottombar {
+  /* So the score's popover can hang off the bar it belongs to. */
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--gap);
@@ -69,8 +71,20 @@ html, body {
 #level-number { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
 #level-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-#score-box { display: flex; flex-direction: column; align-items: flex-end; }
-#score-row { display: flex; align-items: baseline; gap: 6px; }
+/* A button, because tapping it is what opens the marks, but it wears none of
+   the chrome the other buttons do: it is the readout, not a control beside
+   one. */
+#score-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  color: inherit;
+  text-align: right;
+}
 #score { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.15rem; }
 /* The score takes the color of the best this level has been beaten. It only
    ever moves up, so it reads as something gained. */
@@ -78,19 +92,38 @@ html, body {
 #score.tier-silver { color: var(--tier-silver); }
 #score.tier-gold { color: var(--tier-gold); }
 
-/* The next mark up, in the color of the mark it names, so which one it is
-   needs no explaining. Empty once there is none left to reach.
-   It sits to the left of the score, and grows leftward, because the score is
-   the thing being watched: with it on the right the digits would shuffle
-   sideways every time the mark beside them changed width or went away. */
-#score-target {
-  font-variant-numeric: tabular-nums;
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
+/* What the level can be beaten to, hung under the score it belongs to. Above
+   the effects layer and below every dialog. */
+#score-marks {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 8;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.5);
   white-space: nowrap;
 }
-#score-target.tier-silver { color: var(--tier-silver); }
-#score-target.tier-gold { color: var(--tier-gold); }
+.score-mark {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+.score-mark.tier-silver { color: var(--tier-silver); }
+.score-mark.tier-gold { color: var(--tier-gold); }
+/* Not yet reached, so it reads as something still to aim at rather than
+   something the level is wearing. */
+.score-mark:not(.taken) { opacity: 0.62; }
+.score-mark .name { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.score-mark .at { font-weight: 700; margin-left: auto; }
 .label { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
 
 #moves-box { display: flex; align-items: baseline; gap: 6px; }
@@ -111,27 +144,29 @@ html, body {
      seal color, which is wider than a phone; scrolling them with the scrollbar
      hidden left the last one off the edge with nothing to say it was there. */
   flex-wrap: wrap;
+  justify-content: center;
   scrollbar-width: none;
 }
 #objectives::-webkit-scrollbar { display: none; }
 
+/* A picture of what the goal wants and how much of it is left, and nothing
+   else. The border is drawn either way so that a goal being met changes its
+   color rather than shifting everything sideways. */
 .objective {
-  flex: 1 1 0;
-  min-width: 96px;
+  flex: 0 0 auto;
   background: var(--panel);
+  border: 2px solid var(--ink);
   border-radius: var(--radius);
-  padding: 8px 10px;
+  padding: 4px 14px;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
 }
-.objective.met { outline: 2px solid var(--ok); }
-.objective-label { display: flex; align-items: center; gap: 6px; font-size: 0.78rem; color: var(--ink-dim); }
-.objective-swatch { width: 12px; height: 12px; border-radius: 4px; flex: 0 0 auto; }
-.objective-count { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 0.9rem; }
-.objective-bar { height: 4px; border-radius: 2px; background: var(--socket); overflow: hidden; }
-.objective-fill { height: 100%; width: 0%; background: var(--accent); transition: width 180ms ease-out; }
-.objective.met .objective-fill { background: var(--ok); }
+.objective.met { border-color: var(--ok); }
+.objective-art { display: block; flex: 0 0 auto; }
+.objective-count { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.58rem; }
+.objective.met .objective-count { color: var(--ok); }
 
 /* ---- board ---- */
 
@@ -147,6 +182,18 @@ html, body {
   display: block;
   max-width: 100%;
   max-height: 100%;
+}
+
+/* The layer a clear's motes cross on their way to the goal they counted
+   toward. Over the board and the bars, under every dialog, and deaf to the
+   pointer: nothing on it is anything to touch. */
+#fx {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
 }
 
 /* ---- buttons ---- */
@@ -460,7 +507,3 @@ button[disabled] { opacity: 0.4; cursor: default; }
   margin-top: 22px;
 }
 #setup-buttons button { padding: 14px; font-size: 1.05rem; }
-
-@media (prefers-reduced-motion: reduce) {
-  .objective-fill { transition: none; }
-}

@@ -121,7 +121,7 @@ function stubElement(id) {
 }
 
 for (const id of [
-  'app', 'board', 'stage', 'level-number', 'level-name', 'score', 'score-target',
+  'app', 'board', 'fx', 'stage', 'level-number', 'level-name', 'score', 'score-box', 'score-marks',
   'moves', 'objectives', 'feed',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons',
   'tracker', 'tracker-items', 'level-list',
@@ -338,19 +338,65 @@ assert.equal(
 
 const objectives = elements.get('objectives');
 assert.ok(objectives.children.length > 0, 'the objective chips were never built');
+
+// A goal chip carries a picture of what it wants and how much of it is left,
+// and nothing else. This level's only goal is a score, which names the number
+// to reach: the score itself is already on screen a few inches away, and a
+// chip repeating it only invited the player to work out which copy was right.
+{
+  const [chip] = objectives.children;
+  assert.equal(chip.children.length, 2, 'the score chip has more on it than a mark and a number');
+  assert.match(
+    chip.children[1].textContent,
+    /^[\d,]+$/,
+    `the score goal reads ${JSON.stringify(chip.children[1].textContent)}`,
+  );
+  assert.ok(!chip.classList.contains('met'), 'the score goal is met before a point was scored');
+  assert.equal(
+    window.twiddlygems.renderer.goals.length,
+    0,
+    'a score goal was offered as somewhere for a clear to fly to',
+  );
+}
 assert.equal(elements.get('level-number').textContent, `Level ${LEVEL + 1}`);
-// The mark still out of reach is named beside the score, and the score wears
-// no color yet because the level has never been cleared.
-assert.match(
-  elements.get('score-target').textContent,
-  /^silver [\d,]+$/,
-  'the next score mark is not named beside the score',
-);
 assert.equal(
   elements.get('score').classList.set.size,
   0,
   'an uncleared level is already colored',
 );
+
+// What a level can be beaten to sits behind a tap of the score rather than
+// beside it: two numbers nobody is reading most of the time, in the one corner
+// where the number being watched lives.
+{
+  const marks = elements.get('score-marks');
+  const box = elements.get('score-box');
+  assert.ok(marks.classList.contains('hidden'), 'the score marks are showing before anyone asked');
+  assert.equal(box.getAttribute('aria-expanded'), 'false');
+
+  dispatch('score-box', 'click', {});
+  assert.ok(!marks.classList.contains('hidden'), 'tapping the score showed nothing');
+  assert.equal(box.getAttribute('aria-expanded'), 'true');
+  const said = marks.children.map((row) =>
+    row.children.map((part) => part.textContent ?? part).join(' '),
+  );
+  assert.equal(said.length, 2, `the marks popover shows ${JSON.stringify(said)}`);
+  assert.match(said[0], /^Silver [\d,]+$/, `the silver mark reads ${JSON.stringify(said[0])}`);
+  assert.match(said[1], /^Gold [\d,]+$/, `the gold mark reads ${JSON.stringify(said[1])}`);
+  // Neither is behind yet, so neither is checked and neither wears its metal
+  // as something already won.
+  assert.ok(
+    marks.children.every((row) => !row.classList.contains('taken')),
+    'a mark is checked off on a level that has never been cleared',
+  );
+
+  // A tap anywhere else puts it away, which is a listener on the window rather
+  // than a backdrop: a backdrop would swallow the first tap on the board, and
+  // putting a popover away is not worth a move.
+  gesture('pointerdown');
+  assert.ok(marks.classList.contains('hidden'), 'the score marks survived a tap elsewhere');
+  assert.equal(box.getAttribute('aria-expanded'), 'false');
+}
 assert.ok(elements.get('level-name').textContent.length > 0, 'the level has no name on screen');
 // Read off the ladder rather than written here, so retuning a level's budget
 // does not break the front end's test.
@@ -432,7 +478,7 @@ dispatch('sound-button', 'click', {});
 //
 // Firefox on Android does not count a gesture as having happened until it
 // finishes, so the context opened on `pointerdown` comes back suspended and the
-// game plays in silence with the button still claiming sound is on. Modelled
+// game plays in silence with the button still claiming sound is on. Modeled
 // here as a device that only starts on the second ask.
 {
   const { audio } = window.twiddlygems;
@@ -509,13 +555,13 @@ for (const row of list.children) {
   assert.equal(row.children.at(-1).children.length, 3, 'a level row is missing its marks');
 }
 
-// The tracker above shows all five unlocks from the start, greyed until they
+// The tracker above shows all five unlocks from the start, grayed until they
 // turn up, so what a run is still waiting on is as readable as what it holds.
 const found = () => items.children.filter((slot) => slot.classList.contains('found'));
 assert.equal(items.children.length, 5, 'the tracker is not showing all five unlocks');
 {
   const held = window.twiddlygems.engine.unlockedSpecials;
-  assert.ok(held.size < 5, 'this run holds everything, so nothing here tests a greyed slot');
+  assert.ok(held.size < 5, 'this run holds everything, so nothing here tests a grayed slot');
   assert.equal(
     found().length,
     held.size,
@@ -567,6 +613,13 @@ click(overlayButton('Close'), 'the level picker has no way out');
     }
   }
   assert.equal(engine.status, Status.WON, 'following the hints never finished level one');
+  // A met goal goes green. Worth saying on this level in particular: its only
+  // goal is a score, whose chip says the same words all the way through, so
+  // nothing about the chip changing is what can be relied on to notice.
+  assert.ok(
+    objectives.children.every((chip) => chip.classList.contains('met')),
+    'the level was won with a goal still unmet on screen',
+  );
   // The moves left over when the goal was met are spent on the way out, so a
   // won level always ends on nothing.
   assert.equal(engine.movesLeft, 0, 'the leftover moves were not cashed in');
@@ -723,7 +776,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const { engine } = window.twiddlygems;
   engine.setUnlocked(5);
 
-  // The retry above closed the panel, so the menu is opened afresh.
+  // The retry closed the panel, so the menu is opened afresh.
   dispatch('levels-button', 'click', {});
   click(overlayButton('Title screen'), 'the level menu offers no way back to the title');
   click(overlayButton('Keep playing'), 'ending a run is not confirmed first');
@@ -765,6 +818,324 @@ click(overlayButton('Close'), 'the level picker has no way out');
   dispatch('setup-start', 'click', {});
   assert.ok(setup.classList.contains('hidden'), 'starting the run left the setup screen up');
   assert.ok(store.has(SAVE_KEY), 'starting a fresh run did not write a save');
+}
+
+// Clearing something that counts toward a goal sends part of it to the chip
+// that counts it, instead of only throwing debris where it stood.
+//
+// Last, because reaching the levels below means opening the whole ladder and
+// `setUnlocked` is a floor rather than a setting: a run left holding thirteen
+// levels would be the wrong run for everything that came after.
+//
+// Every kind of goal a level can set, because each is counted differently and
+// each is a different chance to send a clear to the wrong chip.
+{
+  const { EventKind, ObjectiveKind, Status } = await import(path.resolve('web/js/engine.js'));
+  const { engine, renderer } = window.twiddlygems;
+
+  engine.setUnlocked(engine.levelCount);
+
+  /// Moves to a level by the route a player takes and leaves the air clear, so
+  /// what is in flight afterwards is only what this test puts there. The pump
+  /// is long enough for anything the deal started to finish.
+  ///
+  /// Through the picker rather than by calling the engine, because handing the
+  /// renderer the new chips is part of what is being checked: a level change
+  /// that rebuilt the HUD and forgot to say so would leave every mote flying
+  /// at the last level's goals.
+  const pickLevel = (index, why) => {
+    dispatch('levels-button', 'click', {});
+    click(list.children[index], `the picker has no row for level ${index + 1}, ${why}`);
+    pump(90);
+    renderer.tributes.length = 0;
+    renderer.goalFlash.fill(0);
+  };
+
+  /// A cell carrying exactly this much jelly, as the board last stood.
+  const jellyCell = (layers) => {
+    const at = renderer.jellySeen.findIndex((depth) => depth === layers);
+    return at < 0 ? null : { r: Math.floor(at / engine.cols), c: at % engine.cols };
+  };
+
+  const clear = (event) => {
+    renderer.tributes.length = 0;
+    renderer.pendingBursts.length = 0;
+    renderer.addEvents([{ value: 0, ...event }], performance.now());
+    pump(1);
+  };
+
+  pickLevel(0, 'which asks for two colors');
+  const goals = renderer.goals;
+  assert.equal(goals.length, 2, `the opening level's two goals did not reach the renderer: ${goals.length}`);
+  assert.ok(
+    goals.every((goal) => goal.kind === ObjectiveKind.COLOR && goal.el && goal.icon),
+    'a goal reached the renderer without a chip to fly to',
+  );
+
+  // The second of the two, so a renderer that sent everything to the first
+  // goal it had would not pass by accident.
+  const target = 1;
+  const wanted = goals.map((goal) => goal.color);
+  const spare = [0, 1, 2, 3, 4, 5, 6, 7].find((color) => !wanted.includes(color));
+
+  // A synthetic clear rather than a real one: which gem falls where is the
+  // seed's business, and what is being checked is where its motes go.
+  clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: wanted[target] });
+  assert.ok(
+    renderer.tributes.length > 0,
+    'a gem the level asked for sent nothing to the goal counting it',
+  );
+  assert.ok(
+    renderer.tributes.every((mote) => mote.goal === target),
+    'a cleared gem sent motes to a goal it does not count toward',
+  );
+
+  // Followed to the end: they have to arrive, light the goal they arrived at
+  // and nothing else, and then be gone rather than pinning the layer awake.
+  const lit = goals.map(() => 0);
+  for (let i = 0; i < 120 && renderer.tributes.length > 0; i += 1) {
+    pump(1);
+    for (let g = 0; g < lit.length; g += 1) {
+      lit[g] = Math.max(lit[g], renderer.goalFlash[g]);
+    }
+  }
+  assert.equal(renderer.tributes.length, 0, 'the motes were still in flight two seconds later');
+  assert.ok(lit[target] > 0, 'the goal never lit up as the motes landed');
+  assert.equal(lit[1 - target], 0, 'a goal nothing was sent to lit up anyway');
+
+  // And a color this level does not ask for has nowhere to go, so it throws
+  // its debris and that is all.
+  clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: spare });
+  assert.equal(
+    renderer.tributes.length,
+    0,
+    'a gem no goal asks for still sent motes to one of them',
+  );
+
+  // The chips themselves count down rather than up: what is left to do is the
+  // number being played toward, and the total was never the player's to move.
+  const chips = objectives.children;
+  assert.equal(chips.length, 2, 'the opening level did not get a chip per goal');
+  for (let i = 0; i < chips.length; i += 1) {
+    const count = chips[i].children.at(-1).textContent;
+    assert.equal(
+      count,
+      engine.objectives()[i].need.toLocaleString(),
+      `a goal nothing has been cleared toward reads ${JSON.stringify(count)}`,
+    );
+  }
+
+  // A jelly goal counts cells rather than layers, so what pays it is the clear
+  // that takes the last layer off a cell and not one that only softens it.
+  // Sticky Middle is a patch of single layers, so a gem cleared on it finishes
+  // it and a gem cleared beside it does nothing.
+  pickLevel(4, 'which is the jelly one');
+  assert.equal(renderer.goals.length, 1, 'Sticky Middle did not get its jelly goal');
+
+  // Played rather than staged, because jelly is the one goal whose answer is
+  // not in the event: what a clear was worth depends on what was under the
+  // gem, and the engine has already peeled it by the time the event is read.
+  // The board has to have been asked a frame earlier, and only a move that
+  // really peels one can tell whether it was.
+  //
+  // The same run watches the chip's number, which has to fall because the
+  // motes reached it rather than a second before they set off: the engine
+  // counts the cell the moment the gem goes, so a chip reading that counter
+  // alone would be done with the clear before anything crossed the screen.
+  {
+    let sent = 0;
+    const realTribute = renderer.tribute.bind(renderer);
+    renderer.tribute = (burst) => {
+      sent += burst.goals?.length ?? 0;
+      realTribute(burst);
+    };
+
+    const shown = () => Number(objectives.children[0].children[1].textContent.replace(/,/g, ''));
+    const counted = () => {
+      const goal = engine.objectives()[0];
+      return Math.max(0, goal.need - goal.have);
+    };
+    let lagged = false;
+    let dipped = false;
+    let rose = false;
+
+    // Each attempt plays the level right out rather than stopping at the first
+    // mote, because what is being watched is the number moving, and it has not
+    // moved yet when the first one sets off.
+    for (let attempt = 0; attempt < 3 && sent === 0; attempt += 1) {
+      // Per attempt, because dealing the level again puts the jelly back.
+      let before = shown();
+      for (let i = 0; i < 900 && engine.status === Status.PLAYING; i += 1) {
+        if (engine.acceptsInput) {
+          const move = engine.hint();
+          if (move) {
+            engine.swap(...move);
+          }
+        }
+        pump(1);
+        // The chip is never ahead of the engine, and at some point it is
+        // behind: that gap is the motes still crossing the screen.
+        lagged = lagged || shown() > counted();
+        dipped = dipped || shown() < counted();
+        // And it only ever goes down. A burst is held back until the clear
+        // reaches its cell, so a chip that stopped counting the wait as owed
+        // would drop its number in that gap and take it back when the motes
+        // finally set off.
+        rose = rose || shown() > before;
+        before = shown();
+      }
+      if (sent === 0) {
+        pickLevel(4, 'to try the jelly again');
+      }
+    }
+    renderer.tribute = realTribute;
+    assert.ok(sent > 0, 'playing the jelly level never sent anything to the goal counting jelly');
+    assert.ok(
+      lagged,
+      'the goal counted a cleared cell before a single mote had reached it',
+    );
+    assert.ok(
+      !dipped,
+      'the goal went below what the engine had counted, so it took something twice',
+    );
+    assert.ok(!rose, 'the number left to do went up, which nothing in a jelly level can do');
+
+    // And it catches up: once the air is clear the chip and the engine agree,
+    // which is what stops a dropped mote leaving a level short forever.
+    for (let i = 0; i < 200 && shown() !== counted(); i += 1) {
+      pump(1);
+    }
+    assert.equal(shown(), counted(), 'the motes landed and the goal never took them');
+
+    // A mote that never lands must not leave the chip a number short for the
+    // rest of the level. One can go missing: the ceiling on how many may be in
+    // the air turns a board-wide clear away, and a level change drops whatever
+    // was crossing it. So a debt with nothing left to pay it off is written
+    // off rather than carried.
+    renderer.goalInFlight[0] = 9;
+    renderer.tributes.length = 0;
+    renderer.pendingBursts.length = 0;
+    pump(2);
+    assert.equal(shown(), counted(), 'a mote that never arrived left the goal owing forever');
+  }
+
+  // A clean board again for the rest, since that one was played on.
+  pickLevel(4, 'which is the jelly one');
+  const sticky = jellyCell(1);
+  const bare = jellyCell(0);
+  assert.ok(sticky && bare, 'Sticky Middle has no single jelly, or no cell without any');
+
+  clear({ kind: EventKind.CLEAR, ...sticky, color: 0 });
+  assert.ok(
+    renderer.tributes.length > 0,
+    'the gem that took the last jelly layer sent nothing to the goal counting it',
+  );
+  clear({ kind: EventKind.CLEAR, ...bare, color: 0 });
+  assert.equal(renderer.tributes.length, 0, 'a gem cleared off the jelly paid the jelly goal');
+
+  // The other side of that: Hourglass is laid out in double layers, so the
+  // first clear on one leaves the cell still jellied and the count unmoved.
+  pickLevel(8, 'which is laid out in double jelly');
+  const doubled = jellyCell(2);
+  assert.ok(doubled, 'Hourglass has no double jelly left to soften');
+  clear({ kind: EventKind.CLEAR, ...doubled, color: 0 });
+  assert.equal(
+    renderer.tributes.length,
+    0,
+    'softening a double layer paid a goal that counts jellied cells',
+  );
+
+  // Bricks go the same way: cracking one leaves it in the way, and only the
+  // hit that breaks it moves the count.
+  pickLevel(10, 'which is the brick one');
+  assert.equal(renderer.goals.length, 1, 'Landslide did not get its brick goal');
+  clear({ kind: EventKind.BRICK, r: 5, c: 4, color: 255, value: 1 });
+  assert.equal(renderer.tributes.length, 0, 'a brick that only cracked paid the brick goal');
+  clear({ kind: EventKind.BRICK, r: 5, c: 4, color: 255, value: 0 });
+  assert.ok(renderer.tributes.length > 0, 'a broken brick sent nothing to the goal counting them');
+
+  // And a seal pays the goal for its own color, of which The Vault has four:
+  // the level is about bringing each color to its own seals, so a mote going
+  // to the wrong one would be telling the player the opposite of the truth.
+  pickLevel(11, 'which asks for a color of seal at a time');
+  assert.equal(renderer.goals.length, 4, 'The Vault did not get a goal per seal color');
+  const seal = 2;
+  clear({ kind: EventKind.BRICK, r: 1, c: 1, color: renderer.goals[seal].color, value: 0 });
+  assert.ok(renderer.tributes.length > 0, 'a broken seal sent nothing to the goal counting it');
+  assert.ok(
+    renderer.tributes.every((mote) => mote.goal === seal),
+    'a broken seal paid a goal for a color it was not',
+  );
+
+  // A goal already met takes nothing more: it is done, and a stream still
+  // running into it would say that clearing more of that color was worth
+  // something, which is the one thing it is not.
+  //
+  // Crowded House, because its first goal is a score and its second is a
+  // color. The renderer's goals are not the engine's: the score is a chip but
+  // not a destination, so the two lists stop agreeing here, and a renderer
+  // reading its own index into the engine's objectives would be watching the
+  // score to decide whether the color goal was done.
+  pickLevel(5, 'whose first goal is a score and whose second is a color');
+  assert.equal(renderer.goals.length, 1, 'Crowded House offered its score goal as a destination');
+  assert.equal(
+    renderer.goals[0].at,
+    1,
+    "the color goal is the engine's second, and the renderer thinks otherwise",
+  );
+
+  // Played a while, so the counters have moved and the check below is against
+  // a board in the middle of something rather than a fresh one.
+  for (let i = 0; i < 400 && engine.status === Status.PLAYING; i += 1) {
+    if (engine.acceptsInput) {
+      const move = engine.hint();
+      if (move) {
+        engine.swap(...move);
+      }
+    }
+    pump(1);
+  }
+  pump(2);
+  const objective = engine.objectives()[renderer.goals[0].at];
+  assert.equal(
+    renderer.goalsMet[0],
+    objective.have >= objective.need,
+    'the renderer disagrees with the engine about whether the goal is done',
+  );
+
+  // Set rather than played to: following hints does not meet a goal on any
+  // level in the ladder, so a test that waited for one would never run. What
+  // the line above checks is that the flag is read off the engine at all.
+  pickLevel(5, 'again, for a board with moves left on it');
+  assert.equal(renderer.goalsMet[0], false, 'a fresh level starts with its goal done');
+  const asked = renderer.goals[0].color;
+  clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: asked });
+  assert.ok(renderer.tributes.length > 0, 'the goal took nothing while it still wanted some');
+
+  // A blast spreads outward, so a cell's burst is held back until the clear
+  // reaches it. What that burst will deliver counts as on its way from the
+  // moment it is queued, not from the moment its motes leave: the engine moved
+  // its counter when the gem went, so a chip that waited for the launch would
+  // drop its number in the gap and take it back a third of a second later.
+  renderer.tributes.length = 0;
+  renderer.pendingBursts.length = 0;
+  renderer.goalInFlight.fill(0);
+  renderer.addEvents(
+    [{ kind: EventKind.CLEAR, r: 3, c: 3, color: asked, value: 400 }],
+    performance.now(),
+  );
+  // A frame goes by, which is where the gap would show: the burst is not due
+  // for another third of a second, so nothing has set off yet.
+  pump(1);
+  assert.equal(renderer.tributes.length, 0, 'a burst held back for its blast set off at once');
+  assert.ok(
+    renderer.unitsInFlight(renderer.goals[0].at) > 0,
+    'a clear on its way to a goal was not owed while it waited for its blast',
+  );
+
+  renderer.goalsMet[0] = true;
+  clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: asked });
+  assert.equal(renderer.tributes.length, 0, 'a goal already met was still being fed');
 }
 
 console.log(

@@ -19,6 +19,7 @@ const MAX_FRAME_MS = 100;
 const dom = {
   app: document.getElementById('app'),
   canvas: document.getElementById('board'),
+  fx: document.getElementById('fx'),
   stage: document.getElementById('stage'),
   title: document.getElementById('title'),
   soloButton: document.getElementById('solo-button'),
@@ -31,7 +32,8 @@ const dom = {
   levelNumber: document.getElementById('level-number'),
   levelName: document.getElementById('level-name'),
   score: document.getElementById('score'),
-  scoreTarget: document.getElementById('score-target'),
+  scoreBox: document.getElementById('score-box'),
+  scoreMarks: document.getElementById('score-marks'),
   moves: document.getElementById('moves'),
   objectives: document.getElementById('objectives'),
   feed: document.getElementById('feed'),
@@ -155,8 +157,17 @@ async function boot() {
     engine.loadLevel(save.level);
   }
 
-  const renderer = new Renderer(dom.canvas, engine);
-  hud.rebuild();
+  const renderer = new Renderer(dom.canvas, engine, dom.fx);
+
+  /// The HUD and the renderer both have to be told when the level changes, and
+  /// in that order: the chips are what a clear's motes fly to, so the renderer
+  /// cannot be handed them until they exist.
+  const rebuildHud = () => {
+    hud.rebuild();
+    renderer.setGoals(hud.goals());
+  };
+
+  rebuildHud();
 
   const audio = new Audio();
   let soundOn = true;
@@ -312,7 +323,7 @@ async function boot() {
     renderer.layout();
     renderer.reset();
     renderer.hint = null;
-    hud.rebuild();
+    rebuildHud();
     hud.hideOverlay();
     hintAt = performance.now() + HINT_DELAY_MS;
     resultShown = false;
@@ -366,7 +377,7 @@ async function boot() {
     renderer.reset();
     renderer.hint = null;
     resultShown = false;
-    hud.rebuild();
+    rebuildHud();
     hud.clearFeed();
     showTitle();
   };
@@ -395,6 +406,21 @@ async function boot() {
   };
 
   dom.levelsButton.addEventListener('click', openLevels);
+
+  // Tapping the score shows what the level can be beaten to; tapping anywhere
+  // else puts it away. The dismissal is a capture-phase listener on the window
+  // rather than a backdrop over the page, because a backdrop would swallow the
+  // first tap on the board, and putting a popover away is not worth a move.
+  dom.scoreBox.addEventListener('click', () => hud.toggleScoreMarks());
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (hud.marksVisible && !dom.scoreBox.contains?.(event.target)) {
+        hud.showScoreMarks(false);
+      }
+    },
+    { capture: true },
+  );
 
   dom.soloButton.addEventListener('click', () => {
     // Straight in for a run already under way: the settings it was dealt with
@@ -460,7 +486,9 @@ async function boot() {
     }
 
     renderer.draw(now);
-    hud.update();
+    // After the draw, so what the chips say about what is still on its way is
+    // this frame's answer rather than the last one's.
+    hud.update(renderer);
 
     if (engine.status !== Status.PLAYING && !resultShown && !hud.overlayVisible) {
       resultShown = true;

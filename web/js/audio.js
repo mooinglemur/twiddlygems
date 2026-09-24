@@ -250,8 +250,8 @@ export class Audio {
       filter.type = spec.type ?? 'lowpass';
       // `frequency: 'harmonic'` tunes the filter to the overtone this play
       // drew, which is how a high-Q band-pass on noise becomes a pitch.
-      const centre = spec.frequency === 'harmonic' ? harmonicHz ?? 1000 : spec.frequency ?? 1000;
-      const from = Math.max(20, centre * wobble(jitter.frequency));
+      const center = spec.frequency === 'harmonic' ? harmonicHz ?? 1000 : spec.frequency ?? 1000;
+      const from = Math.max(20, center * wobble(jitter.frequency));
       filter.frequency.setValueAtTime(from, start);
       if (spec.sweep) {
         // A cutoff that falls as the sound decays is what makes air disperse

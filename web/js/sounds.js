@@ -356,7 +356,7 @@ export const SOUNDS = {
         note: 'F4',
         harmonic: { of: 'F1', from: 16, to: 36 },
         filters: [
-          // Two passes at the same centre: one band-pass this resonant still
+          // Two passes at the same center: one band-pass this resonant still
           // leaks noise around the skirts, and a second cleans it into a tone.
           { type: 'bandpass', frequency: 'harmonic', q: 34 },
           { type: 'bandpass', frequency: 'harmonic', q: 16 },
