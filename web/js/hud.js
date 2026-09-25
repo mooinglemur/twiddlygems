@@ -130,6 +130,13 @@ export class Hud {
       if (target) {
         count.textContent = objective.need.toLocaleString();
         item.setAttribute('aria-label', `${describe(objective)}: ${count.textContent}`);
+      } else {
+        // Room for the widest number it will ever hold, which is the one it
+        // starts at, because these only count down. Without it a chip narrows
+        // as its count loses a digit, and every chip to its right slides along
+        // to take up the slack. `ch` is a digit's own width, which is a width
+        // at all because the stylesheet sets tabular numerals.
+        count.style.minWidth = `${String(objective.need).length}ch`;
       }
       return { item, count, icon, target, objective };
     });

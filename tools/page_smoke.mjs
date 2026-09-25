@@ -1034,6 +1034,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
       engine.objectives()[i].need.toLocaleString(),
       `a goal nothing has been cleared toward reads ${JSON.stringify(count)}`,
     );
+    // And the chip has already made room for that number, so losing a digit
+    // on the way down does not narrow it and slide every chip to its right
+    // along to take up the slack.
+    assert.equal(
+      chips[i].children.at(-1).style.minWidth,
+      `${String(engine.objectives()[i].need).length}ch`,
+      'a counting chip reserved no room for the number it starts at',
+    );
   }
 
   // A jelly goal counts cells rather than layers, so what pays it is the clear
@@ -1042,6 +1050,18 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // it and a gem cleared beside it does nothing.
   pickLevel(4, 'which is the jelly one');
   assert.equal(renderer.goals.length, 1, 'Sticky Middle did not get its jelly goal');
+  // A patch of jelly runs to two digits, which the opening level's goals do
+  // not: a chip that always reserved one digit would look right there and
+  // narrow here on the way from ten to nine.
+  {
+    const wants = engine.objectives()[0].need;
+    assert.ok(wants > 9, `this level asks for ${wants}, so its chip needs only one digit`);
+    assert.equal(
+      objectives.children[0].children.at(-1).style.minWidth,
+      `${String(wants).length}ch`,
+      'the chip reserved the wrong amount of room for a two digit goal',
+    );
+  }
 
   // Played rather than staged, because jelly is the one goal whose answer is
   // not in the event: what a clear was worth depends on what was under the

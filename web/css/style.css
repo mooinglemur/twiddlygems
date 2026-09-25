@@ -168,7 +168,10 @@ html, body {
      seal color, which is wider than a phone; scrolling them with the scrollbar
      hidden left the last one off the edge with nothing to say it was there. */
   flex-wrap: wrap;
-  justify-content: center;
+  /* From the left, so a goal stays where it was when another wraps to a
+     second row or a count loses a digit. Centered, the whole row shuffled
+     sideways every time one of them changed width. */
+  justify-content: flex-start;
   scrollbar-width: none;
 }
 #objectives::-webkit-scrollbar { display: none; }
@@ -189,7 +192,15 @@ html, body {
 }
 .objective.met { border-color: var(--ok); }
 .objective-art { display: block; flex: 0 0 auto; }
-.objective-count { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.58rem; }
+/* Tabular numerals so every digit is the same width, which is what lets the
+   chip reserve its room in `ch`; centered so what is left sits in the middle
+   of that room rather than hugging one end of it. */
+.objective-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  font-size: 1.58rem;
+  text-align: center;
+}
 .objective.met .objective-count { color: var(--ok); }
 
 /* ---- board ---- */
