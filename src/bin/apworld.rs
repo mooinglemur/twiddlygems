@@ -21,7 +21,7 @@ use std::path::Path;
 
 use twiddlygems::level::levels;
 use twiddlygems::options::{
-    Kind, Options, Setting, SETTINGS,
+    Kind, Options, Setting, INVENTORY_ITEMS, SETTINGS,
 };
 use twiddlygems::progression::{
     goal, item_name, item_pool, items, location_name, locations, requirement, Count, Item,
@@ -162,19 +162,28 @@ fn item_table(levels: usize) -> Json {
     // as a number, because it can depend on a setting, and the two ways of
     // saying it must not drift.
     let fresh = Options::default();
-    let pool = item_pool(levels, &fresh);
-    Json::Arr(
+    // Any seed: what a draw decides is which kinds the shared items come out
+    // as, never how many there are altogether, and it is the total this checks.
+    let pool = item_pool(levels, 0, &fresh);
+    let mut shared = 0;
+    let table = Json::Arr(
         items(levels)
             .into_iter()
             .map(|item| {
                 let counted = pool.iter().filter(|other| **other == item).count() as u32;
-                assert_eq!(
-                    copies(item).resolve(&fresh),
-                    counted,
-                    "the pool holds {counted} of {} at the default settings, which is not \
-                     what the table says",
-                    item_name(item),
-                );
+                match copies(item) {
+                    // How many of a shared item there are is a roll rather
+                    // than a number, so there is nothing to compare one
+                    // against. They are added up instead, below.
+                    Copies::Share { .. } => shared += counted,
+                    Copies::Fixed(count) => assert_eq!(
+                        count.resolve(&fresh),
+                        counted,
+                        "the pool holds {counted} of {} at the default settings, which is \
+                         not what the table says",
+                        item_name(item),
+                    ),
+                }
                 Json::Obj(vec![
                     ("name", Json::Str(item_name(item))),
                     ("id", Json::Num(AP_ID_BASE + item.id())),
@@ -184,7 +193,19 @@ fn item_table(levels: usize) -> Json {
                 ])
             })
             .collect(),
-    )
+    );
+    // However the kinds fell, the pool holds as many of them altogether as
+    // the setting asked for. This is the whole of what the two sides have to
+    // agree about: a multiworld rolls its own split with its own generator,
+    // and the number of items a world submits cannot be left to a roll.
+    assert_eq!(
+        shared,
+        fresh.inventory_items,
+        "the pool holds {shared} shared items at the default settings, which is not the \
+         {} the setting asks for",
+        fresh.inventory_items,
+    );
+    table
 }
 
 /// Every place an item can be found, and what it asks for first.
@@ -220,21 +241,34 @@ fn location_table(levels: usize) -> Json {
 /// item per move this becomes a setting rather than a number, because the
 /// apworld is generated once and read by everybody, so a count baked in here
 /// would be whatever the engine happened to be built with.
-fn copies(item: Item) -> Count {
+fn copies(item: Item) -> Copies {
     match item {
-        Item::Unlock(_) => Count::Exactly(1),
-        Item::Moves { .. } => Count::Exactly(1),
+        Item::Unlock(_) => Copies::Fixed(Count::Exactly(1)),
+        Item::Moves { .. } => Copies::Fixed(Count::Exactly(1)),
         // None in the pool. It is named and numbered because a run has to be
         // able to say what it was handed, and it arrives by topping up the
         // leftover locations rather than by being placed.
-        Item::Filler => Count::Exactly(0),
-        // None yet either, and for a different reason: how many a run carries
-        // is going to be a setting, and how they are split between the kinds
-        // another. Named and numbered ahead of that, because the datapackage
-        // is fixed and adding a name to it later is the thing that breaks
-        // seeds already rolled.
-        Item::Consumable(_) => Count::Exactly(0),
+        Item::Filler => Copies::Fixed(Count::Exactly(0)),
+        // The four of these split one total between them. Not a count each,
+        // because how many of a kind there are is not a number anybody wrote
+        // down: the setting says how many bonus items there are and the kinds
+        // are drawn at equal chance, so it is a roll.
+        Item::Consumable(_) => Copies::Share { of: INVENTORY_ITEMS },
     }
+}
+
+/// How many of an item a world puts in the pool, as the datapackage says it.
+///
+/// Two shapes, because there are two ways a count can be settled. Most items
+/// have one, either written down or read off a setting. The bonus items have
+/// none of their own: they share a total, and which of them each one of that
+/// total turns out to be is drawn where the pool is built. So the table names
+/// the total and leaves the split to whoever is building the pool, which is
+/// this engine for a solo run and the world's own generator for a multiworld.
+enum Copies {
+    Fixed(Count),
+    /// One of the kinds sharing the total that setting names.
+    Share { of: &'static str },
 }
 
 /// How much Archipelago should care about an item going missing.
@@ -299,7 +333,7 @@ fn rule(requirement: &Requirement) -> Json {
                 "args",
                 Json::Obj(vec![
                     ("item_name", Json::Str(item_name(*item))),
-                    ("count", count_json(*count)),
+                    ("count", count_json(Copies::Fixed(*count))),
                 ]),
             ),
             &[],
@@ -331,14 +365,21 @@ fn rule(requirement: &Requirement) -> Json {
 
 /// How many of an item a rule asks for: a number, or a pointer at the setting
 /// that decides.
-fn count_json(count: Count) -> Json {
-    match count {
-        Count::Exactly(count) => Json::Num(count),
-        Count::Setting(key) => Json::Obj(vec![
+fn count_json(copies: Copies) -> Json {
+    match copies {
+        Copies::Fixed(Count::Exactly(count)) => Json::Num(count),
+        Copies::Fixed(Count::Setting(key)) => Json::Obj(vec![
             ("resolver", Json::Str("FromOption".to_string())),
             ("option", Json::Str(class_of(key))),
             ("field", Json::Str("value".to_string())),
         ]),
+        // Every item naming the same total shares it, and the world draws the
+        // split. Not a `FromOption`: that resolver answers with the setting's
+        // own number, and what is wanted here is a share of it.
+        Copies::Share { of } => Json::Obj(vec![(
+            "share_of",
+            Json::Obj(vec![("option", Json::Str(class_of(of)))]),
+        )]),
     }
 }
 

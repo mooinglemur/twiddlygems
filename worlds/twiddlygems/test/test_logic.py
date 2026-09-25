@@ -4,12 +4,17 @@ from . import TwiddlyGemsTestBase
 from .. import GAME_DATA, ITEMS_BY_NAME, LOCATIONS, SETTINGS
 
 
-def count_of(name: str):
-    """How many of an item the pool asks for: a number, or a pointer at a
-    setting for the world to follow."""
-    return ITEMS_BY_NAME[name]["count"]
-
 LEVELS = GAME_DATA["levels"]
+
+#: The items with no count of their own, which split a total between them. How
+#: many of one of these a world holds is a roll rather than a number, so they
+#: are the exception to every check below that counts copies.
+SHARED = [
+    item["name"]
+    for item in ITEMS_BY_NAME.values()
+    if isinstance(item["count"], dict) and "share_of" in item["count"]
+]
+
 UNLOCKS = [
     "Horizontal Line Clear",
     "Vertical Line Clear",
@@ -123,12 +128,25 @@ class TestDefault(TwiddlyGemsTestBase):
             by_name[item.name] = by_name.get(item.name, 0) + 1
 
         for name, count in by_name.items():
-            if name == "Filler":
+            if name == "Filler" or name in SHARED:
                 continue
             self.assertEqual(
                 count, 1, f"{name} was submitted {count} times to fill the world out"
             )
         self.assertGreater(by_name.get("Filler", 0), 0, "nothing filled the leftovers")
+
+        # The shared items are exempt above because how many of each there are
+        # is a roll. What is not a roll is how many there are altogether: the
+        # setting says so, and a world that submitted a different number would
+        # be handing the player a different game than they asked for.
+        self.assertEqual(
+            sum(by_name.get(name, 0) for name in SHARED),
+            self.world.options.inventory_items.value,
+            "the world submitted a different number of bonus items than were asked for",
+        )
+        # And every one of the four has to be able to come up, or a kind of
+        # item would be in the table and never in anybody's game.
+        self.assertGreater(len(SHARED), 1, "nothing is sharing a total, so this checks nothing")
 
     def test_a_chain_is_open_to_anybody(self) -> None:
         # A chain is made on whatever board is in front of you, and the
@@ -142,21 +160,38 @@ class TestDefault(TwiddlyGemsTestBase):
         # the setting that decides rather than as a number, because the
         # apworld is generated once and read by everybody.
         #
-        # Nothing uses it at the moment: every item is one of one. The
+        # No item uses it at the moment: the ones with a count have a number,
+        # and the ones without share a total, which is a different shape. The
         # resolver still has to work, because the settings that need it are
-        # the next ones in, and an unused path that nothing checks is one
-        # that breaks quietly. So this asks it directly, with a pointer built
-        # here rather than one taken from the tables.
-        self.assertEqual(self.world._count(count_of("Rainbow")), 1)
-        self.assertEqual(self.world._count(count_of("Level 4 Moves Upgrade")), 1)
+        # the next ones in, and an unused path that nothing checks is one that
+        # breaks quietly. So this asks it directly, with a pointer built here
+        # rather than one taken from the tables.
+        self.assertEqual(self.world._count(ITEMS_BY_NAME["Rainbow"]), 1)
+        self.assertEqual(self.world._count(ITEMS_BY_NAME["Level 4 Moves Upgrade"]), 1)
 
         goal = next(setting for setting in SETTINGS if setting["key"] == "goal")
         pointer = {"resolver": "FromOption", "option": goal["ap_class"], "field": "value"}
         self.assertEqual(
-            self.world._count(pointer),
+            self.world._count({"name": "made up", "count": pointer}),
             self.world.options.goal.value,
             "a count did not follow its pointer to the setting",
         )
+
+    def test_the_items_that_share_a_total_split_it(self) -> None:
+        # Four kinds of bonus item and one setting saying how many there are
+        # altogether. Which kind each one is comes out of a draw, so what can
+        # be asked of the split is that it adds up and that it stays put: the
+        # pool is counted more than once, and how many items there are decides
+        # which locations this world has at all. A split that answered
+        # differently the second time would build a world around one set of
+        # places and fill a different one.
+        wanted = self.world.options.inventory_items.value
+        self.assertGreater(wanted, 0, "the default run asks for no bonus items")
+
+        drawn = self.world._shares()
+        self.assertEqual(sorted(drawn), sorted(SHARED))
+        self.assertEqual(sum(drawn.values()), wanted, "the split does not add up to the total")
+        self.assertEqual(drawn, self.world._shares(), "the split was rolled twice")
 
     def test_the_goal_is_the_end_of_the_ladder(self) -> None:
         # Beaten with everything, and not before. A goal that asks for nothing

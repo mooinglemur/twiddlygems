@@ -190,8 +190,9 @@ for (const [name, metrics] of [
     // clear and chain but not these can come up short of the five.
     // And a few of each thing there is to spend, because an empty bottom bar
     // is the one state of it these shots would otherwise always be of. Keyed
-    // by the engine's own code for each kind, the same as the save writes it.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, consumables: { 0: 3, 1: 1, 2: 2, 3: 12 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090, 4100, 4110, 4120] }))`,
+    // by the engine's own code for each kind, the same as the save writes it,
+    // and ten of them altogether, which is what a run is dealt by default.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, consumables: { 0: 3, 1: 1, 2: 2, 3: 4 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090, 4100, 4110, 4120] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only

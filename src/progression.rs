@@ -698,7 +698,12 @@ pub fn locations(level_count: usize) -> Vec<Location> {
 /// disagree about, and `the_pool_fits_in_the_locations_there_are` is where
 /// that is caught rather than here.
 pub fn ap_gems_per_level(levels: usize, options: &Options) -> u32 {
-    let needed = ap_gems_needed(levels, item_pool(levels, options).len());
+    // Any seed: the draw decides which kinds the bonus items are, never how
+    // many there are, so the pool is the same length whatever it rolls. That
+    // matters because this number decides which locations a world has at all,
+    // and a world's locations cannot depend on a run's seed.
+    // `the_pool_is_the_same_size_whatever_it_rolls` is what holds it.
+    let needed = ap_gems_needed(levels, item_pool(levels, 0, options).len());
     options.ap_gems.max(needed).min(AP_GEMS_PER_LEVEL)
 }
 
@@ -1014,7 +1019,7 @@ pub fn solo_item_at(
 /// The whole pool a run has to find, in the order a solo placement lays it
 /// out: the unlocks first, because everything else waits on them, then one
 /// moves upgrade per level.
-pub fn item_pool(levels: usize, _options: &Options) -> Vec<Item> {
+pub fn item_pool(levels: usize, seed: u64, options: &Options) -> Vec<Item> {
     UNLOCKS
         .iter()
         .map(|special| Item::Unlock(*special))
@@ -1026,8 +1031,35 @@ pub fn item_pool(levels: usize, _options: &Options) -> Vec<Item> {
             // few items with nowhere but the chains.
             (0..levels).rev().map(|level| Item::Moves { level }),
         )
+        // Last, because nothing waits on one. They are worth having and
+        // needed by nothing, so they go down into whatever the progression
+        // left over rather than taking a place something else was going to
+        // want.
+        .chain(inventory_pool(seed, options))
         .collect()
 }
+
+/// The bonus items a run is given, and which kind each one turns out to be.
+///
+/// The setting says how many there are altogether; which kind each one is, is
+/// a draw at equal chance. A total and a draw rather than a count per kind,
+/// because four counts on the setup screen is five controls for one idea, and
+/// because a run that comes out rocket-heavy and another that comes out
+/// rainbow-heavy are more interesting than every run getting three, three,
+/// two and two.
+///
+/// Drawn off a stream of its own, so which kinds a run is given does not shift
+/// when something changes about where the fill puts things.
+fn inventory_pool(seed: u64, options: &Options) -> Vec<Item> {
+    let mut rng = Rng::new(seed ^ INVENTORY_STREAM);
+    (0..options.inventory_items)
+        .map(|_| Item::Consumable(CONSUMABLES[rng.below(CONSUMABLES.len() as u32) as usize]))
+        .collect()
+}
+
+/// Splits the run's seed for [`inventory_pool`]. See [`crate::game`] on why a
+/// stream gets its own constant rather than a number added to the seed.
+const INVENTORY_STREAM: u64 = 0x_4954_454d_5f5f_5f5f;
 
 /// Where a run dealt from `seed` finds each item, as one entry per location.
 ///
@@ -1070,7 +1102,7 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     let mut inventory = Inventory::empty();
 
     let mut rng = Rng::new(seed);
-    for item in item_pool(levels, options) {
+    for item in item_pool(levels, seed, options) {
         expand(&usable, levels, &inventory, &mut reached, options);
         let open: Vec<usize> = usable
             .iter()
@@ -1251,6 +1283,70 @@ mod tests {
         assert_eq!(inventory.consumables(Consumable::Rocket), 5);
         inventory.restore_consumables(Consumable::Rocket, 1);
         assert_eq!(inventory.consumables(Consumable::Rocket), 1, "a save could not spend any");
+    }
+
+    #[test]
+    fn the_pool_holds_the_bonus_items_the_setting_asked_for() {
+        // The setting is a total across the four kinds, and which kind each
+        // one is comes out of a draw. So what a run is owed is the count, and
+        // what it is not owed is any particular split.
+        for wanted in [0, 1, 10, 15] {
+            let options = Options { inventory_items: wanted, ..Options::default() };
+            let pool = item_pool(13, 7, &options);
+            let held = pool.iter().filter(|item| matches!(item, Item::Consumable(_))).count();
+            assert_eq!(held as u32, wanted, "asked for {wanted} bonus items and got {held}");
+        }
+    }
+
+    #[test]
+    fn the_pool_is_the_same_size_whatever_it_rolls() {
+        // The draw decides which kinds a run gets, never how many items there
+        // are. That is load bearing: how many there are sets how many
+        // Archipelago gems a level carries, which decides which locations the
+        // world has at all, and a world's locations cannot depend on the seed
+        // a player happens to be dealt.
+        let options = Options::default();
+        let sizes: Vec<usize> =
+            (0..64u64).map(|seed| item_pool(13, fill_seed(seed), &options).len()).collect();
+        let first = sizes[0];
+        assert!(
+            sizes.iter().all(|size| *size == first),
+            "the pool came out between {:?} and {:?} items depending on the seed",
+            sizes.iter().min(),
+            sizes.iter().max(),
+        );
+        assert_eq!(ap_gems_per_level(13, &options), ap_gems_per_level(13, &options));
+    }
+
+    #[test]
+    fn the_bonus_items_are_drawn_across_every_kind() {
+        // Equal chance, which is a claim about the spread rather than about
+        // any one run: over enough seeds every kind turns up, and none of them
+        // runs away with it. Without this a draw that always answered with the
+        // first kind would pass every other test here, since nothing else
+        // cares which kind an item is.
+        let options = Options::default();
+        let mut seen = [0usize; CONSUMABLES.len()];
+        let mut runs = 0;
+        for seed in 0..200u64 {
+            for item in item_pool(13, fill_seed(seed), &options) {
+                if let Item::Consumable(kind) = item {
+                    seen[kind.code() as usize] += 1;
+                    runs += 1;
+                }
+            }
+        }
+        // A quarter each, give or take. Wide bounds on purpose: this is here
+        // to catch a draw that is stuck or lopsided, not to measure a
+        // generator.
+        let share = runs / CONSUMABLES.len();
+        for (at, count) in seen.iter().enumerate() {
+            assert!(
+                *count > share / 2 && *count < share * 2,
+                "{:?} came up {count} times in {runs}, against {share} for an even spread",
+                CONSUMABLES[at],
+            );
+        }
     }
 
     #[test]
@@ -1439,7 +1535,7 @@ mod tests {
         // improved as much as the others.
         for (levels, seed, options) in every_run() {
             let placed = solo_placement(levels, seed, &options);
-            let mut left = item_pool(levels, &options);
+            let mut left = item_pool(levels, seed, &options);
             for held in placed.iter().flatten() {
                 if let Some(at) = left.iter().position(|wanted| wanted == held) {
                     left.swap_remove(at);
@@ -1852,7 +1948,9 @@ mod tests {
             setups().into_iter().map(move |options| (*levels, options))
         }) {
             let places = locations(levels).len();
-            let pool = item_pool(levels, &options).len();
+            // Any seed: a draw decides which kinds the bonus items are, never
+            // how many there are, and it is how many that has to fit.
+            let pool = item_pool(levels, 0, &options).len();
             assert!(
                 pool <= places,
                 "{levels} levels as {options:?} give {pool} items and only {places} \

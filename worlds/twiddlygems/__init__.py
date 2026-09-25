@@ -139,6 +139,10 @@ class TwiddlyGemsWorld(World):
     item_name_to_id = {item["name"]: item["id"] for item in ITEMS}
     location_name_to_id = {at["name"]: at["id"] for at in LOCATIONS}
 
+    #: The split of the items that share a total, once it has been rolled. See
+    #: `_shares`, which rolls it and explains why it is only ever rolled once.
+    _shares_drawn: dict[str, int] | None = None
+
     def _ap_gems_per_level(self) -> int:
         """How many of each level's ten Archipelago gems this run plays over.
 
@@ -153,7 +157,7 @@ class TwiddlyGemsWorld(World):
         location rather than only the ones a solo fill likes.
         """
         levels = len(GAME_DATA["levels"])
-        pool = sum(self._count(item["count"]) for item in ITEMS)
+        pool = sum(self._count(item) for item in ITEMS)
         elsewhere = sum(1 for at in LOCATIONS if "gem_index" not in at)
         needed = max(0, -(-(pool - elsewhere) // levels)) if levels else 0
         return min(
@@ -195,22 +199,70 @@ class TwiddlyGemsWorld(World):
         """
         return TOP_UP_NAMES[0]
 
-    def _count(self, count: Any) -> int:
+    def _option(self, ap_class: str) -> int:
+        """What one setting is set to, named by the class the engine gave it.
+
+        The tables point at settings by class path rather than by key, because
+        that is what the rules do, and one way of naming a setting is enough.
+        """
+        key = next(setting["key"] for setting in SETTINGS if setting["ap_class"] == ap_class)
+        return int(getattr(self.options, key).value)
+
+    def _shares(self) -> dict[str, int]:
+        """How the items that share a total fall across the kinds sharing it.
+
+        Some items have no count of their own. The bonus items are four kinds
+        splitting one total: the setting says how many there are altogether,
+        and which kind each one turns out to be is a draw at equal chance. So
+        the split is rolled, here, with this slot's own generator, rather than
+        being written into a datapackage that every player reads.
+
+        Rolled once and kept. The pool gets counted more than once, and
+        `_ap_gems_per_level` reads the count to decide which locations this
+        world has at all: a second roll answering differently would hand the
+        run a different set of places to look than the one it built.
+        """
+        if self._shares_drawn is not None:
+            return self._shares_drawn
+
+        drawn: dict[str, int] = {}
+        # By the total they name, so any number of items can share one, and
+        # a second group sharing a different total would work the same way
+        # without anything here being told about it.
+        sharing: dict[str, list[str]] = {}
+        for item in ITEMS:
+            count = item["count"]
+            share = count.get("share_of") if isinstance(count, dict) else None
+            if share is None:
+                continue
+            drawn[item["name"]] = 0
+            sharing.setdefault(share["option"], []).append(item["name"])
+
+        for ap_class, names in sharing.items():
+            for name in self.random.choices(names, k=self._option(ap_class)):
+                drawn[name] += 1
+
+        self._shares_drawn = drawn
+        return drawn
+
+    def _count(self, item: dict[str, Any]) -> int:
         """How many of an item this run's pool holds.
 
         A number for most, and for some a pointer at the setting that decides,
-        which Archipelago's own resolver reads. Either way the engine said it;
-        nothing here knows which items depend on what.
+        which Archipelago's own resolver reads. For the ones with no count of
+        their own it is a share of somebody else's total; see `_shares`. Either
+        way the engine said which; nothing here knows what depends on what.
         """
+        count = item["count"]
         if isinstance(count, dict):
+            if "share_of" in count:
+                return self._shares()[item["name"]]
             return int(FromOption.from_dict(count).resolve(self))
         return int(count)
 
     def create_items(self) -> None:
         pool = [
-            self.create_item(item["name"])
-            for item in ITEMS
-            for _ in range(self._count(item["count"]))
+            self.create_item(item["name"]) for item in ITEMS for _ in range(self._count(item))
         ]
         # A world submits as many items as it has locations. The game has more
         # places to look than things to find, which is the shape that leaves

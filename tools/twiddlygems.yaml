@@ -1,9 +1,11 @@
 # A player file for `make apworld-gen`, which rolls a real seed to prove the
 # world generates rather than only that its rules hold.
 #
-# Nothing is set under the game's own heading because nothing is an option
-# yet: the ladder, the pool and the goal are all fixed in this first pass.
-# When there are options, this is where they would be tried.
+# Set away from the defaults on purpose. A generation at the defaults proves
+# the ordinary case, which is the case a bug is least likely to be hiding in:
+# the bonus items are asked for at their ceiling, which is the pool at its
+# fullest and the hardest thing for the world to find room for.
 name: Tester
 game: Twiddly Gems
-Twiddly Gems: {}
+Twiddly Gems:
+  inventory_items: 15

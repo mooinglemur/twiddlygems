@@ -29,11 +29,22 @@ pub struct Options {
     /// One refilled gem in this many is an Archipelago gem, while the level
     /// still has checks waiting in them.
     pub ap_gem_odds: u32,
+    /// How many bonus items the run has to find, over all four kinds.
+    ///
+    /// A total rather than four counts. Which kind each one turns out to be is
+    /// drawn as it is added to the pool, at equal chance, so a run leans one
+    /// way or another without anybody having to say how.
+    pub inventory_items: u32,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { goal: Goal::GoldOnLastLevel, ap_gems: 1, ap_gem_odds: 64 }
+        Options {
+            goal: Goal::GoldOnLastLevel,
+            ap_gems: 1,
+            ap_gem_odds: 64,
+            inventory_items: 10,
+        }
     }
 }
 
@@ -90,6 +101,7 @@ impl Options {
             GOAL => Some(self.goal.value()),
             AP_GEMS => Some(self.ap_gems),
             AP_GEM_ODDS => Some(self.ap_gem_odds),
+            INVENTORY_ITEMS => Some(self.inventory_items),
             _ => None,
         }
     }
@@ -104,6 +116,7 @@ impl Options {
         match setting.key {
             AP_GEMS => self.ap_gems = value,
             AP_GEM_ODDS => self.ap_gem_odds = value,
+            INVENTORY_ITEMS => self.inventory_items = value,
             GOAL => match Goal::from_value(value) {
                 Some(goal) => self.goal = goal,
                 None => return false,
@@ -120,6 +133,8 @@ pub const AP_GEMS: &str = "ap_gems";
 pub const AP_GEM_ODDS: &str = "ap_gem_odds";
 /// The key of the setting that decides [`Options::goal`].
 pub const GOAL: &str = "goal";
+/// The key of the setting that decides [`Options::inventory_items`].
+pub const INVENTORY_ITEMS: &str = "inventory_items";
 
 /// One setting: everything needed to show it, check it and write it down.
 pub struct Setting {
@@ -238,6 +253,30 @@ pub static SETTINGS: &[Setting] = &[
         // three playthroughs of a level for its single check, and one in 512
         // cost five.
         default: 64,
+    },
+    Setting {
+        key: INVENTORY_ITEMS,
+        label: "Inventory items",
+        about: "How many bonus items to spend are hidden in the world, over \
+                all four kinds. Which kind each one is comes out at equal \
+                chance, so a run leans one way or another on its own.",
+        // A total and nothing more. Four counts, or four weights beside the
+        // total, would put five controls on the setup screen for one idea; an
+        // even chance says the same thing in one, and a run still comes out
+        // with a mix of its own because the draw is a draw.
+        //
+        // Fifteen at the top because these have to fit somewhere, and the
+        // ceiling is set by the leanest run rather than by the usual one. The
+        // shortest ladder the tests sweep is eight levels, and asking for no
+        // Archipelago gems leaves that run thirty-three places its fill will
+        // use; five unlocks and eight moves upgrades take thirteen of them.
+        // Twenty is therefore the most that fits exactly, and exactly is no
+        // place to put a ceiling, so this stops five short of it. Room to
+        // raise when the ladder grows: `the_pool_fits_in_the_locations_there_are`
+        // and `the_solo_placement_finds_a_home_for_the_whole_pool` sweep this
+        // setting at its ends and are what would say so.
+        kind: Kind::Range { low: 0, high: 15 },
+        default: 10,
     },
     // A level's moves upgrade has no setting of its own yet. Each level
     // declares what its upgrade is worth and one item carries the whole of it,

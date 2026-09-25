@@ -650,6 +650,7 @@ mod tests {
     use super::*;
     use crate::board::{Gem, Pos, Special};
     use crate::game::Phase;
+    use crate::progression::CONSUMABLES;
     use crate::level::Objective;
     use crate::rules::SpecialSet;
 
@@ -1289,6 +1290,46 @@ mod tests {
         }
         let visits = session.checked().iter().filter(|id| **id == chain).count();
         assert_eq!(visits, 1, "the location was checked {visits} times");
+    }
+
+    #[test]
+    fn a_run_finds_bonus_items_and_they_turn_up_in_what_it_is_carrying() {
+        // The loop the player sees: the pool holds some, the fill puts them
+        // somewhere, and checking that somewhere leaves the bar along the
+        // bottom with something in it. Every link of that is tested on its
+        // own; this is the one that says they are joined up.
+        let mut session = Session::new(7);
+        assert!(
+            CONSUMABLES.iter().all(|kind| session.consumables(*kind) == 0),
+            "a run opened already carrying something to spend",
+        );
+
+        let holding: Vec<(Location, Consumable)> = locations(session.level_count())
+            .into_iter()
+            .filter_map(|at| match session.holds(at) {
+                Some(Item::Consumable(kind)) => Some((at, kind)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            !holding.is_empty(),
+            "a run set up the usual way hid no bonus items anywhere in the world",
+        );
+
+        let mut owed = [0u32; CONSUMABLES.len()];
+        for (at, kind) in &holding {
+            owed[kind.code() as usize] += 1;
+            session.restore(at.id());
+        }
+        for kind in CONSUMABLES {
+            assert_eq!(
+                session.consumables(kind),
+                owed[kind.code() as usize],
+                "the run found {} of {kind:?} and is carrying {}",
+                owed[kind.code() as usize],
+                session.consumables(kind),
+            );
+        }
     }
 
     #[test]

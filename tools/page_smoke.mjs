@@ -1367,6 +1367,14 @@ let flightFrames = 0;
   const slots = inventory.children.map((item) => item.children[0]);
   assert.equal(slots.length, kinds.length, `the bar has ${slots.length} slots for ${kinds.length} things`);
 
+  // Emptied first, because by now this run has played several levels and
+  // found some of these: what is being checked below is how a slot with
+  // nothing in it looks, not what the fill happened to hand over.
+  for (const kind of kinds) {
+    engine.restoreConsumables(kind, 0);
+  }
+  pump(1);
+
   // Every kind has a slot from the start, whether or not the run has any.
   // What a run is out of is worth knowing, and a slot appearing later would
   // shove the rest along under a thumb already coming down.
