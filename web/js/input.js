@@ -4,7 +4,13 @@
 
 const SWIPE_FRACTION = 0.3;
 
-export function attachInput(canvas, renderer, engine, onAction) {
+/**
+ * `aimed` is asked about a cell before anything else happens to it, and
+ * answers whether it took the tap. It is how something armed out of the
+ * inventory is spent: the player picked the item, and this tap is them
+ * picking the cell.
+ */
+export function attachInput(canvas, renderer, engine, onAction, aimed = null) {
   let drag = null;
 
   const begin = (event) => {
@@ -13,6 +19,13 @@ export function attachInput(canvas, renderer, engine, onAction) {
     }
     const cell = renderer.cellFromPoint(event.clientX, event.clientY);
     if (!cell) {
+      return;
+    }
+    // Spent where it was pointed, and no drag behind it: something aimed goes
+    // at one cell rather than being swiped between two, and a swap started
+    // from under it would be a move the player never meant to make.
+    if (aimed && aimed(cell)) {
+      event.preventDefault();
       return;
     }
     drag = { id: event.pointerId, cell, x: event.clientX, y: event.clientY, swiped: false };

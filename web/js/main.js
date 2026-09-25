@@ -2,7 +2,7 @@
 // loop. All gameplay decisions live in wasm; this file only feeds it time and
 // input and asks what to draw.
 
-import { EventKind, Special, loadEngine, Phase, Status } from './engine.js';
+import { AIMED, Consumable, EventKind, Special, loadEngine, Phase, Status } from './engine.js';
 import { Audio } from './audio.js';
 import { GOAL_EFFECT_MS, Renderer } from './render.js';
 import { attachInput } from './input.js';
@@ -42,6 +42,7 @@ const dom = {
   scoreMarks: document.getElementById('score-marks'),
   moves: document.getElementById('moves'),
   objectives: document.getElementById('objectives'),
+  inventory: document.getElementById('inventory'),
   feed: document.getElementById('feed'),
   overlay: document.getElementById('overlay'),
   overlayTitle: document.getElementById('overlay-title'),
@@ -63,6 +64,7 @@ function readSave() {
     level: 0,
     checked: [],
     bestScores: [],
+    consumables: {},
     options: {},
   };
   try {
@@ -85,6 +87,14 @@ function readSave() {
       // locations: a level cleared below its silver checks the same one
       // whatever it scored, so the number has to be written down.
       bestScores: Array.isArray(save.bestScores) ? save.bestScores.filter(Number.isFinite) : [],
+      // What the run still has to spend. Not derivable from the locations
+      // either, and for the opposite reason to the scores: these are the one
+      // holding that goes down, so what was found says nothing about what is
+      // left. Under Archipelago this will live in the multiworld's own data
+      // store instead, so a player logging in from another browser gets their
+      // run back; in solo there is nowhere but here.
+      consumables:
+        save.consumables && typeof save.consumables === 'object' ? save.consumables : {},
       // By key rather than by position, because a setting added later would
       // shift the positions and quietly hand a returning run somebody else's
       // settings. A key the engine no longer has is simply skipped.
@@ -113,6 +123,13 @@ function writeSave(engine, seed) {
         // level cleared below its silver checks the same one whatever it
         // scored.
         bestScores: engine.bestScores,
+        // And what it still has to spend, by the engine's own code for each
+        // kind. By code rather than by position for the same reason the
+        // settings are saved by key: a fifth kind appended later must not
+        // hand a returning run somebody else's stock.
+        consumables: Object.fromEntries(
+          Object.values(Consumable).map((kind) => [kind, engine.consumables(kind)]),
+        ),
         // And what sort of run it is, since the settings decide how many
         // items there are and what the rules ask for. A reload that forgot
         // them would rebuild a different game around the same saved finds.
@@ -179,6 +196,11 @@ async function boot() {
     engine.restore(id);
   }
   save.bestScores.forEach((score, index) => engine.restoreBestScore(index, score));
+  for (const [kind, held] of Object.entries(save.consumables)) {
+    if (Number.isInteger(held) && held > 0) {
+      engine.restoreConsumables(Number(kind), held);
+    }
+  }
   if (save.level > 0) {
     engine.loadLevel(save.level);
   }
@@ -340,6 +362,23 @@ async function boot() {
     }
   };
 
+  /// Everything the last call into the engine raised: drawn, sounded, logged.
+  ///
+  /// Called for the frame's own tick and for anything the player sets off in
+  /// between, because the engine reports what the last call raised and nothing
+  /// else. Spending a rainbow raises its whole first clear inside that call,
+  /// so leaving it for the next tick to notice would drop every pop, every
+  /// piece of debris and every mote of it on the floor.
+  const consume = (now) => {
+    const events = engine.drainEvents();
+    if (events.length === 0) {
+      return;
+    }
+    renderer.addEvents(events, now);
+    playEvents(events);
+    logItems(events);
+  };
+
   let hintAt = performance.now() + HINT_DELAY_MS;
   let resultShown = false;
   /** 'title' while the menu is up, 'solo' once a run is being played. */
@@ -351,6 +390,8 @@ async function boot() {
     renderer.hint = null;
     rebuildHud();
     hud.hideOverlay();
+    // Whatever was armed was armed at the board that just went away.
+    hud.disarm();
     hintAt = performance.now() + HINT_DELAY_MS;
     resultShown = false;
     lastFound = null;
@@ -404,14 +445,84 @@ async function boot() {
     renderer.hint = null;
     resultShown = false;
     rebuildHud();
+    hud.disarm();
     hud.clearFeed();
     showTitle();
   };
 
-  attachInput(dom.canvas, renderer, engine, () => {
+  /// A move was made, so the hint goes and the clock on the next one starts
+  /// again.
+  const moved = () => {
     renderer.hint = null;
     hintAt = performance.now() + HINT_DELAY_MS;
+  };
+
+  /**
+   * Spends whatever is armed on the cell that was tapped, or says the tap was
+   * not ours.
+   *
+   * Taking the tap either way while something is armed. A refusal means the
+   * cell can do nothing with it, a rainbow pointed at an Archipelago gem being
+   * the one that matters: the run is not charged, and it stays armed so the
+   * next cell gets it. What it must not do is fall through and select the gem,
+   * which would put the player mid-swap having meant to aim.
+   */
+  const spendOn = (cell) => {
+    if (hud.armed === null) {
+      return false;
+    }
+    if (engine.useConsumable(hud.armed, cell)) {
+      hud.disarm();
+      // Before anything else looks at the engine: the whole first clear was
+      // raised inside that call and the next tick would clear it away.
+      consume(performance.now());
+      moved();
+      writeSave(engine, seed);
+    }
+    return true;
+  };
+
+  /// Tapping a slot arms it, or puts it away if it was already armed. The
+  /// cluster aims itself, so there is nothing to arm: it goes off where it
+  /// stands.
+  hud.buildInventory((kind) => {
+    // An empty slot is nothing to arm. The button is disabled too, so this is
+    // the belt to that brace: the count comes off the engine and the slot is
+    // only redrawn once a frame, so a tap can land on a slot that emptied
+    // between the two.
+    if (engine.consumables(kind) === 0) {
+      return;
+    }
+    if (!AIMED.has(kind)) {
+      hud.disarm();
+      if (engine.useConsumable(kind)) {
+        consume(performance.now());
+        moved();
+        writeSave(engine, seed);
+      }
+      return;
+    }
+    hud.arm(kind);
   });
+
+  // Anywhere but the board puts an armed item away, which is the way out of
+  // having armed one. The board is where it goes, and the slot it came out of
+  // has its own handler that toggles it, so neither of those counts.
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (hud.armed === null || dom.canvas.contains?.(event.target)) {
+        return;
+      }
+      if (hud.armedSlot()?.contains?.(event.target)) {
+        return;
+      }
+      hud.disarm();
+    },
+    { capture: true },
+  );
+
+  attachInput(dom.canvas, renderer, engine, moved, spendOn);
 
   // The board is re-laid-out rather than stretched, so a rotation or a
   // keyboard appearing keeps whole pixels per cell.
@@ -490,12 +601,7 @@ async function boot() {
     }
 
     engine.update(dt);
-    const events = engine.drainEvents();
-    if (events.length > 0) {
-      renderer.addEvents(events, now);
-      playEvents(events);
-      logItems(events);
-    }
+    consume(now);
 
     if (engine.phase !== Phase.IDLE) {
       hintAt = now + HINT_DELAY_MS;

@@ -188,7 +188,10 @@ for (const [name, metrics] of [
     // default setting). An unlock can land in one, because collecting one
     // asks only for being able to play its level, so a run claiming every
     // clear and chain but not these can come up short of the five.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090, 4100, 4110, 4120] }))`,
+    // And a few of each thing there is to spend, because an empty bottom bar
+    // is the one state of it these shots would otherwise always be of. Keyed
+    // by the engine's own code for each kind, the same as the save writes it.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, consumables: { 0: 3, 1: 1, 2: 2, 3: 12 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090, 4100, 4110, 4120] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only
@@ -226,6 +229,31 @@ for (const [name, metrics] of [
   });
 
   await shoot(`${name}-01-fresh`);
+
+  // Something out of the bottom bar: armed and waiting for a cell, then
+  // spent on one and caught in the air on its way up out of the bar. The
+  // board is put back afterwards, so everything below is photographed on the
+  // same deal it always was.
+  const slot = await evaluate(`
+    (() => {
+      const r = document.querySelectorAll('.consumable')[0].getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()
+  `);
+  await gesture(slot.x, slot.y);
+  await sleep(200);
+  await shoot(`${name}-01-armed`);
+
+  const aimed = at(2, 4);
+  await gesture(aimed.x, aimed.y);
+  // Part way up: a rocket spent out of the bar has the whole board to cross,
+  // so this catches it over the gems rather than at either end.
+  await sleep(700);
+  await shoot(`${name}-01-spent`);
+  await sleep(1600);
+  await evaluate(`document.getElementById('retry-button').click()`);
+  await evaluate(`window.twiddlygems.engine.restoreConsumables(0, 3)`);
+  await sleep(400);
 
   const selected = at(4, 3);
   await gesture(selected.x, selected.y);

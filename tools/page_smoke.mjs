@@ -20,12 +20,19 @@ const FRAMES = 120;
 // ---- the stub browser ----
 
 const calls = new Proxy({}, { get: (target, key) => target[key] ?? 0 });
+/// The effects layer counts separately from the board, so a check can ask
+/// whether something was drawn *there* rather than anywhere. Everything that
+/// crosses the page rather than sitting on the board goes here: the motes a
+/// clear sends to its goal, and the rockets spent out of the bottom bar.
+const fxCalls = new Proxy({}, { get: (target, key) => target[key] ?? 0 });
 const context2d = stubContext();
 const listeners = new Map();
 const elements = new Map();
 let canvas;
+let fxSurface;
+let fxContext;
 
-function stubContext() {
+function stubContext(into = calls) {
   const ctx = {};
   const methods = [
     'setTransform', 'clearRect', 'save', 'restore', 'beginPath', 'closePath', 'moveTo',
@@ -34,7 +41,12 @@ function stubContext() {
   ];
   for (const name of methods) {
     ctx[name] = () => {
-      calls[name] = (calls[name] ?? 0) + 1;
+      into[name] = (into[name] ?? 0) + 1;
+      // The board's tally counts everything, so a check that only cares that
+      // something was drawn at all keeps working whichever surface it went to.
+      if (into !== calls) {
+        calls[name] = (calls[name] ?? 0) + 1;
+      }
     };
   }
   ctx.createLinearGradient = () => ({ addColorStop() {} });
@@ -94,6 +106,15 @@ function stubElement(id) {
       }
       this.parentNode = null;
     },
+    // Whether something is inside something else, which is how the page
+    // decides that a tap landed on the board, or on the slot an item came out
+    // of, rather than somewhere that means "never mind".
+    contains(node) {
+      if (node === this) {
+        return true;
+      }
+      return this.children.some((child) => child?.contains?.(node) === true);
+    },
     scrollHeight: 0,
     scrollTop: 0,
     // Kept on the element as well as in the global map: every element the page
@@ -115,14 +136,23 @@ function stubElement(id) {
     removeAttribute(name) { delete this.attributes[name]; },
     setPointerCapture() {},
     releasePointerCapture() {},
-    getContext() { return element === canvas ? context2d : stubContext(); },
+    getContext() {
+      if (element === canvas) {
+        return context2d;
+      }
+      if (element === fxSurface) {
+        fxContext ??= stubContext(fxCalls);
+        return fxContext;
+      }
+      return stubContext();
+    },
   };
   return element;
 }
 
 for (const id of [
   'app', 'board', 'fx', 'stage', 'level-number', 'level-name', 'score', 'score-box', 'score-marks',
-  'moves', 'objectives', 'feed',
+  'moves', 'objectives', 'inventory', 'feed',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons',
   'tracker', 'tracker-items', 'level-list',
   'levels-button', 'retry-button', 'sound-button',
@@ -133,6 +163,7 @@ for (const id of [
 }
 canvas = elements.get('board');
 canvas.parentElement = elements.get('stage');
+fxSurface = elements.get('fx');
 // The overlay starts hidden in the markup; the stub has to agree.
 elements.get('overlay').classList.add('hidden');
 
@@ -149,14 +180,14 @@ const store = new Map();
 const windowListeners = new Map();
 /// Acts like someone touching the page. Honors `{ once: true }`, because
 /// whether a listener stays registered is exactly what some of this checks.
-const gesture = (type) => {
+const gesture = (type, event = {}) => {
   const list = windowListeners.get(type) ?? [];
   windowListeners.set(
     type,
     list.filter((entry) => !entry.once),
   );
   for (const entry of list) {
-    entry.handler({ type });
+    entry.handler({ type, ...event });
   }
 };
 globalThis.window = {
@@ -1293,11 +1324,11 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
 // A rocket turns the short way round.
 //
-// This is the half of its rotation that can be got at: the easing itself
-// needs a rocket in the air, and no board in this whole run ever mints one,
-// so that part is checked by tracing a real flight in a browser instead. What
-// is here is the piece whose failure is the loudest: a rocket asked to turn
-// ten degrees anticlockwise going the other three hundred and fifty instead.
+// Half of its rotation, and the piece whose failure is the loudest: a rocket
+// asked to turn ten degrees anticlockwise going the other three hundred and
+// fifty instead. The easing that carries it there is traced further down, on
+// a rocket spent out of the inventory, which is the only way a rocket gets
+// into the air on this run: no board here ever mints one.
 {
   const { shortestTurn } = await import(path.resolve('web/js/render.js'));
   const TAU = Math.PI * 2;
@@ -1316,9 +1347,199 @@ click(overlayButton('Close'), 'the level picker has no way out');
   }
 }
 
+// ---- what the run has to spend ----
+//
+// The bottom bar's four slots: what they show, what arming one does, and what
+// happens to the board when one is spent.
+let flightFrames = 0;
+{
+  const { Consumable } = await import(path.resolve('web/js/engine.js'));
+  const { engine, renderer, hud } = window.twiddlygems;
+  const inventory = elements.get('inventory');
+  const kinds = Object.values(Consumable);
+
+  // Somewhere with room to shoot at, reached the way a player reaches it.
+  dispatch('levels-button', 'click', {});
+  click(list.children[1], 'the picker has no second row to land on');
+  pump(120);
+  assert.ok(engine.acceptsInput, 'the board is busy, so nothing below could be spent on it');
+
+  const slots = inventory.children.map((item) => item.children[0]);
+  assert.equal(slots.length, kinds.length, `the bar has ${slots.length} slots for ${kinds.length} things`);
+
+  // Every kind has a slot from the start, whether or not the run has any.
+  // What a run is out of is worth knowing, and a slot appearing later would
+  // shove the rest along under a thumb already coming down.
+  for (const slot of slots) {
+    assert.ok(slot.children[0], 'a slot was built with no art in it');
+    assert.ok(slot.disabled, 'an empty slot can still be tapped');
+    assert.ok(slot.classList.contains('empty'), 'an empty slot is not drawn as one');
+    assert.ok(slot.children[1].hidden, 'a slot with nothing in it is showing a count');
+  }
+
+  // Tapping one anyway arms nothing: the button is disabled, and the page
+  // checks the count again rather than trusting the last frame's drawing.
+  click(slots[Consumable.ROCKET], 'the rocket slot');
+  assert.equal(hud.armed, null, 'an empty slot armed itself');
+
+  engine.restoreConsumables(Consumable.ROCKET, 2);
+  engine.restoreConsumables(Consumable.ROCKET_CLUSTER, 1);
+  pump(1);
+  const rocket = slots[Consumable.ROCKET];
+  assert.ok(!rocket.disabled && !rocket.classList.contains('empty'), 'a slot with two in it is dim');
+  assert.equal(rocket.children[1].hidden, false, 'a slot holding something shows no count');
+  assert.equal(rocket.children[1].textContent, '2', 'the count on the slot is wrong');
+  assert.ok(slots[Consumable.RAINBOW].disabled, 'a kind the run has none of came up available');
+
+  // Arming, and the two ways back out of it.
+  click(rocket, 'the rocket slot');
+  assert.equal(hud.armed, Consumable.ROCKET, 'tapping a full slot did not arm it');
+  pump(1);
+  assert.ok(rocket.classList.contains('armed'), 'the armed slot is not drawn as armed');
+  click(rocket, 'the rocket slot');
+  assert.equal(hud.armed, null, 'tapping the armed item again did not put it away');
+
+  click(rocket, 'the rocket slot');
+  gesture('pointerdown', { target: elements.get('feed') });
+  assert.equal(hud.armed, null, 'tapping away from the board left it armed');
+
+  // And the board does not count as away from it: that is where it goes.
+  click(rocket, 'the rocket slot');
+  gesture('pointerdown', { target: elements.get('board') });
+  assert.equal(hud.armed, Consumable.ROCKET, 'aiming at the board put the item away');
+
+  const SELECTED = 4;
+  const anySelected = () =>
+    engine.snapshot().cells.some((byte, at) => at % 4 === 3 && (byte & SELECTED) !== 0);
+
+  // An aim the engine refuses still takes the tap, and this is the case the
+  // whole guard is for. A spend that lands leaves the board busy, so nothing
+  // could fall through it anyway; a refusal leaves the board exactly as it
+  // was, and without the guard the tap goes on to select the gem under it.
+  // The player meant to point at something and is left mid-swap.
+  //
+  // Refused here by emptying the run's pocket behind the armed item, which is
+  // the one refusal that can be arranged on any board. Still armed from the
+  // check above, which is why nothing arms it again here.
+  engine.restoreConsumables(Consumable.ROCKET, 0);
+  dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+  dispatch('board', 'pointerup', { clientX: 40, clientY: 40 });
+  // A frame, because selecting a gem marks the board and the board is only
+  // written out for reading on the tick after. Without this the check below
+  // reads the frame before the tap and passes whatever happened.
+  pump(1);
+  assert.equal(hud.armed, Consumable.ROCKET, 'a refused aim put the item away');
+  assert.ok(!anySelected(), 'a refused aim fell through and selected the gem under it');
+  engine.restoreConsumables(Consumable.ROCKET, 2);
+
+  // Spending it. The tap is the aim and nothing else: no gem is selected and
+  // no move is spent, because a bonus is not a turn.
+  const movesBefore = engine.movesLeft;
+  const heldBefore = engine.consumables(Consumable.ROCKET);
+  dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+  assert.equal(hud.armed, null, 'spending it left it armed');
+  assert.equal(engine.consumables(Consumable.ROCKET), heldBefore - 1, 'the run was not charged');
+  assert.equal(engine.movesLeft, movesBefore, 'spending a bonus cost a move');
+  assert.equal(engine.phase, 3, `the tap did not put a rocket in the air: phase ${engine.phase}`);
+  assert.ok(!anySelected(), 'aiming at a cell selected the gem in it as well');
+
+  // In the air, and turning as it goes. This is the only rocket that flies on
+  // this run, so it is the only chance to trace the easing: a rocket comes
+  // round to its heading rather than snapping to it, and what that comes to
+  // is a cap on how far it may turn in one frame.
+  const MOST_PER_FRAME = 0.0095 * 16;
+  const angles = [];
+  let painted = 0;
+  for (let i = 0; i < 200 && engine.phase === 3; i += 1) {
+    const before = fxCalls.drawImage;
+    pump(1);
+    if (renderer.flights.length > 0) {
+      angles.push(renderer.flights[0].angle);
+      painted += fxCalls.drawImage > before ? 1 : 0;
+    }
+  }
+  // Drawn, and on the effects layer: the board's own canvas stops at the
+  // board, and this one sets off from under it, out of the bar it was tapped
+  // in. Worked out but never painted is a rocket nobody sees.
+  assert.equal(painted, angles.length, `the rocket went unpainted on ${angles.length - painted} of its frames`);
+  flightFrames = angles.length;
+  assert.ok(angles.length > 5, `the rocket was only drawn in flight for ${angles.length} frames`);
+  assert.ok(
+    Math.abs(angles.at(-1) - angles[0]) > 0.2,
+    'the rocket flew the whole way without ever turning',
+  );
+  for (let i = 1; i < angles.length; i += 1) {
+    const step = Math.abs(angles[i] - angles[i - 1]);
+    assert.ok(
+      step <= MOST_PER_FRAME + 1e-6,
+      `the rocket swung ${step.toFixed(3)} radians in one frame, which is a flip`,
+    );
+  }
+
+  // And the cap on top of the easing, which that flight never needed: the
+  // easing takes a fifth of whatever is left over each frame, and a fifth of
+  // a small angle is small. The cap is for a rocket pointed somewhere else
+  // entirely, where a fifth of the gap is still a flip. Straight down, from a
+  // rocket pointing straight up, is the worst case there is: half a turn.
+  renderer.frameMs = 16;
+  const spun = renderer.turnToward(0, 100, { x: 0, y: 0, angle: 0, wants: 0 });
+  assert.ok(Math.abs(spun.angle) > 0, 'a rocket pointed the wrong way never came round at all');
+  assert.ok(
+    Math.abs(spun.angle) <= MOST_PER_FRAME + 1e-6,
+    `it turned ${spun.angle.toFixed(3)} radians in one frame, which is a flip`,
+  );
+
+  // It struck something: the board has work to do that the tap started.
+  pump(120);
+  assert.equal(renderer.flights.length, 0, 'a rocket is still being drawn after it landed');
+
+  // And the run's stock went into the save, which is the only place a solo
+  // run can keep it.
+  const saved = JSON.parse(store.get(SAVE_KEY));
+  assert.equal(
+    saved.consumables?.[Consumable.ROCKET],
+    engine.consumables(Consumable.ROCKET),
+    'what the run has left to spend was not saved',
+  );
+
+  // A rainbow raises its whole first clear inside the call that spends it,
+  // and the engine only ever reports what the last call raised. Leaving that
+  // for the next tick to notice drops every pop, every piece of debris and
+  // every mote of it, so the page has to collect them then and there.
+  pump(60);
+  assert.ok(engine.acceptsInput, 'the board never settled after the rocket');
+  engine.restoreConsumables(Consumable.RAINBOW, 1);
+  pump(1);
+  renderer.pendingBursts.length = 0;
+  renderer.particles.length = 0;
+  click(slots[Consumable.RAINBOW], 'the rainbow slot');
+  dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+  assert.equal(engine.consumables(Consumable.RAINBOW), 0, 'the rainbow was not spent');
+  assert.ok(
+    renderer.pendingBursts.length + renderer.particles.length > 0,
+    'the clear a spent rainbow raised was never collected, so none of it was drawn',
+  );
+
+  // The cluster aims itself, so tapping it is the whole gesture. Pumped until
+  // the board is done rather than for a set number of frames: a rainbow takes
+  // a whole color off the board and the cascades behind it run for a while.
+  for (let i = 0; i < 600 && !engine.acceptsInput; i += 1) {
+    pump(1);
+  }
+  assert.ok(engine.acceptsInput, 'the board never settled after the rainbow');
+  click(slots[Consumable.ROCKET_CLUSTER], 'the cluster slot');
+  assert.equal(hud.armed, null, 'the cluster asked for a cell');
+  assert.equal(engine.consumables(Consumable.ROCKET_CLUSTER), 0, 'the cluster was not spent');
+  assert.equal(engine.phase, 3, 'tapping the cluster put nothing in the air');
+  pump(1);
+  assert.ok(renderer.flights.length >= 3, `a cluster is three rockets at least: ${renderer.flights.length}`);
+  pump(200);
+}
+
 console.log(
   `page ok: ${framesRun} frames, ${calls.drawImage} blits, ${calls.fill} fills, ` +
     `${calls.stroke} strokes, ${objectives.children.length} objective chips, ` +
     `${list.children.length} levels listed, ` +
+    `a spent rocket turned over ${flightFrames} frames, ` +
     `a swipe scored and spent a move (${scoreBefore} -> played -> reset)`,
 );

@@ -211,6 +211,30 @@ compare(
     ],
 )
 
+# A consumable's code is its place in one array rather than a match arm, so
+# this reads the array. Its order is the order the item ids are built from and
+# the order the front end's inventory sits in, which means a reordering would
+# hand a saved Rainbow back as a Rocket without either side failing to build.
+progression_source = read(ROOT / "src" / "progression.rs")
+listed = re.search(r"pub const CONSUMABLES: \[Consumable; \d+\] =\s*\[(.*?)\];", progression_source, re.S)
+if not listed:
+    problems.append("could not find the CONSUMABLES array to read the consumable codes from")
+else:
+    rust_consumables = {
+        name: at for at, name in enumerate(re.findall(r"Consumable::(\w+)", listed.group(1)))
+    }
+    compare(
+        "consumables",
+        rust_consumables,
+        js_object(engine_source, "Consumable"),
+        [
+            ("Rocket", "ROCKET"),
+            ("Rainbow", "RAINBOW"),
+            ("CrossClear", "CROSS_CLEAR"),
+            ("RocketCluster", "ROCKET_CLUSTER"),
+        ],
+    )
+
 if problems:
     print("ABI mismatch between the engine and the front end:\n", file=sys.stderr)
     for problem in problems:

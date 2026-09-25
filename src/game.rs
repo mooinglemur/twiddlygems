@@ -460,6 +460,14 @@ pub struct Game {
     events: Vec<Event>,
     cells_buf: Vec<u8>,
     offs_buf: Vec<f32>,
+    /// Where each rocket spent out of the inventory is: a column, a row, and
+    /// whether it is still in the air.
+    ///
+    /// A rocket fired off the board needs none of this. It is a gem in a cell,
+    /// and its cell's offset carries it wherever it goes. One spent out of the
+    /// inventory comes up from under the bottom row, where there is no cell,
+    /// so its position has nowhere else to be written down.
+    flights_buf: Vec<f32>,
 }
 
 impl Game {
@@ -495,6 +503,7 @@ impl Game {
             events: Vec::new(),
             cells_buf: Vec::new(),
             offs_buf: Vec::new(),
+            flights_buf: Vec::new(),
             spec,
         };
         game.restart();
@@ -1983,6 +1992,17 @@ impl Game {
         &self.offs_buf
     }
 
+    /// Three floats per rocket spent out of the inventory: a column, a row,
+    /// and 1 while it is still flying. See [`Game::flights_buf`].
+    ///
+    /// The column and the row are the board's own, so a row of `rows` is the
+    /// one below the bottom, and both carry a fraction: this is a position on
+    /// the grid rather than a cell in it. Empty except while such a rocket is
+    /// in the air, which is only ever after one was spent.
+    pub fn flights(&self) -> &[f32] {
+        &self.flights_buf
+    }
+
     pub const FLAG_WALL: u8 = 1;
     pub const FLAG_CLEARING: u8 = 2;
     pub const FLAG_SELECTED: u8 = 4;
@@ -2001,6 +2021,7 @@ impl Game {
         self.cells_buf.resize(count * 4, 0);
         self.offs_buf.clear();
         self.offs_buf.resize(count * 3, 0.0);
+        self.flights_buf.clear();
 
         for p in self.board.positions() {
             let i = (p.r * self.board.cols + p.c) as usize;
@@ -2067,13 +2088,27 @@ impl Game {
             }
             Phase::Launching { elapsed } => {
                 for launch in self.launches.clone() {
-                    if launch.landed {
-                        continue;
-                    }
                     let (from, to) = (launch.from, launch.to);
                     let distance = cells_between(from, to).max(0.001);
                     let flown = (flown_cells(elapsed) / distance).clamp(0.0, 1.0);
                     let (dx, dy) = lob(from, to, flown);
+                    if launch.from_inventory {
+                        // No cell holds this one, so where it is goes in a
+                        // list of its own. A landed one keeps its place in
+                        // that list rather than being left out of it: the
+                        // front end tells one rocket from the next by where
+                        // it sits, and dropping one would hand every rocket
+                        // behind it somebody else's heading.
+                        self.flights_buf.extend_from_slice(&[
+                            from.c as f32 + dx,
+                            from.r as f32 + dy,
+                            if launch.landed { 0.0 } else { 1.0 },
+                        ]);
+                        continue;
+                    }
+                    if launch.landed {
+                        continue;
+                    }
                     self.set_offset(from, dx, dy);
                     // The target is left entirely alone. It used to start
                     // shrinking once the rocket was most of the way there,
@@ -3329,6 +3364,68 @@ mod tests {
         let most = *seen_counts.iter().max().unwrap();
         assert_eq!(least, 3, "the smallest cluster was {least}");
         assert_eq!(most, 5, "the biggest cluster was {most}");
+    }
+
+    #[test]
+    fn a_spent_rocket_is_reported_in_the_air_because_no_cell_holds_it() {
+        // One fired off the board is a gem in a cell and rides that cell's
+        // offset. One spent out of the inventory comes up from under the
+        // bottom row, where there is no cell to hang an offset on, so the
+        // snapshot has a list of its own for them.
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        let at = Pos::new(4, 4);
+        assert!(game.flights().is_empty(), "something was in the air before anything was spent");
+        assert!(game.use_consumable(Consumable::Rocket, Some(at)));
+
+        let mut rows = Vec::new();
+        for _ in 0..400 {
+            if game.phase() == Phase::Idle || game.phase() == Phase::Finished {
+                break;
+            }
+            game.update(8.0);
+            if let Phase::Launching { .. } = game.phase {
+                assert_eq!(game.flights().len(), 3, "one rocket, one slot");
+                if game.flights()[2] == 1.0 {
+                    rows.push(game.flights()[1]);
+                }
+            }
+        }
+
+        let first = rows.first().copied().expect("the rocket was never seen flying");
+        let last = rows.last().copied().expect("the rocket was never seen flying");
+        assert!(rows.len() > 3, "it was only in the air for {} frames", rows.len());
+        // It starts under the board, which is where the bar it came out of is,
+        // and it works its way up toward the row it was aimed at. Against the
+        // board's own size rather than a number written here: what this says
+        // is that it came from under the board, whatever size the board is.
+        let bottom = (game.board.rows - 1) as f32;
+        assert!(first > bottom, "it set off from row {first}, which is on the board");
+        assert!(last < first, "it ended at row {last}, having started at row {first}");
+    }
+
+    #[test]
+    fn a_landed_rocket_keeps_its_place_in_the_list() {
+        // A cluster is several at once, and they come down one at a time. The
+        // front end tells one from the next by where it sits in this list, so
+        // a rocket dropping out of it as it lands would hand every rocket
+        // behind it somebody else's heading: they would all jump a slot along
+        // and turn to face wherever their neighbor had been going.
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        assert!(game.use_consumable(Consumable::RocketCluster, None));
+
+        let mut slots = None;
+        let mut landed = 0;
+        for _ in 0..400 {
+            let Phase::Launching { .. } = game.phase else { break };
+            game.update(8.0);
+            if let Phase::Launching { .. } = game.phase {
+                let now = game.flights().len();
+                assert_eq!(*slots.get_or_insert(now), now, "the list changed length mid-flight");
+                landed = landed.max(game.flights().chunks(3).filter(|f| f[2] == 0.0).count());
+            }
+        }
+        assert!(slots.unwrap_or(0) >= 9, "a cluster is three rockets at least");
+        assert!(landed > 0, "no rocket was ever seen down while the others were still up");
     }
 
     #[test]

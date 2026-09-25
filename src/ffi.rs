@@ -18,6 +18,7 @@
 
 use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
+use crate::progression::Consumable;
 use crate::session::Session;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
@@ -569,6 +570,78 @@ pub unsafe extern "C" fn tg_hint(handle: *mut Handle) -> u32 {
     }
 }
 
+// ---- what the run is carrying --------------------------------------------
+
+/// How many of one thing the run holds, by [`Consumable::code`]. 0 for a kind
+/// the engine does not have, which is what a front end drawn against a newer
+/// engine would ask about.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_consumables(handle: *const Handle, kind: u32) -> u32 {
+    let handle = session!(handle, 0);
+    Consumable::from_code(kind).map_or(0, |kind| handle.session.consumables(kind))
+}
+
+/// Spends one on a cell, returning 1 when it happened.
+///
+/// A row or column outside the board means no target at all, which is what
+/// the cluster wants and what the other three refuse. The refusal matters: an
+/// aimed one pointed somewhere it can do nothing, or any of them while the
+/// board is busy, costs nothing rather than being thrown away.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_use_consumable(handle: *mut Handle, kind: u32, r: i32, c: i32) -> u32 {
+    let handle = session_mut!(handle, 0);
+    let Some(kind) = Consumable::from_code(kind) else { return 0 };
+    let board = &handle.session.game().board;
+    let on_the_board = r >= 0 && r < board.rows && c >= 0 && c < board.cols;
+    let target = on_the_board.then(|| Pos::new(r, c));
+    let spent = handle.session.use_consumable(kind, target);
+    pack_events(handle);
+    spent as u32
+}
+
+/// Hands a count back to a run being rebuilt from a save, the way
+/// [`tg_restore`] hands back a location. Quiet, and it *sets* the count rather
+/// than raising it: this is the one holding that goes down, so a run that has
+/// spent two of five is restored to three.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_restore_consumables(handle: *mut Handle, kind: u32, held: u32) {
+    let handle = session_mut!(handle, ());
+    if let Some(kind) = Consumable::from_code(kind) {
+        handle.session.restore_consumables(kind, held);
+    }
+}
+
+/// How many rockets spent out of the inventory [`tg_flights_ptr`] has to
+/// offer. 0 at every other moment, this being the only thing that flies from
+/// nowhere on the board.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_flights_len(handle: *const Handle) -> u32 {
+    (session!(handle, 0).session.game().flights().len() / 3) as u32
+}
+
+/// Three floats each: a column, a row, and 1 while it is still in the air.
+/// See [`crate::game::Game::flights`].
+///
+/// # Safety
+/// `handle` must come from [`tg_create`]. The pointer is valid until the next
+/// call that mutates the session, so re-read it each frame.
+#[no_mangle]
+pub unsafe extern "C" fn tg_flights_ptr(handle: *const Handle) -> *const f32 {
+    session!(handle, std::ptr::null()).session.game().flights().as_ptr()
+}
+
 // ---- objectives ----------------------------------------------------------
 
 /// # Safety
@@ -852,6 +925,53 @@ mod tests {
             assert_eq!(tg_set_option(handle, goal, 9_999), 0, "a value no setting allows took");
             assert_eq!(tg_option_value(handle, goal), next, "and it changed things anyway");
             assert_eq!(tg_option_value(handle, 99), u32::MAX);
+            tg_destroy(handle);
+        }
+    }
+
+    #[test]
+    fn a_consumable_crosses_the_boundary_and_is_only_spent_when_it_lands() {
+        unsafe {
+            let handle = tg_create(4321, 0);
+            let rocket = Consumable::Rocket.code();
+            assert_eq!(tg_consumables(handle, rocket), 0, "a fresh run is carrying one");
+
+            tg_restore_consumables(handle, rocket, 2);
+            assert_eq!(tg_consumables(handle, rocket), 2);
+
+            // Off the board is no target at all, which an aimed one refuses.
+            // The refusal has to leave the count alone: the whole point of
+            // asking the board first is that a tap that can do nothing costs
+            // nothing.
+            assert_eq!(tg_use_consumable(handle, rocket, -1, -1), 0);
+            assert_eq!(tg_use_consumable(handle, rocket, 0, tg_cols(handle) as i32), 0);
+            assert_eq!(tg_consumables(handle, rocket), 2, "a refused tap was charged for");
+
+            // Somewhere the opening board actually has a gem, since a level
+            // may be any shape and a walled cell is nothing to shoot at.
+            let cols = tg_cols(handle) as usize;
+            let cells = std::slice::from_raw_parts(
+                tg_cells_ptr(handle),
+                (tg_rows(handle) * tg_cols(handle)) as usize * 4,
+            );
+            let at = cells.chunks(4).position(|c| c[0] != 255).expect("a gem on the board");
+            assert_eq!(tg_use_consumable(handle, rocket, (at / cols) as i32, (at % cols) as i32), 1);
+            assert_eq!(tg_consumables(handle, rocket), 1);
+
+            // And it is in the air: no cell holds one spent out of the
+            // inventory, so this list is the only place it shows up.
+            assert_eq!(tg_phase(handle), 3, "spending a rocket did not start a launch");
+            tg_update(handle, 8.0);
+            assert_eq!(tg_flights_len(handle), 1);
+            let flight = std::slice::from_raw_parts(tg_flights_ptr(handle), 3);
+            assert!(flight[1] > (tg_rows(handle) - 1) as f32, "it did not set off below the board");
+            assert_eq!(flight[2], 1.0, "it landed before it had flown anywhere");
+
+            // A kind the engine does not have is answered rather than
+            // mistaken for the first one, which is what a front end drawn
+            // against a newer engine would ask about.
+            assert_eq!(tg_consumables(handle, 99), 0);
+            assert_eq!(tg_use_consumable(handle, 99, 0, 0), 0);
             tg_destroy(handle);
         }
     }

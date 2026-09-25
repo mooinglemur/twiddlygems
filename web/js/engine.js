@@ -91,6 +91,23 @@ export const Tier = { NONE: 0, CLEAR: 1, SILVER: 2, GOLD: 3 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
+/**
+ * The things a run can be handed to spend, by the code the engine numbers them
+ * with.
+ *
+ * Three of them are aimed: the player picks one and then picks a cell. The
+ * cluster is not, because what a rocket aims at is the rocket's own business
+ * and a handful at once is the point of it.
+ */
+export const Consumable = { ROCKET: 0, RAINBOW: 1, CROSS_CLEAR: 2, ROCKET_CLUSTER: 3 };
+
+/** Which of them want a cell before they will go off. */
+export const AIMED = new Set([Consumable.ROCKET, Consumable.RAINBOW, Consumable.CROSS_CLEAR]);
+
+/// Three floats per rocket in `flights`: a column, a row, and whether it is
+/// still in the air.
+const FLIGHT_STRIDE = 3;
+
 export const EMPTY_CELL = 255;
 
 /** Fetches and instantiates the wasm module, then opens a session on it. */
@@ -156,6 +173,61 @@ export class Engine {
       cells: new Uint8Array(this.memory.buffer, cellsPtr, this.cellCount * CELL_STRIDE),
       offsets: new Float32Array(this.memory.buffer, offsetsPtr, this.cellCount * OFFSET_STRIDE),
     };
+  }
+
+  /**
+   * Rockets spent out of the inventory, as `{c, r, flying}` in board
+   * coordinates: a row of `rows` is the one below the bottom, where the bar
+   * they come out of is.
+   *
+   * A list of their own because no cell holds one. Every other gem in the air
+   * is a gem in a cell riding that cell's offset, and one of these sets off
+   * from under the board, where there is no cell to ride.
+   *
+   * Landed ones stay in the list, at the place they have always been. Where a
+   * rocket sits is how the renderer tells it from the next one across frames,
+   * so a rocket dropping out as it lands would hand every rocket behind it
+   * somebody else's heading.
+   */
+  flights() {
+    const count = this.wasm.tg_flights_len(this.handle);
+    if (count === 0) {
+      return [];
+    }
+    const values = new Float32Array(
+      this.memory.buffer,
+      this.wasm.tg_flights_ptr(this.handle),
+      count * FLIGHT_STRIDE,
+    );
+    const list = [];
+    for (let i = 0; i < count; i += 1) {
+      const at = i * FLIGHT_STRIDE;
+      list.push({ c: values[at], r: values[at + 1], flying: values[at + 2] === 1 });
+    }
+    return list;
+  }
+
+  /** How many of one thing the run is carrying. */
+  consumables(kind) {
+    return this.wasm.tg_consumables(this.handle, kind);
+  }
+
+  /**
+   * Spends one on a cell, answering whether it happened.
+   *
+   * `null` for the cluster, which aims itself. A refusal costs nothing: the
+   * engine asks the board first and only takes the item out if the board took
+   * it, so pointing an aimed one somewhere it can do nothing leaves the run
+   * still carrying it.
+   */
+  useConsumable(kind, cell = null) {
+    const { r, c } = cell ?? { r: -1, c: -1 };
+    return this.wasm.tg_use_consumable(this.handle, kind, r, c) === 1;
+  }
+
+  /** Hands a count back on load. Sets rather than raises; see the engine. */
+  restoreConsumables(kind, held) {
+    this.wasm.tg_restore_consumables(this.handle, kind, held);
   }
 
   /** Everything that happened during the last call into the engine. */

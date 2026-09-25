@@ -153,7 +153,71 @@ html, body {
 }
 #moves { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.3rem; }
 #moves.low { color: var(--danger); }
-.spacer { flex: 1; }
+
+/* ---- what the run has to spend ---- */
+
+/* Four slots along the bottom bar, in the order the engine numbers them, and
+   they keep those places for the whole run. A slot with nothing in it is
+   drawn dim rather than taken away: a player who has found three of the four
+   should be able to see which one is still out there, and an item that
+   appeared and moved everything along would be tapped by accident. */
+#inventory {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: var(--gap);
+  flex: 1;
+  min-width: 0;
+}
+
+.consumable {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  background: var(--socket);
+  border: 2px solid transparent;
+  border-radius: 12px;
+  padding: 6px;
+  /* A thumb's worth, which is also what the buttons beside it come to. */
+  min-width: 44px;
+  min-height: 44px;
+}
+/* Nothing to spend: still there, still in its place, plainly not available.
+   Grayed as well as dimmed, because dimming alone still leaves a rocket red
+   and a rainbow in full color, and next to a slot that does have something in
+   it the difference has to be readable at a glance rather than compared. */
+.consumable.empty { opacity: 0.45; }
+.consumable.empty .consumable-art { filter: grayscale(1); }
+.consumable[disabled] { cursor: default; }
+/* Armed, and waiting for a cell to be pointed at. */
+.consumable.armed {
+  border-color: var(--accent);
+  background: #2f2752;
+}
+.consumable-art { display: block; }
+
+/* How many are held, in a circle over the corner of the art. Only drawn when
+   there is at least one: a slot showing a zero says the same thing twice, and
+   the dimming already says it. */
+.consumable-count {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #2a1f00;
+  font-size: 0.78rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  text-align: center;
+  padding: 0 5px;
+  border: 2px solid var(--panel);
+}
 
 /* ---- objectives ---- */
 

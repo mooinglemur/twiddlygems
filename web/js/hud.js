@@ -1,8 +1,8 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
-import { PALETTE, paintGoalIcon, paintSpecialIcon } from './render.js';
+import { Consumable, NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
+import { PALETTE, paintConsumableIcon, paintGoalIcon, paintSpecialIcon } from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
 /// little works, and far short of a session's worth.
@@ -37,6 +37,24 @@ const ICON_SIZE = 40;
 /// be looked at, and four of them have to fit across a phone.
 const GOAL_ICON_SIZE = 26;
 
+/// How big the picture in an inventory slot is. Larger than a goal chip's,
+/// because this one is a thing to be looked at and chosen, and four of them
+/// plus two buttons still have to fit across a phone.
+const CONSUMABLE_ICON_SIZE = 30;
+
+/// What each thing the run can spend is called and what spending it does. The
+/// second half is written for someone who has just been handed one: what it
+/// asks of them, not what it is called again.
+const SPENDABLE = {
+  [Consumable.ROCKET]: { name: 'Rocket', does: 'strikes the cell you tap' },
+  [Consumable.RAINBOW]: { name: 'Rainbow', does: 'takes every gem the color you tap' },
+  [Consumable.CROSS_CLEAR]: { name: 'Cross Clear', does: 'blasts the row and column you tap' },
+  [Consumable.ROCKET_CLUSTER]: {
+    name: 'Rocket Cluster',
+    does: 'a handful of rockets, each picking its own target',
+  },
+};
+
 /// The marks a level can be beaten to, in order, which is also the order the
 /// three pips on a level row sit in. Each is a location an item is found at,
 /// so a row of them is a row of checks.
@@ -61,6 +79,14 @@ export class Hud {
     /// The best score the open popover was filled with, so it is only rebuilt
     /// when that number moves. -1 because a level never beaten has 0.
     this.shownBest = -1;
+    this.consumableViews = [];
+    /// Which thing the run is carrying is waiting for a cell, or null.
+    ///
+    /// Held here rather than in the engine because nothing has happened yet:
+    /// arming one is a state of the screen, and the engine is only told when
+    /// a cell is actually tapped.
+    this.armed = null;
+    this.shownArmed = undefined;
   }
 
   /**
@@ -169,6 +195,96 @@ export class Hud {
         el: view.item,
         icon: view.icon,
       }));
+  }
+
+  /**
+   * The slots along the bottom bar, built once for the whole run.
+   *
+   * Every kind gets one from the start, whether or not the run has any, the
+   * same way the tracker shows the unlocks it is still waiting on. The empty
+   * slots are half the information, and a slot that appeared when the first
+   * one arrived would shove the rest along under a thumb already on its way
+   * down.
+   */
+  buildInventory(onPick) {
+    const { dom } = this;
+    dom.inventory.replaceChildren();
+    this.consumableViews = Object.values(Consumable).map((kind) => {
+      const item = document.createElement('li');
+
+      const slot = document.createElement('button');
+      slot.type = 'button';
+      slot.className = 'consumable';
+
+      const art = document.createElement('canvas');
+      art.className = 'consumable-art';
+      paintConsumableIcon(art, kind, CONSUMABLE_ICON_SIZE);
+
+      // How many are held, in a circle over the corner of the art. Hidden
+      // while there are none: the dimmed slot already says so, and a badge
+      // reading zero says it twice.
+      const count = document.createElement('span');
+      count.className = 'consumable-count';
+      count.hidden = true;
+
+      slot.append(art, count);
+      slot.addEventListener('click', () => onPick(kind));
+      item.append(slot);
+      dom.inventory.append(item);
+      // -1 rather than 0, so the first refresh writes the slot even when the
+      // run is carrying nothing.
+      return { kind, slot, count, held: -1 };
+    });
+    this.shownArmed = undefined;
+    this.updateInventory();
+  }
+
+  /** The slot the armed item came out of, or null. */
+  armedSlot() {
+    return this.consumableViews.find((view) => view.kind === this.armed)?.slot ?? null;
+  }
+
+  /**
+   * Arms one, or puts away the one that was armed.
+   *
+   * Tapping the armed item again is a way out of having armed it, which is
+   * the same thing tapping anywhere off the board does. Answers what is armed
+   * now, which is null for either of those.
+   */
+  arm(kind) {
+    this.armed = this.armed === kind ? null : kind;
+    return this.armed;
+  }
+
+  disarm() {
+    this.armed = null;
+  }
+
+  /** Per-frame refresh of the slots; touches the DOM only where something moved. */
+  updateInventory() {
+    for (const view of this.consumableViews) {
+      const held = this.engine.consumables(view.kind);
+      if (held !== view.held) {
+        view.held = held;
+        const { name, does } = SPENDABLE[view.kind];
+        view.count.textContent = String(held);
+        view.count.hidden = held === 0;
+        view.slot.classList.toggle('empty', held === 0);
+        // Not just dimmed: an empty slot is nothing to tap, and a disabled
+        // button says so to a screen reader and to a thumb alike.
+        view.slot.disabled = held === 0;
+        view.slot.title = held === 0 ? `${name}: none left` : `${name}: ${does}`;
+        view.slot.setAttribute(
+          'aria-label',
+          held === 0 ? `${name}, none left` : `${name}, ${held} left: ${does}`,
+        );
+      }
+      if (this.armed !== this.shownArmed) {
+        view.slot.classList.toggle('armed', this.armed === view.kind);
+        view.slot.setAttribute('aria-pressed', String(this.armed === view.kind));
+      }
+    }
+    this.shownArmed = this.armed;
   }
 
   /** Colors the score by how well the level stands. */
@@ -284,6 +400,7 @@ export class Hud {
   update(renderer = null) {
     const { engine, dom } = this;
     this.showTier();
+    this.updateInventory();
     // The best score climbs through the flourish the same way the live one
     // does, so a popover left open while a level is being beaten has to keep
     // up. Only when the number actually moves: this runs every frame.

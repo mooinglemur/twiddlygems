@@ -4,7 +4,7 @@
 // this file decides is what that looks like. Gems differ by shape as well as
 // hue so the board stays readable without relying on color alone.
 
-import { EMPTY_CELL, EventKind, Flag, ObjectiveKind, Phase, Special } from './engine.js';
+import { Consumable, EMPTY_CELL, EventKind, Flag, ObjectiveKind, Phase, Special } from './engine.js';
 
 /// The game's gem set, indexed by the color numbers the engine deals. A level
 /// usually takes the first few, but it may name any set instead, so this is a
@@ -152,6 +152,11 @@ export class Renderer {
     /// Where each rocket in the air was a frame ago, keyed by cell, which is
     /// how a rocket on an arc knows which way it is pointing.
     this.rocketWas = null;
+    /// The same for rockets spent out of the inventory, which are on the
+    /// effects layer rather than on the board and so are keyed by their place
+    /// in the engine's list rather than by a cell. See `updateFlights`.
+    this.flights = [];
+    this.flightWas = null;
     /// A line of text swelling and fading over the board, or null.
     this.toast = null;
     this.lastFrame = null;
@@ -363,6 +368,8 @@ export class Renderer {
     this.goalFlash = this.goals.map(() => 0);
     this.goalInFlight = this.goals.map(() => 0);
     this.rocketWas = null;
+    this.flights = [];
+    this.flightWas = null;
     this.toast = null;
     this.lastFrame = null;
     this.backdrop = null;
@@ -579,15 +586,50 @@ export class Renderer {
     }
   }
 
-  /// The layer over the page: motes on their way to a goal, and the goals
-  /// lighting up as they arrive. Cleared once when the last one lands rather
-  /// than wiped every idle frame.
+  /**
+   * Where the rockets spent out of the inventory are, and which way each of
+   * them is pointing.
+   *
+   * These fly on the effects layer rather than on the board, because the board
+   * canvas stops at the board and one of these sets off from under it, out of
+   * the bar it was tapped in. Everything else about it is a rocket: the same
+   * arc, drawn by the engine, and the same easing onto its heading.
+   *
+   * Keyed by its place in the engine's list, which is why a landed one keeps
+   * that place: a rocket dropping out of the list as it came down would hand
+   * every rocket behind it the heading of the one in front.
+   */
+  updateFlights() {
+    const list = this.fx ? this.engine.flights() : [];
+    if (list.length === 0) {
+      this.flights = [];
+      this.flightWas = null;
+      return;
+    }
+    const heading = new Map();
+    const flying = [];
+    for (let i = 0; i < list.length; i += 1) {
+      if (!list[i].flying) {
+        continue;
+      }
+      const { x, y } = this.boardPoint(list[i].r, list[i].c);
+      const now = this.turnToward(x, y, this.flightWas?.get(i));
+      heading.set(i, now);
+      flying.push({ x, y, angle: now.angle });
+    }
+    this.flights = flying;
+    this.flightWas = heading;
+  }
+
+  /// The layer over the page: motes on their way to a goal, the goals lighting
+  /// up as they arrive, and the rockets spent out of the bar. Cleared once when
+  /// the last of it lands rather than wiped every idle frame.
   paintFx() {
     if (!this.fx) {
       return;
     }
     const lit = this.goalFlash.some((flash) => flash > 0.01);
-    if (this.tributes.length === 0 && !lit) {
+    if (this.tributes.length === 0 && !lit && this.flights.length === 0) {
       if (this.fxPainted) {
         this.fxCtx.setTransform(this.fxDpr, 0, 0, this.fxDpr, 0, 0);
         this.fxCtx.clearRect(0, 0, this.fxWidth, this.fxHeight);
@@ -659,6 +701,13 @@ export class Renderer {
       ctx.fill();
     }
     ctx.globalAlpha = 1;
+
+    // After the alpha is back, because a rocket is a solid thing whatever the
+    // motes were doing when the loop above left off.
+    for (const flight of this.flights) {
+      drawExhaust(ctx, flight.x, flight.y, this.cell * 0.42, flight.angle);
+      this.blitTurned(flight.x, flight.y, 1, 0, Special.ROCKET, flight.angle, ctx);
+    }
   }
 
   /// One cell's worth of debris: shards of the gem, and a puff of smoke. A
@@ -931,6 +980,7 @@ export class Renderer {
     // it toward the goal it finished.
     this.captureBoard();
     this.updateParticles(timeMs);
+    this.updateFlights();
     // Before the board's own early return: what is going to a goal has left
     // the board, and an idle board is exactly when the last of it is landing.
     this.paintFx();
@@ -1064,38 +1114,14 @@ export class Renderer {
       this.drawParticles(ctx);
     }
 
-    // A rocket comes round to its heading rather than snapping to it.
-    //
-    // Where it wants to point is a frame of its own travel, which is the
-    // tangent of the arc it is flying. What it may not do is arrive there in
-    // one frame: sitting in its cell it is upright, and the moment it moves it
-    // would jump to whatever direction it set off in, then jump again as the
-    // arc bit. Easing covers all of it with one rule, and because a launch
-    // ramps up rather than starting at speed, the turn happens while the
-    // rocket is still over its own cell, which is where a rocket turns.
     const heading = new Map();
-    const turn = 1 - Math.exp(-this.frameMs / ROCKET_TURN_MS);
-    const most = ROCKET_TURN_PER_MS * this.frameMs;
     for (const [x, y, scale, color, dx, dy, index] of airborne) {
-      const traveling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
-      const was = this.rocketWas?.get(index);
-      // Held from the last frame that moved, so a rocket barely under way
-      // keeps the heading it has rather than reading no movement as upright.
-      let wants = was ? was.wants : 0;
-      if (was && Math.hypot(x - was.x, y - was.y) > 0.001) {
-        wants = Math.atan2(y - was.y, x - was.x) + Math.PI / 2;
+      const now = this.turnToward(x, y, this.rocketWas?.get(index));
+      heading.set(index, now);
+      if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+        drawExhaust(ctx, x, y, cell * 0.42 * scale, now.angle);
       }
-      // The short way round, or a rocket turning from just west of north to
-      // just east of it would take the long way to get there.
-      const from = was ? was.angle : 0;
-      const step = shortestTurn(wants - from) * turn;
-      const angle = from + Math.max(-most, Math.min(most, step));
-      heading.set(index, { x, y, angle, wants });
-
-      if (traveling) {
-        drawExhaust(ctx, x, y, cell * 0.42 * scale, angle);
-      }
-      this.blitTurned(x, y, scale, color, Special.ROCKET, angle);
+      this.blitTurned(x, y, scale, color, Special.ROCKET, now.angle);
     }
     this.rocketWas = heading;
 
@@ -1170,9 +1196,41 @@ export class Renderer {
     this.ctx.drawImage(sprite.canvas, x - size / 2, y - size / 2, size, size);
   }
 
+  /// A rocket comes round to its heading rather than snapping to it.
+  ///
+  /// Where it wants to point is a frame of its own travel, which is the
+  /// tangent of the arc it is flying. What it may not do is arrive there in
+  /// one frame: sitting in its cell it is upright, and the moment it moves it
+  /// would jump to whatever direction it set off in, then jump again as the
+  /// arc bit. Easing covers all of it with one rule, and because a launch
+  /// ramps up rather than starting at speed, the turn happens while the rocket
+  /// is still over its own cell, which is where a rocket turns.
+  ///
+  /// `was` is where this one was last frame, or nothing for one that has only
+  /// just appeared. One rule for every rocket: one flying off the board and
+  /// one spent out of the inventory are drawn on different canvases and turn
+  /// the same way.
+  turnToward(x, y, was) {
+    const turn = 1 - Math.exp(-this.frameMs / ROCKET_TURN_MS);
+    const most = ROCKET_TURN_PER_MS * this.frameMs;
+    // Held from the last frame that moved, so a rocket barely under way keeps
+    // the heading it has rather than reading no movement as upright.
+    let wants = was ? was.wants : 0;
+    if (was && Math.hypot(x - was.x, y - was.y) > 0.001) {
+      wants = Math.atan2(y - was.y, x - was.x) + Math.PI / 2;
+    }
+    // The short way round, or a rocket turning from just west of north to just
+    // east of it would take the long way to get there.
+    const from = was ? was.angle : 0;
+    const step = shortestTurn(wants - from) * turn;
+    return { x, y, wants, angle: from + Math.max(-most, Math.min(most, step)) };
+  }
+
   /// The same, for the two items that are drawn at an angle.
-  blitTurned(x, y, scale, color, special, angle) {
-    const { ctx } = this;
+  ///
+  /// On the board's canvas unless another is named, which the rockets spent
+  /// out of the inventory do: they fly on the effects layer.
+  blitTurned(x, y, scale, color, special, angle, ctx = this.ctx) {
     const sprite = this.sprite(color, special);
     const size = (sprite.size * scale) / this.dpr;
     ctx.save();
@@ -1249,6 +1307,53 @@ export function paintSpecialIcon(canvas, special, size) {
     ICON_COLOR,
     special,
   );
+}
+
+/// What each thing the run can spend looks like on the board. The cluster is
+/// missing on purpose: nothing on a board is one, so it gets art of its own.
+const CONSUMABLE_SPECIAL = {
+  [Consumable.ROCKET]: Special.ROCKET,
+  [Consumable.RAINBOW]: Special.RAINBOW,
+  [Consumable.CROSS_CLEAR]: Special.CROSS,
+};
+
+/// The three rockets of the cluster's icon, as fractions of its radius: one up
+/// the middle and two leaning away, so it reads as a handful going up at once
+/// rather than as one rocket drawn small.
+const CLUSTER_SHAPE = [
+  { x: 0, y: -0.3, size: 0.62, angle: 0 },
+  { x: -0.58, y: 0.28, size: 0.5, angle: -0.42 },
+  { x: 0.58, y: 0.28, size: 0.5, angle: 0.42 },
+];
+
+/**
+ * Paints one thing the run can spend, for the slot it sits in along the bottom.
+ *
+ * Three of them wear the board's own art, because a rocket spent out of the
+ * bar is the same rocket a 2x2 square leaves behind and should not have to be
+ * learned twice.
+ */
+export function paintConsumableIcon(canvas, kind, size) {
+  const special = CONSUMABLE_SPECIAL[kind];
+  if (special !== undefined) {
+    paintSpecialIcon(canvas, special, size);
+    return;
+  }
+
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+  const ctx = canvas.getContext('2d');
+  const radius = size * dpr * 0.4;
+  for (const rocket of CLUSTER_SHAPE) {
+    ctx.save();
+    ctx.translate(canvas.width / 2 + radius * rocket.x, canvas.height / 2 + radius * rocket.y);
+    ctx.rotate(rocket.angle);
+    drawRocketBody(ctx, 0, 0, radius * rocket.size);
+    ctx.restore();
+  }
 }
 
 /// The same turn expressed as the shortest way round, which is somewhere in
