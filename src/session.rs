@@ -666,7 +666,7 @@ mod tests {
         while session.game().phase() != Phase::Finished {
             meet_everything_but_the_score(session.game_mut());
             session.game_mut().progress.score = score;
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(session) {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
@@ -707,6 +707,15 @@ mod tests {
         panic!("no run in the first 64 seeds pays only moves for the opening level");
     }
 
+    /// The first legal move on the board, which is what these tests steer by.
+    ///
+    /// Not `hint`: that chooses at random from everything the board allows,
+    /// so a test playing by it would be measuring the draw. What is wanted
+    /// here is a bot that plays the same way every time.
+    fn first_move(session: &mut Session) -> Option<(Pos, Pos)> {
+        crate::matching::find_move(&session.game().board, session.game().rules())
+    }
+
     /// Marks every objective but the score as met, wherever the level's goals
     /// are not about the score at all.
     ///
@@ -743,7 +752,7 @@ mod tests {
         session.game_mut().progress.score = 1_000_000;
         while session.game().phase() != Phase::Finished {
             meet_everything_but_the_score(session.game_mut());
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(session) {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
@@ -886,7 +895,7 @@ mod tests {
             if session.game().phase() == Phase::Finished {
                 break;
             }
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(&mut session) {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
@@ -961,7 +970,7 @@ mod tests {
         session.game_mut().progress.score = 1_000_000;
         while session.game().phase() != Phase::Finished {
             meet_everything_but_the_score(session.game_mut());
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(&mut session) {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
@@ -1005,7 +1014,7 @@ mod tests {
                 session.game_mut().progress.score = silver - 500;
                 meet_everything_but_the_score(session.game_mut());
             }
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(&mut session) {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
@@ -1055,7 +1064,7 @@ mod tests {
             if !session.game().cleared() {
                 meet_everything_but_the_score(session.game_mut());
             }
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(&mut session) {
                 session.game_mut().try_swap(a, b);
             }
             session.update(16.0);
@@ -1181,7 +1190,7 @@ mod tests {
                 break;
             }
             if session.game().accepts_input() {
-                match session.game().hint() {
+                match first_move(&mut session) {
                     Some((a, b)) => {
                         session.game_mut().try_swap(a, b);
                     }
@@ -1202,7 +1211,7 @@ mod tests {
         assert_eq!(session.game().ap_gems_wanted, 0);
         for _ in 0..600 {
             session.update(16.0);
-            if let Some((a, b)) = session.game().hint() {
+            if let Some((a, b)) = first_move(&mut session) {
                 session.game_mut().try_swap(a, b);
             }
             assert!(
@@ -1224,7 +1233,7 @@ mod tests {
                 break;
             }
             if session.game().phase() == Phase::Idle && session.game().status() == Status::Playing {
-                if let Some((a, b)) = session.game().hint() {
+                if let Some((a, b)) = first_move(&mut session) {
                     session.game_mut().try_swap(a, b);
                 }
             }
@@ -1241,7 +1250,7 @@ mod tests {
         // level hand over moves for it too.
         for _ in 0..2000 {
             if session.game().phase() == Phase::Idle && session.game().status() == Status::Playing {
-                if let Some((a, b)) = session.game().hint() {
+                if let Some((a, b)) = first_move(&mut session) {
                     session.game_mut().try_swap(a, b);
                 }
             }
@@ -1454,7 +1463,7 @@ mod tests {
     #[test]
     fn retry_restores_the_level_without_unlocking_anything() {
         let mut session = Session::new(7);
-        let (a, b) = session.game().hint().unwrap();
+        let (a, b) = first_move(&mut session).unwrap();
         session.game_mut().try_swap(a, b);
         for _ in 0..200 {
             session.update(16.0);

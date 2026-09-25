@@ -38,6 +38,18 @@ const MAX_PARTICLES = 600;
 /// fill-rate bound long before it is logic bound.
 const MAX_DPR = 2;
 
+/// How a rocket comes round to a new heading: an e-folding time, and a
+/// ceiling on how far it may turn in one frame.
+///
+/// The ease alone settles small corrections nicely, which is most of a flight,
+/// where it is following the bend of its own arc. Its first step is its
+/// biggest, though, and a rocket launched back the way it is pointing has half
+/// a turn to make: unbounded that lands most of the turn in one frame, which
+/// is the snap this is here to avoid. The cap is about half a turn in a third
+/// of a second, well inside the shortest flight.
+const ROCKET_TURN_MS = 70;
+const ROCKET_TURN_PER_MS = 0.0095;
+
 /// A rocket wears no gem's colors, because it belongs to no color.
 const ROCKET_BODY = '#eceaf6';
 const ROCKET_EDGE = '#39325c';
@@ -134,6 +146,9 @@ export class Renderer {
     /// it peeled the jelly and was the clear that met the goal.
     this.jellySeen = null;
     this.goalsMet = [];
+    /// Where each rocket in the air was a frame ago, keyed by cell, which is
+    /// how a rocket on an arc knows which way it is pointing.
+    this.rocketWas = null;
     /// A line of text swelling and fading over the board, or null.
     this.toast = null;
     this.lastFrame = null;
@@ -335,6 +350,7 @@ export class Renderer {
     this.tributes.length = 0;
     this.goalFlash = this.goals.map(() => 0);
     this.goalInFlight = this.goals.map(() => 0);
+    this.rocketWas = null;
     this.toast = null;
     this.lastFrame = null;
     this.backdrop = null;
@@ -345,6 +361,9 @@ export class Renderer {
   updateParticles(now) {
     const dt = this.lastFrame === null ? 16 : Math.min(now - this.lastFrame, 50);
     this.lastFrame = now;
+    // Kept for anything drawn later in the frame that has to move by time
+    // rather than by where the engine says a cell is; see the rockets.
+    this.frameMs = dt;
 
     if (this.pendingBursts.length > 0) {
       const due = [];
@@ -1015,7 +1034,7 @@ export class Renderer {
       }
 
       if (special === Special.ROCKET) {
-        airborne.push([x, y, scale, color, offsets[i * 3], offsets[i * 3 + 1]]);
+        airborne.push([x, y, scale, color, offsets[i * 3], offsets[i * 3 + 1], i]);
       } else if (special === Special.ARCHIPELAGO) {
         // The one gem drawn from scratch every frame rather than blitted: its
         // turn is a rotation in three dimensions, which no amount of turning a
@@ -1033,14 +1052,40 @@ export class Renderer {
       this.drawParticles(ctx);
     }
 
-    for (const [x, y, scale, color, dx, dy] of airborne) {
+    // A rocket comes round to its heading rather than snapping to it.
+    //
+    // Where it wants to point is a frame of its own travel, which is the
+    // tangent of the arc it is flying. What it may not do is arrive there in
+    // one frame: sitting in its cell it is upright, and the moment it moves it
+    // would jump to whatever direction it set off in, then jump again as the
+    // arc bit. Easing covers all of it with one rule, and because a launch
+    // ramps up rather than starting at speed, the turn happens while the
+    // rocket is still over its own cell, which is where a rocket turns.
+    const heading = new Map();
+    const turn = 1 - Math.exp(-this.frameMs / ROCKET_TURN_MS);
+    const most = ROCKET_TURN_PER_MS * this.frameMs;
+    for (const [x, y, scale, color, dx, dy, index] of airborne) {
       const traveling = Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001;
-      const angle = traveling ? Math.atan2(dy, dx) + Math.PI / 2 : 0;
+      const was = this.rocketWas?.get(index);
+      // Held from the last frame that moved, so a rocket barely under way
+      // keeps the heading it has rather than reading no movement as upright.
+      let wants = was ? was.wants : 0;
+      if (was && Math.hypot(x - was.x, y - was.y) > 0.001) {
+        wants = Math.atan2(y - was.y, x - was.x) + Math.PI / 2;
+      }
+      // The short way round, or a rocket turning from just west of north to
+      // just east of it would take the long way to get there.
+      const from = was ? was.angle : 0;
+      const step = shortestTurn(wants - from) * turn;
+      const angle = from + Math.max(-most, Math.min(most, step));
+      heading.set(index, { x, y, angle, wants });
+
       if (traveling) {
         drawExhaust(ctx, x, y, cell * 0.42 * scale, angle);
       }
       this.blitTurned(x, y, scale, color, Special.ROCKET, angle);
     }
+    this.rocketWas = heading;
 
     if (this.hint) {
       this.drawHint(timeMs);
@@ -1192,6 +1237,13 @@ export function paintSpecialIcon(canvas, special, size) {
     ICON_COLOR,
     special,
   );
+}
+
+/// The same turn expressed as the shortest way round, which is somewhere in
+/// `(-PI, PI]`. Without this a rocket turning past north would swing the whole
+/// way round the other side.
+export function shortestTurn(radians) {
+  return radians - TAU * Math.round(radians / TAU);
 }
 
 /// A point along a mote's arc: from where its cell was, bending past a control

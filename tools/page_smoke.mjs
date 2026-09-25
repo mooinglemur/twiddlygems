@@ -125,7 +125,7 @@ for (const id of [
   'moves', 'objectives', 'feed',
   'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons',
   'tracker', 'tracker-items', 'level-list',
-  'levels-button', 'hint-button', 'retry-button', 'sound-button',
+  'levels-button', 'retry-button', 'sound-button',
   'title', 'solo-button', 'solo-note', 'archipelago-button',
   'setup', 'setup-options', 'setup-start', 'setup-back',
 ]) {
@@ -447,9 +447,54 @@ assert.ok(
   'a scoring swap did not cost a move',
 );
 
-// The hint button has to produce a highlight without throwing.
-dispatch('hint-button', 'click', {});
-pump(2);
+// A hint arrives by waiting, which is the only way there is: the button that
+// asked for one is gone, and it took a corner of the bar for something that
+// happens by itself a few seconds later.
+{
+  const { renderer } = window.twiddlygems;
+  assert.ok(
+    !/id="hint-button"/.test(await readFile('web/index.html', 'utf8')),
+    'the hint button is still in the markup',
+  );
+  renderer.hint = null;
+  let waited = 0;
+  for (; waited < 900 && !renderer.hint; waited += 1) {
+    pump(1);
+  }
+  assert.ok(renderer.hint, 'staring at the board offered no move');
+  assert.ok(waited > 60, `the hint arrived after ${waited} frames, which is no wait at all`);
+  // Drawn as well as chosen, because a highlight that throws is a blank page.
+  renderer.dirty = true;
+  renderer.draw(performance.now());
+
+  // Touching the board takes the nudge away and waiting brings it back, and
+  // what comes back is the same move. Selecting a gem and letting it go is a
+  // whole round trip that costs nothing, so without this a player could tap
+  // their way through every move on the board without making one.
+  const offered = renderer.hint;
+  const movesBefore = window.twiddlygems.engine.movesLeft;
+  for (let round = 0; round < 3; round += 1) {
+    dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+    dispatch('board', 'pointerup', { clientX: 40, clientY: 40 });
+    pump(2);
+    assert.ok(!renderer.hint, 'touching the board left the nudge up');
+    for (let i = 0; i < 900 && !renderer.hint; i += 1) {
+      pump(1);
+    }
+    assert.deepEqual(
+      renderer.hint,
+      offered,
+      `tapping and waiting ${round + 1} times over dealt another hint`,
+    );
+  }
+  // And none of that was a move, or the hint would have been entitled to
+  // change and nothing above was being tested.
+  assert.equal(
+    window.twiddlygems.engine.movesLeft,
+    movesBefore,
+    'tapping around cost a move, which is not what was being tested',
+  );
+}
 
 // Restart, which reloads the level and rebuilds the HUD.
 dispatch('retry-button', 'click', {});
@@ -596,6 +641,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
     }
     realSparkle(burst);
   };
+
   for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
     if (engine.acceptsInput) {
       const move = engine.hint();
@@ -1190,6 +1236,31 @@ click(overlayButton('Close'), 'the level picker has no way out');
   renderer.goalsMet[0] = true;
   clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: asked });
   assert.equal(renderer.tributes.length, 0, 'a goal already met was still being fed');
+}
+
+// A rocket turns the short way round.
+//
+// This is the half of its rotation that can be got at: the easing itself
+// needs a rocket in the air, and no board in this whole run ever mints one,
+// so that part is checked by tracing a real flight in a browser instead. What
+// is here is the piece whose failure is the loudest: a rocket asked to turn
+// ten degrees anticlockwise going the other three hundred and fifty instead.
+{
+  const { shortestTurn } = await import(path.resolve('web/js/render.js'));
+  const TAU = Math.PI * 2;
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  assert.ok(near(shortestTurn(0.4), 0.4), 'a short turn was made longer');
+  assert.ok(near(shortestTurn(-0.4), -0.4));
+  // Past half a turn one way is short of half a turn the other.
+  assert.ok(near(shortestTurn(Math.PI + 0.4), -Math.PI + 0.4), 'it took the long way round');
+  assert.ok(near(shortestTurn(-Math.PI - 0.4), Math.PI - 0.4));
+  // And winding up any number of whole turns changes nothing.
+  for (const laps of [-3, -1, 1, 5]) {
+    assert.ok(
+      near(shortestTurn(0.4 + laps * TAU), 0.4),
+      `${laps} whole turns either way should come to the same heading`,
+    );
+  }
 }
 
 console.log(

@@ -552,11 +552,16 @@ pub unsafe extern "C" fn tg_restore(handle: *mut Handle, id: u32) {
 /// A legal move packed as `r1 << 24 | c1 << 16 | r2 << 8 | c2`, or `u32::MAX`
 /// when the board has none.
 ///
+/// One of all the board allows rather than the first one found, so asking
+/// twice may well name two different moves. That is why this takes the handle
+/// by `*mut`: choosing draws from the run, which no amount of reading would.
+///
 /// # Safety
 /// `handle` must come from [`tg_create`].
 #[no_mangle]
-pub unsafe extern "C" fn tg_hint(handle: *const Handle) -> u32 {
-    match session!(handle, u32::MAX).session.game().hint() {
+pub unsafe extern "C" fn tg_hint(handle: *mut Handle) -> u32 {
+    let handle = session_mut!(handle, u32::MAX);
+    match handle.session.game_mut().hint() {
         Some((a, b)) => {
             ((a.r as u32) << 24) | ((a.c as u32) << 16) | ((b.r as u32) << 8) | b.c as u32
         }
@@ -695,11 +700,20 @@ mod tests {
             );
             assert_eq!(events[0], EV_SWAP);
 
-            for _ in 0..400 {
+            // Played out rather than given a fixed number of frames, and
+            // finished counts as at rest: which move `tg_hint` names is a draw
+            // now, and the opening level is a three move puzzle, so one of
+            // them can leave a board with nothing left to do. What this test
+            // is about is that a move made through the ABI reaches the engine
+            // and comes back, not where that particular board ends up.
+            let at_rest = |phase: u32| phase == 0 || phase == 6;
+            let mut frames = 0;
+            while !at_rest(tg_phase(handle)) && frames < 4_000 {
                 tg_update(handle, 16.0);
+                frames += 1;
             }
             assert!(tg_score(handle) > 0.0, "the hinted move should have scored");
-            assert_eq!(tg_phase(handle), 0, "the board should be idle again");
+            assert!(at_rest(tg_phase(handle)), "the board never came back to rest");
 
             tg_destroy(handle);
         }

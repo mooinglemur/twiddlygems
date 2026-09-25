@@ -77,6 +77,17 @@ enum Bot {
     Greedy,
 }
 
+/// The move the floor bot takes: the first one the board allows, walking it
+/// top left to bottom right.
+///
+/// Read off the board rather than asked of `Game::hint`, which is the player's
+/// nudge and chooses at random from everything legal. This bot is the floor
+/// every table here is read against, and a floor that plays a different game
+/// each run is no floor at all.
+fn first_move(game: &Game) -> Option<(Pos, Pos)> {
+    matching::find_move(&game.board, game.rules())
+}
+
 fn main() {
     specials_made(Bot::First, 60);
     println!();
@@ -171,7 +182,7 @@ fn play_counting_gems(game: &mut Game) -> u32 {
             break;
         }
         if game.accepts_input() {
-            match game.hint() {
+            match first_move(game) {
                 Some((a, b)) => {
                     game.try_swap(a, b);
                 }
@@ -270,7 +281,7 @@ fn chains(bot: Bot, seeds: u64) {
                 }
                 if game.phase() == Phase::Idle {
                     let choice = match bot {
-                        Bot::First => game.hint(),
+                        Bot::First => first_move(&game),
                         Bot::Greedy => best_move(&game),
                     };
                     match choice {
@@ -335,7 +346,7 @@ fn match_sizes(bot: Bot, seeds: u64) {
                 }
                 if game.phase() == Phase::Idle {
                     let choice = match bot {
-                        Bot::First => game.hint(),
+                        Bot::First => first_move(&game),
                         Bot::Greedy => best_move(&game),
                     };
                     match choice {

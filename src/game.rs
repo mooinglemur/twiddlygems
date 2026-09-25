@@ -94,6 +94,10 @@ const CASH_IN_STEP_MS: f32 = 300.0;
 /// the move that ran the counter out is never seen to finish.
 const END_HOLD_MS: f32 = 1_000.0;
 
+/// Splits the hint's own stream off the deal's. Any constant would do; what
+/// matters is that the two streams differ. See [`Game::hint_rng`].
+const HINT_STREAM: u64 = 0x4849_4e54_5f5f_5f5f;
+
 /// What a leftover move can be turned into.
 ///
 /// The three that clear a line or a cross, and not the other two. A rainbow
@@ -371,6 +375,20 @@ pub struct Game {
     pub moves_left: u32,
     seed: u64,
     rng: Rng,
+    /// A stream of its own, for choosing which legal move to offer.
+    ///
+    /// Separate from `rng` on purpose. A hint is the one thing the player asks
+    /// for that changes nothing about the board, and drawing from the deal to
+    /// answer it would make every gem that falls afterwards depend on how
+    /// often they asked. A run would stop being the same run.
+    hint_rng: Rng,
+    /// The move this board has already been offering, if it has been asked.
+    ///
+    /// Kept so that asking twice about the same board gets the same answer;
+    /// see [`Game::hint`]. Not cleared when a move is made, because it does
+    /// not need to be: a move that is no longer on the board is no longer a
+    /// useful swap, and that is what retires it.
+    hinted: Option<(Pos, Pos)>,
     phase: Phase,
     status: Status,
     /// Cells popping during the current clear, each with the moment it pops,
@@ -440,6 +458,10 @@ impl Game {
             moves_left: spec.moves,
             seed,
             rng: Rng::new(seed),
+            // Off the same seed, so a run is still the same run, but not off
+            // the same stream.
+            hint_rng: Rng::new(seed ^ HINT_STREAM),
+            hinted: None,
             phase: Phase::Idle,
             status: Status::Playing,
             clearing: Vec::new(),
@@ -474,6 +496,8 @@ impl Game {
             None => Board::new(self.spec.rules.rows, self.spec.rules.cols),
         };
         self.rng = Rng::new(self.seed);
+        self.hint_rng = Rng::new(self.seed ^ HINT_STREAM);
+        self.hinted = None;
         self.progress = Progress::default();
         self.progress.jelly_total = self.board.jelly_cells();
         self.progress.jelly_left = self.progress.jelly_total;
@@ -549,9 +573,37 @@ impl Game {
         self.phase == Phase::Idle && self.status == Status::Playing
     }
 
-    /// A legal move, for the hint button and for the idle nudge.
-    pub fn hint(&self) -> Option<(Pos, Pos)> {
-        matching::find_move(&self.board, &self.spec.rules)
+    /// A legal move to nudge the player with, chosen from all of them.
+    ///
+    /// The whole board rather than the first move found. Walking the board in
+    /// order and stopping at the first hit always points at the top left,
+    /// which is both a tell and a poor suggestion: the move nearest the top
+    /// of the board is rarely the interesting one, and a player who leans on
+    /// hints is walked through the level in reading order.
+    ///
+    /// **One answer per board.** Having chosen, it keeps saying the same thing
+    /// for as long as that move is still there. The nudge goes away when the
+    /// player touches anything and comes back when they stop, so without this
+    /// a player could tap twice and be dealt another suggestion, and then
+    /// another, until they liked one: a reroll for free and a way to be shown
+    /// every move on the board without making any of them.
+    ///
+    /// Takes the game rather than borrowing it, because choosing needs a
+    /// draw. It comes from a stream of the hint's own so that asking changes
+    /// nothing else about the run; see [`Game::hint_rng`].
+    pub fn hint(&mut self) -> Option<(Pos, Pos)> {
+        // Still there, so still the answer. This is also what retires it: a
+        // move that has been played, or that the board has fallen away from,
+        // stops being a useful swap and the next ask draws afresh.
+        if let Some((a, b)) = self.hinted {
+            if matching::is_useful_swap(&self.board, &self.spec.rules, a, b) {
+                return Some((a, b));
+            }
+        }
+        let moves = matching::legal_moves(&self.board, &self.spec.rules);
+        let at = self.hint_rng.below(moves.len() as u32) as usize;
+        self.hinted = moves.get(at).copied();
+        self.hinted
     }
 
     // ---- input -----------------------------------------------------------
@@ -1891,11 +1943,8 @@ impl Game {
                     let (from, to) = (launch.from, launch.to);
                     let distance = cells_between(from, to).max(0.001);
                     let flown = (flown_cells(elapsed) / distance).clamp(0.0, 1.0);
-                    self.set_offset(
-                        from,
-                        (to.c - from.c) as f32 * flown,
-                        (to.r - from.r) as f32 * flown,
-                    );
+                    let (dx, dy) = lob(from, to, flown);
+                    self.set_offset(from, dx, dy);
                     // The target is left entirely alone. It used to start
                     // shrinking once the rocket was most of the way there,
                     // which on a long flight meant it was visibly cringing for
@@ -1957,6 +2006,51 @@ fn cells_between(a: Pos, b: Pos) -> f32 {
     let dr = (b.r - a.r) as f32;
     let dc = (b.c - a.c) as f32;
     (dr * dr + dc * dc).sqrt()
+}
+
+/// How far off the straight line a rocket swings at the top of its arc, as a
+/// share of how far it is going.
+///
+/// A quadratic curve sits half way to its control point at the middle, so the
+/// widest the flight gets is half of this. More pronounced than the arc a
+/// cleared gem takes to its goal, because a rocket is a thing being thrown
+/// rather than a mote drifting: at a fifth of the distance it reads as a lob
+/// from across the board, and anything much past that starts flying around
+/// the board rather than over it.
+const LAUNCH_BOW: f32 = 0.42;
+
+/// Where a rocket is when it is `flown` of the way from `from` to `to`, as an
+/// offset from `from` in cells.
+///
+/// A curve rather than a straight line, and bowed the same way every time: up
+/// the board, so it reads as something lobbed over the gems in between rather
+/// than fired through them. A rocket going straight up or down has no up to
+/// bow toward, so those take their side from where they started, which keeps
+/// two of them in the same column from tracing the same path.
+///
+/// Parameterized by the fraction of the *straight line* covered, not of the
+/// curve, so the arc changes where the rocket appears without changing when it
+/// gets there. The timing is the engine's promise to the sound and to the
+/// clear that follows; the shape is not.
+fn lob(from: Pos, to: Pos, flown: f32) -> (f32, f32) {
+    let (dx, dy) = ((to.c - from.c) as f32, (to.r - from.r) as f32);
+    let distance = (dx * dx + dy * dy).sqrt();
+    if distance < 0.001 {
+        return (0.0, 0.0);
+    }
+
+    // Square to the flight, and of the two ways to turn, the one that goes up.
+    let (mut px, mut py) = (dy / distance, -dx / distance);
+    if py > 0.0 || (py == 0.0 && (from.r + from.c) % 2 == 0) {
+        px = -px;
+        py = -py;
+    }
+
+    let bow = distance * LAUNCH_BOW;
+    let (cx, cy) = (dx * 0.5 + px * bow, dy * 0.5 + py * bow);
+    let t = flown.clamp(0.0, 1.0);
+    let u = 1.0 - t;
+    (2.0 * u * t * cx + t * t * dx, 2.0 * u * t * cy + t * t * dy)
 }
 
 /// Distance covered after `elapsed` milliseconds by something that accelerates
@@ -2094,7 +2188,10 @@ mod tests {
                 matching::find_matches(&game.board, game.rules()).is_empty(),
                 "seed {seed} dealt a board that was already matching"
             );
-            assert!(game.hint().is_some(), "seed {seed} dealt a dead board");
+            assert!(
+                matching::find_move(&game.board, game.rules()).is_some(),
+                "seed {seed} dealt a dead board",
+            );
         }
     }
 
@@ -2910,6 +3007,163 @@ mod tests {
 
     fn lined_up(game: &mut Game, a: Pos, b: Pos) -> u32 {
         swap_and_settle(game, a, b).0
+    }
+
+    #[test]
+    fn a_rocket_arcs_over_the_board_and_still_lands_where_it_was_aimed() {
+        let from = Pos::new(6, 1);
+        let to = Pos::new(6, 7);
+
+        // Both ends are where they were: the arc is the middle of the flight,
+        // not a different flight.
+        assert_eq!(lob(from, to, 0.0), (0.0, 0.0));
+        let (dx, dy) = lob(from, to, 1.0);
+        assert!((dx - 6.0).abs() < 0.001 && dy.abs() < 0.001, "it landed at ({dx}, {dy})");
+
+        // And it leaves the straight line in between, upward: rows count down
+        // the screen, so a lob is a negative row offset.
+        let (mx, my) = lob(from, to, 0.5);
+        assert!((mx - 3.0).abs() < 0.001, "the middle of the flight slid along to {mx}");
+        assert!(my < -0.5, "the middle of the flight only rose to {my}");
+        // Half the control point's own reach, which is what a quadratic does.
+        assert!((my + 6.0 * LAUNCH_BOW / 2.0).abs() < 0.001, "the arc is {my} high");
+
+        // A flight straight down the board has no up to bow toward, so it
+        // takes a side instead, and two starting on different squares do not
+        // trace the same path.
+        let down = lob(Pos::new(1, 4), Pos::new(7, 4), 0.5);
+        let beside = lob(Pos::new(1, 5), Pos::new(7, 5), 0.5);
+        assert!(down.0.abs() > 0.5, "a vertical flight went straight: {down:?}");
+        assert_eq!(down.0, -beside.0, "two vertical flights bowed the same way");
+
+        // Nothing to arc over when it is going nowhere.
+        assert_eq!(lob(from, from, 0.5), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_rocket_in_the_air_is_never_off_the_board() {
+        // The arc puts the rocket somewhere no cell is, which is the point,
+        // but it has to stay somewhere the board is drawn: a lob that leaves
+        // the top of a nine row board is a rocket that vanishes mid-flight.
+        //
+        // The longest flights are corner to corner, which is where the arc
+        // reaches furthest.
+        for (from, to) in [
+            (Pos::new(0, 0), Pos::new(8, 8)),
+            (Pos::new(8, 0), Pos::new(0, 8)),
+            (Pos::new(8, 8), Pos::new(0, 0)),
+            (Pos::new(4, 0), Pos::new(4, 8)),
+            (Pos::new(0, 4), Pos::new(8, 4)),
+        ] {
+            for step in 0..=20 {
+                let t = step as f32 / 20.0;
+                let (dx, dy) = lob(from, to, t);
+                let (r, c) = (from.r as f32 + dy, from.c as f32 + dx);
+                // A cell of slack at each edge, because a rocket half off the
+                // top still reads as a rocket and the board is drawn with a
+                // margin around it.
+                assert!(
+                    (-1.0..9.0).contains(&r) && (-1.0..9.0).contains(&c),
+                    "flying {from:?} to {to:?}, at {t} it was at row {r}, column {c}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_hint_is_drawn_from_every_move_the_board_allows() {
+        // Always legal, never the same one every time, and never anything the
+        // board does not allow. Walking the board and taking the first hit
+        // would pass the first of those and fail the other two.
+        let mut game = Game::new(spec(9, 9, 5, 60), 3);
+        let legal = matching::legal_moves(&game.board, game.rules());
+        assert!(legal.len() > 3, "this board offers {} moves, so a draw says little", legal.len());
+
+        // Forgetting what it last said between asks, because it does not
+        // forget on its own: that is the next test's business. This one is
+        // about the draw.
+        let mut seen = Vec::new();
+        for _ in 0..200 {
+            game.hinted = None;
+            let move_ = game.hint().expect("a board with moves on it offered none");
+            assert!(legal.contains(&move_), "{move_:?} is not a move this board allows");
+            if !seen.contains(&move_) {
+                seen.push(move_);
+            }
+        }
+        assert_eq!(
+            seen.len(),
+            legal.len(),
+            "two hundred draws from {} moves turned up only {}: {seen:?}",
+            legal.len(),
+            seen.len(),
+        );
+
+        // Nothing to offer on a board with nothing to do.
+        let mut stuck = quiet_game(&["01", "10"]);
+        assert_eq!(stuck.hint(), None, "a board with no move offered one");
+    }
+
+    #[test]
+    fn a_board_has_one_hint_and_keeps_it_until_it_is_gone() {
+        // The nudge goes away when the player touches anything and comes back
+        // when they stop, so a hint that was drawn afresh each time would let
+        // them tap twice for another suggestion, and again, until they liked
+        // one. That is a reroll for free and a way to be shown every move on
+        // the board without making any of them.
+        let mut game = Game::new(spec(9, 9, 5, 60), 3);
+        assert!(
+            matching::legal_moves(&game.board, game.rules()).len() > 3,
+            "this board offers too few moves for asking twice to mean anything",
+        );
+
+        let offered = game.hint().expect("a fresh board has a move");
+        for _ in 0..50 {
+            assert_eq!(game.hint(), Some(offered), "asking again dealt another hint");
+        }
+
+        // And it is retired by the move going away rather than by anything
+        // announcing that it has. Taken off the board here rather than played:
+        // playing it deals fresh gems into those very cells, and they may well
+        // make the same two positions worth swapping all over again, which is
+        // a perfectly good answer and not the one this is trying to catch.
+        let (a, _) = offered;
+        game.board.set_gem(a, None);
+        assert!(
+            !matching::is_useful_swap(&game.board, game.rules(), offered.0, offered.1),
+            "the move this is about is somehow still on the board",
+        );
+
+        let next = game.hint().expect("this board still has moves");
+        assert_ne!(next, offered, "the hint outlived the move it was pointing at");
+        assert!(
+            matching::legal_moves(&game.board, game.rules()).contains(&next),
+            "{next:?} is not a move this board allows",
+        );
+    }
+
+    #[test]
+    fn asking_for_a_hint_changes_nothing_else_about_the_run() {
+        // The draw comes from a stream of its own. Sharing the deal's would
+        // make every gem that falls afterwards depend on how often the player
+        // asked for help, and a run would stop being the same run.
+        let mut asked = Game::new(spec(9, 9, 5, 60), 11);
+        let mut quiet = Game::new(spec(9, 9, 5, 60), 11);
+        for _ in 0..25 {
+            asked.hint();
+        }
+
+        let (a, b) = matching::find_move(&quiet.board, quiet.rules()).expect("a move");
+        assert!(asked.try_swap(a, b));
+        assert!(quiet.try_swap(a, b));
+        settle(&mut asked);
+        settle(&mut quiet);
+
+        let gems = |game: &Game| -> Vec<Option<Gem>> {
+            game.board.positions().map(|p| game.board.gem(p)).collect()
+        };
+        assert_eq!(gems(&asked), gems(&quiet), "asking for hints dealt a different board");
+        assert_eq!(asked.progress.score, quiet.progress.score);
     }
 
     #[test]

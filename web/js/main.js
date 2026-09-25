@@ -11,7 +11,13 @@ import { Hud } from './hud.js';
 const WASM_URL = 'twiddlygems.wasm';
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SOUND_KEY = 'twiddlygems.sound.v1';
-/** How long a player may stare at the board before it offers a move. */
+/**
+ * How long a player may stare at the board before it offers a move.
+ *
+ * The only way a hint appears. There was a button for it too, which asked the
+ * player to admit to wanting one and took up a corner of the bar for something
+ * that happens by itself a few seconds later.
+ */
 const HINT_DELAY_MS = 6000;
 /** A backgrounded tab hands back one enormous frame; cap what we feed in. */
 const MAX_FRAME_MS = 100;
@@ -45,7 +51,6 @@ const dom = {
   trackerItems: document.getElementById('tracker-items'),
   levelList: document.getElementById('level-list'),
   levelsButton: document.getElementById('levels-button'),
-  hintButton: document.getElementById('hint-button'),
   retryButton: document.getElementById('retry-button'),
   soundButton: document.getElementById('sound-button'),
 };
@@ -456,11 +461,6 @@ async function boot() {
 
   dom.setupStart.addEventListener('click', startSolo);
   dom.setupBack.addEventListener('click', showTitle);
-
-  dom.hintButton.addEventListener('click', () => {
-    renderer.hint = engine.hint();
-    hintAt = performance.now() + HINT_DELAY_MS;
-  });
 
   dom.retryButton.addEventListener('click', () => {
     engine.retry();

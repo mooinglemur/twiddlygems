@@ -364,6 +364,25 @@ pub fn find_move(board: &Board, rules: &Rules) -> Option<(Pos, Pos)> {
     None
 }
 
+/// Every move the board allows, rather than the first one found.
+///
+/// Each pair once: a swap is the same swap from either end, so only the
+/// neighbor to the right and the one below are tried, the same way
+/// [`find_move`] walks. The order is the board's, top left to bottom right,
+/// which is exactly why nothing should show one of these to a player without
+/// choosing between them first.
+pub fn legal_moves(board: &Board, rules: &Rules) -> Vec<(Pos, Pos)> {
+    let mut moves = Vec::new();
+    for p in board.positions() {
+        for q in [Pos::new(p.r, p.c + 1), Pos::new(p.r + 1, p.c)] {
+            if board.contains(q) && is_useful_swap(board, rules, p, q) {
+                moves.push((p, q));
+            }
+        }
+    }
+    moves
+}
+
 /// What a special does when it goes off. A rocket does nothing here: it waits
 /// for the clear to finish and then flies, which the game drives as its own
 /// phase.
