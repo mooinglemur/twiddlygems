@@ -44,6 +44,17 @@ export class Audio {
     this.master = null;
     this.noise = null;
     this.enabled = true;
+    /// What is still sounding, by name: one entry per voice, saying when it
+    /// ends on the audio clock and holding the node to unplug once it has.
+    ///
+    /// The audio clock and not a timer. A voice used to be released by
+    /// `setTimeout`, which a phone under load delays and a backgrounded tab
+    /// throttles hard. Delay those and the count sticks at the cap, every
+    /// later sound of that name is dropped on the floor, and the game goes
+    /// quiet or lets a few through in pieces. The clock that decides when a
+    /// sound actually ends is the one that should say when its voice is free,
+    /// and it cannot run late because it is the same clock the sound is
+    /// scheduled on.
     this.voices = new Map();
     this.started = 0;
   }
@@ -137,12 +148,14 @@ export class Audio {
       return false;
     }
 
+    // Before the cap is read, so what it is read against is what is actually
+    // still sounding rather than everything ever started.
+    this.sweep();
     const cap = sound.voiceCap ?? DEFAULT_VOICE_CAP;
-    const live = this.voices.get(name) ?? 0;
-    if (live >= cap) {
+    const live = this.voices.get(name) ?? [];
+    if (live.length >= cap) {
       return false;
     }
-    this.voices.set(name, live + 1);
     this.started += 1;
 
     // `scatter` holds a sound back by a random moment of its own. Twenty gems
@@ -156,20 +169,61 @@ export class Audio {
     // vary with distance.
     const stretch = duration && sound.duration ? Math.max(0.05, duration) / sound.duration : 1;
     let longest = 0;
+    const nodes = [];
     for (const layer of layersFor(sound, stage)) {
-      longest = Math.max(longest, this.playLayer(layer, at, level, pan, detune, note, stretch));
+      const { span, tail } = this.playLayer(layer, at, level, pan, detune, note, stretch);
+      longest = Math.max(longest, span);
+      nodes.push(tail);
     }
 
-    // Release the voice once the tail has finished, on a timer because a layer
-    // may have been dropped and there is then no node to listen to.
-    const holdMs = (Math.max(0, at - this.ctx.currentTime) + longest) * 1000 + 40;
-    window.setTimeout(() => {
-      this.voices.set(name, Math.max(0, (this.voices.get(name) ?? 1) - 1));
-    }, holdMs);
+    // A moment past the end, so nothing is unplugged while its own tail is
+    // still ringing out.
+    live.push({ endsAt: at + longest + 0.05, nodes });
+    this.voices.set(name, live);
     return true;
   }
 
-  /// Builds one layer's little graph and schedules it. Returns how long it runs.
+  /// Forgets the voices that have finished and unplugs what they were built
+  /// from.
+  ///
+  /// The unplugging matters as much as the counting. Nothing else disconnects
+  /// anything: a stopped source is eligible to be collected but its chain
+  /// stays wired to the master bus until the browser gets round to it, and a
+  /// level's worth of them is a great deal for a phone to be carrying. One
+  /// disconnect per layer is enough, because a chain cut from the output is a
+  /// chain nothing downstream has to look at.
+  ///
+  /// Driven from `play` rather than from a clock of its own. When nothing is
+  /// being played there is nothing arriving to be late for, and the handful
+  /// left connected through a silence costs nothing.
+  sweep() {
+    if (!this.ctx) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    for (const [name, live] of this.voices) {
+      let kept = 0;
+      for (const voice of live) {
+        if (voice.endsAt > now) {
+          live[kept] = voice;
+          kept += 1;
+          continue;
+        }
+        for (const node of voice.nodes) {
+          node.disconnect();
+        }
+      }
+      live.length = kept;
+      if (kept === 0) {
+        this.voices.delete(name);
+      }
+    }
+  }
+
+  /// Builds one layer's little graph and schedules it.
+  ///
+  /// Hands back how long it runs and the node on the end of it, which is what
+  /// `sweep` unplugs from the master bus once it has.
   playLayer(layer, at, level, pan, detune, noteOverride, stretch = 1) {
     const ctx = this.ctx;
     const jitter = layer.jitter ?? {};
@@ -290,7 +344,7 @@ export class Audio {
 
     source.start(start, layer.source === 'noise' ? Math.random() * 1.5 : undefined);
     source.stop(start + duration + 0.01);
-    return (layer.delay ?? 0) * span + duration;
+    return { span: (layer.delay ?? 0) * span + duration + phase, tail };
   }
 }
 

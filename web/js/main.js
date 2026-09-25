@@ -238,17 +238,19 @@ async function boot() {
   // context that never starts, and the game plays in silence while the button
   // still says the sound is on. Listening for the end of the gesture as well
   // covers the same ground from the other side.
+  // Kept for the life of the page rather than taken off the moment the device
+  // opens. A context that has been running can be suspended again long
+  // afterwards: the phone locks, the browser goes to the background, a call
+  // arrives. Nothing else would ever bring it back, so the rest of the session
+  // played in silence with the button still saying the sound was on.
+  //
+  // Cheap to leave in place: once there is a running context `unlock` is a
+  // property read and a return. And a browser will only let a context resume
+  // from a gesture anyway, so the next tap is exactly the moment to try.
   const gestures = ['pointerdown', 'pointerup', 'keydown'];
-  const openAudio = () => {
-    audio.unlock();
-    if (audio.ready) {
-      for (const gesture of gestures) {
-        window.removeEventListener(gesture, openAudio, true);
-      }
-    }
-  };
+  const openAudio = () => audio.unlock();
   for (const gesture of gestures) {
-    window.addEventListener(gesture, openAudio, { capture: true });
+    window.addEventListener(gesture, openAudio, { capture: true, passive: true });
   }
 
   dom.soundButton.addEventListener('click', () => {

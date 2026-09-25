@@ -591,8 +591,15 @@ dispatch('sound-button', 'click', {});
   assert.equal(asked, 2, 'a second tap should try again rather than giving up');
   assert.ok(audio.ready, 'the second ask is the one that works');
 
+  // And it keeps asking for the life of the page. A context that has been
+  // running can be suspended again long afterwards: the phone locks, the
+  // browser is backgrounded, a call arrives. Giving up once it started meant
+  // nothing ever brought it back, and the rest of the session played in
+  // silence with the button still claiming the sound was on.
+  running = false;
   gesture('pointerdown');
-  assert.equal(asked, 2, 'and once it is running, it stops asking');
+  assert.equal(asked, 3, 'a device suspended after it started was never asked to come back');
+  assert.ok(audio.ready, 'so it never came back');
 
   // Hand the real object back. Both of these shadow what the class provides,
   // and left in place they leave an Audio that says it is ready with no
@@ -1601,6 +1608,87 @@ let flightFrames = 0;
   pump(1);
   assert.ok(renderer.flights.length >= 3, `a cluster is three rockets at least: ${renderer.flights.length}`);
   pump(200);
+}
+
+// ---- voices are released by the audio clock ----
+//
+// A voice used to be freed by `setTimeout`. A phone under load delays those
+// and a backgrounded tab throttles them hard, and once the releases fall
+// behind the arrivals the count sticks at the cap: every later sound of that
+// name is dropped, so the game goes quiet or lets a few through in pieces.
+//
+// Note what pins the "no timer" half of this: the stub window below has no
+// `setTimeout` at all, so anything reaching for one throws rather than quietly
+// working here and failing on a phone.
+{
+  const { Audio } = await import(path.resolve('web/js/audio.js'));
+
+  let disconnects = 0;
+  const param = () => ({
+    value: 0,
+    setValueAtTime() {},
+    linearRampToValueAtTime() {},
+    exponentialRampToValueAtTime() {},
+  });
+  const audioNode = () => ({
+    frequency: param(), Q: param(), gain: param(), detune: param(), pan: param(),
+    threshold: param(), knee: param(), ratio: param(), attack: param(), release: param(),
+    connect() {},
+    disconnect() { disconnects += 1; },
+    start() {},
+    stop() {},
+  });
+  const ctx = {
+    currentTime: 0,
+    sampleRate: 48000,
+    state: 'running',
+    createDynamicsCompressor: audioNode,
+    createGain: audioNode,
+    createOscillator: audioNode,
+    createBufferSource: audioNode,
+    createBiquadFilter: audioNode,
+    createStereoPanner: audioNode,
+    createBuffer: (channels, frames) => ({
+      duration: frames / 48000,
+      getChannelData: () => new Float32Array(frames),
+    }),
+    destination: audioNode(),
+  };
+
+  const audio = new Audio();
+  audio.attach(ctx);
+
+  // A level's worth of clears with the clock running, which is the case that
+  // went silent: nothing here is over the cap at any one instant.
+  let played = 0;
+  let dropped = 0;
+  for (let round = 0; round < 40; round += 1) {
+    ctx.currentTime += 0.25;
+    for (let i = 0; i < 3; i += 1) {
+      if (audio.play('pop', { delay: 0 })) {
+        played += 1;
+      } else {
+        dropped += 1;
+      }
+    }
+  }
+  assert.equal(dropped, 0, `${dropped} of ${played + dropped} pops were dropped over a whole level`);
+  assert.ok(disconnects > 0, 'nothing was ever unplugged from the master bus');
+
+  // And the cap still caps. Twenty at one instant is a rainbow taking a whole
+  // color, and past ten of them the extra copies are inaudible under the rest.
+  const burst = new Audio();
+  burst.attach(ctx);
+  let loud = 0;
+  for (let i = 0; i < 20; i += 1) {
+    loud += burst.play('pop', { delay: 0 }) ? 1 : 0;
+  }
+  assert.ok(loud > 0 && loud < 20, `twenty at once let ${loud} through, which is not a cap`);
+
+  // Once they have rung out the voices come back, without anything having to
+  // fire on time for them to.
+  ctx.currentTime += 5;
+  assert.ok(burst.play('pop', { delay: 0 }), 'the voices never came back after the sound ended');
 }
 
 console.log(
