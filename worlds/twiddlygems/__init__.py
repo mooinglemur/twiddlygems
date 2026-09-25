@@ -214,8 +214,9 @@ class TwiddlyGemsWorld(World):
         Some items have no count of their own. The bonus items are four kinds
         splitting one total: the setting says how many there are altogether,
         and which kind each one turns out to be is a draw at equal chance. So
-        the split is rolled, here, with this slot's own generator, rather than
-        being written into a datapackage that every player reads.
+        the split is rolled, here, with this slot's own generator: it belongs
+        to one run, and the tables the engine writes are the same for every
+        run there will ever be.
 
         Rolled once and kept. The pool gets counted more than once, and
         `_ap_gems_per_level` reads the count to decide which locations this

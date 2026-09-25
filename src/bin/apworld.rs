@@ -257,7 +257,12 @@ fn copies(item: Item) -> Copies {
     }
 }
 
-/// How many of an item a world puts in the pool, as the datapackage says it.
+/// How many of an item a world puts in the pool.
+///
+/// Not part of the datapackage, which is names and numbers and nothing else.
+/// This is the recipe for a pool, and it is free to change: a seed rolled
+/// last year is still readable when this number moves, where a renumbered
+/// item would not be.
 ///
 /// Two shapes, because there are two ways a count can be settled. Most items
 /// have one, either written down or read off a setting. The bonus items have
