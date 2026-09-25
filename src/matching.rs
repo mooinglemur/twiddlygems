@@ -556,10 +556,60 @@ fn spread_delay(origin: Pos, cell: Pos, special: Special) -> f32 {
 /// its three gems go as one.
 /// Cells in `spent` still pop, and still pop as whatever they are, but do not
 /// fire: they are specials whose power the caller has already accounted for.
+/// Lays one special's blast into the wave: the cells it takes, when each of
+/// them goes, and the bricks its beam passes through on the way.
+///
+/// Shared by the specials the wave finds on the board and the ones named by
+/// `fires`, so the two cannot come out differently. They did: a caller that
+/// worked the shape out for itself and handed the cells in as seeds got a
+/// clear that took the gems and nothing else, because the bricks are marked
+/// here and nowhere else.
+#[allow(clippy::too_many_arguments)]
+fn lay_blast(
+    board: &Board,
+    wave: &mut Wave,
+    struck: &mut Vec<Pos>,
+    hits: &mut Vec<Pos>,
+    rng: &mut Rng,
+    origin: Pos,
+    special: Special,
+    delay: f32,
+    fallback: u8,
+) {
+    hits.clear();
+    blast(board, origin, special, fallback, hits);
+    for hit in std::mem::take(hits) {
+        // A beam goes through a brick rather than stopping at it, marking
+        // it in passing. A rainbow has no beam, only a list of cells of one
+        // color, so it never strikes a brick this way.
+        if special != Special::Rainbow && board.brick(hit) > 0 && !struck.contains(&hit) {
+            struck.push(hit);
+        }
+        // A blast starts when the gem that carried it pops, and spreads
+        // outward from there, except a rainbow, whose cells are scattered
+        // and so go off in no particular order.
+        let step = if special == Special::Rainbow {
+            rng.below(RAINBOW_SPREAD_MS as u32) as f32
+        } else {
+            spread_delay(origin, hit, special)
+        };
+        // A rainbow takes a color wherever it is, which is a clear like
+        // any other and hits what it is next to. A beam is not: it is a
+        // line drawn across the board, and a gem it happens to run over is
+        // not a match. The beam marks the bricks it passes through itself,
+        // just above, and that is the whole of its effect on them.
+        wave.push(board, hit, delay + step, special == Special::Rainbow, false);
+    }
+}
+
+/// `fires` sets a special off at a cell that is not carrying one, which is what
+/// spending one out of the inventory is: the beam is real, but there was never
+/// a gem on the board to hold it.
 pub fn detonate(
     board: &Board,
     seeds: &[Pos],
     spent: &[Pos],
+    fires: &[(Pos, Special)],
     rng: &mut Rng,
     seed_jitter_ms: f32,
 ) -> Detonation {
@@ -581,8 +631,18 @@ pub fn detonate(
 
     let fallback = most_common_color(board, rng);
 
-    let mut head = 0;
     let mut hits: Vec<Pos> = Vec::new();
+
+    // The ones nothing on the board is carrying, laid in before the queue is
+    // walked so their cells are in the wave from the start. After the fallback
+    // color rather than before, so a clear with none of these draws from the
+    // generator exactly as it always did.
+    for (p, special) in fires {
+        fired.push((*p, *special));
+        lay_blast(board, &mut wave, &mut struck, &mut hits, rng, *p, *special, 0.0, fallback);
+    }
+
+    let mut head = 0;
     while head < wave.queue.len() {
         let (p, delay) = wave.queue[head];
         head += 1;
@@ -597,30 +657,7 @@ pub fn detonate(
             continue;
         }
         fired.push((p, special));
-        hits.clear();
-        blast(board, p, special, fallback, &mut hits);
-        for hit in std::mem::take(&mut hits) {
-            // A beam goes through a brick rather than stopping at it, marking
-            // it in passing. A rainbow has no beam, only a list of cells of one
-            // color, so it never strikes a brick this way.
-            if special != Special::Rainbow && board.brick(hit) > 0 && !struck.contains(&hit) {
-                struck.push(hit);
-            }
-            // A blast starts when the gem that carried it pops, and spreads
-            // outward from there, except a rainbow, whose cells are scattered
-            // and so go off in no particular order.
-            let step = if special == Special::Rainbow {
-                rng.below(RAINBOW_SPREAD_MS as u32) as f32
-            } else {
-                spread_delay(p, hit, special)
-            };
-            // A rainbow takes a color wherever it is, which is a clear like
-            // any other and hits what it is next to. A beam is not: it is a
-            // line drawn across the board, and a gem it happens to run over is
-            // not a match. The beam marks the bricks it passes through itself,
-            // just above, and that is the whole of its effect on them.
-            wave.push(board, hit, delay + step, special == Special::Rainbow, false);
-        }
+        lay_blast(board, &mut wave, &mut struck, &mut hits, rng, p, special, delay, fallback);
     }
 
     Detonation { cleared: wave.cleared, delays: wave.delays, cracks: wave.cracks, fired, struck }
@@ -901,7 +938,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 1)], &[], &[], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 4);
         assert!(result.cleared.iter().all(|p| p.r == 1));
         assert_eq!(result.fired.len(), 1);
@@ -912,7 +949,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 0)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 0)], &[], &[], &mut rng, 0.0);
 
         for (cell, delay) in result.cleared.iter().zip(result.delays.iter()) {
             let expected = (cell.c - 1 + 1) as f32 * SPREAD_STEP_MS;
@@ -931,7 +968,7 @@ mod tests {
         let mut board = board_of(&["1234", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::Cross }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 1)], &[], &[], &mut rng, 0.0);
         // Four across plus four down, sharing the middle.
         assert_eq!(result.cleared.len(), 7);
     }
@@ -942,7 +979,7 @@ mod tests {
         board.set_gem(Pos::new(1, 1), Some(Gem { color: 6, special: Special::LineH }));
         board.set_gem(Pos::new(1, 3), Some(Gem { color: 8, special: Special::LineV }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 1)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 1)], &[], &[], &mut rng, 0.0);
         assert_eq!(result.fired.len(), 2);
         assert!(result.cleared.contains(&Pos::new(0, 3)));
         assert!(result.cleared.contains(&Pos::new(3, 3)));
@@ -958,7 +995,7 @@ mod tests {
         board.set_gem(Pos::new(1, 0), Some(Gem { color: 5, special: Special::LineH }));
         board.set_gem(Pos::new(1, 2), Some(Gem { color: 7, special: Special::Rocket }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(1, 0)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(1, 0)], &[], &[], &mut rng, 0.0);
 
         assert!(!result.cleared.contains(&Pos::new(1, 2)), "the rocket should have survived");
         assert!(
@@ -981,7 +1018,7 @@ mod tests {
         let mut board = board_of(&["1#34", "5678", "1234", "5678"]);
         board.set_gem(Pos::new(0, 0), Some(Gem { color: 1, special: Special::LineH }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(0, 0)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(0, 0)], &[], &[], &mut rng, 0.0);
 
         assert!(
             result.cleared.contains(&Pos::new(0, 3)),
@@ -995,7 +1032,7 @@ mod tests {
         let mut board = board_of(&["1111", "1111", "1123", "4567"]);
         board.set_gem(Pos::new(3, 0), Some(Gem { color: 4, special: Special::Rainbow }));
         let mut rng = Rng::new(1);
-        let result = detonate(&board, &[Pos::new(3, 0)], &[], &mut rng, 0.0);
+        let result = detonate(&board, &[Pos::new(3, 0)], &[], &[], &mut rng, 0.0);
         assert_eq!(result.cleared.len(), 11);
     }
 }

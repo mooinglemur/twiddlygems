@@ -350,6 +350,12 @@ struct Resolution {
     creations: Vec<(Pos, Gem)>,
     /// Specials the swap has already cashed in; see [`Activation::spent`].
     spent: Vec<Pos>,
+    /// Specials to set off at cells that are not carrying one.
+    ///
+    /// What spending a Cross Clear out of the inventory is: the beam is real
+    /// and does everything a beam does, but no gem on the board is holding it.
+    /// Empty for everything the board sets off itself.
+    fires: Vec<(Pos, Special)>,
     /// Scatters the starting cells in time. A rainbow wants this; an ordinary
     /// match does not.
     jitter_ms: f32,
@@ -639,6 +645,10 @@ impl Game {
                 self.swap_match = 0;
                 self.begin_clear(Resolution {
                     seeds,
+                    // A rainbow's cells are the color it took, which are gems
+                    // going away because the player spent it on them, so they
+                    // are seeds and nothing here is fired.
+                    fires: Vec::new(),
                     matched: 0,
                     creations: Vec::new(),
                     spent: Vec::new(),
@@ -648,15 +658,28 @@ impl Game {
             }
             Consumable::CrossClear => {
                 let Some(at) = target.filter(|p| self.board.is_open(*p)) else { return false };
-                let mut seeds = Vec::new();
-                matching::blast(&self.board, at, Special::Cross, ANY_COLOR, &mut seeds);
-                if seeds.is_empty() {
+                // Set off as a cross rather than handed over as the cells a
+                // cross covers. The shape is the same either way; what is not
+                // is everything else a beam does, which is worked out where a
+                // special fires and nowhere else: the bricks it goes through,
+                // the gems it runs over without cracking what they stand
+                // beside, and the sweep outward from the middle.
+                let mut reach = Vec::new();
+                matching::blast(&self.board, at, Special::Cross, ANY_COLOR, &mut reach);
+                // Refused rather than wasted when the row and the column hold
+                // nothing at all: walls, and empty cells nothing has fallen
+                // into yet.
+                if reach
+                    .iter()
+                    .all(|p| self.board.gem(*p).is_none() && self.board.brick(*p) == 0)
+                {
                     return false;
                 }
                 self.cascade = 1;
                 self.swap_match = 0;
                 self.begin_clear(Resolution {
-                    seeds,
+                    seeds: Vec::new(),
+                    fires: vec![(at, Special::Cross)],
                     matched: 0,
                     creations: Vec::new(),
                     spent: Vec::new(),
@@ -1064,6 +1087,9 @@ impl Game {
                 matched: 0,
                 creations: Vec::new(),
                 spent: Vec::new(),
+                // Whatever a rocket landed on is carrying its own special, so
+                // the wave finds it where it stands.
+                fires: Vec::new(),
                 jitter_ms: 0.0,
             });
             return;
@@ -1385,7 +1411,9 @@ impl Game {
         if seeds.is_empty() {
             None
         } else {
-            Some(Resolution { seeds, matched, creations, spent, jitter_ms })
+            // Nothing fired: a match is gems the player lined up, and any
+            // special among them is on the board for the wave to find.
+            Some(Resolution { seeds, matched, creations, spent, fires: Vec::new(), jitter_ms })
         }
     }
 
@@ -1546,10 +1574,14 @@ impl Game {
             &self.board,
             &resolution.seeds,
             &resolution.spent,
+            &resolution.fires,
             &mut self.rng,
             resolution.jitter_ms,
         );
-        if blast.cleared.is_empty() {
+        // Bricks as well as gems, because a beam can reach a brick without
+        // taking a single gem with it: a cross fired down a column of nothing
+        // but bricks clears none of them and breaks all of them.
+        if blast.cleared.is_empty() && blast.struck.is_empty() {
             self.settle();
             return;
         }
@@ -1723,10 +1755,13 @@ impl Game {
             self.cascade += 1;
             self.begin_clear(Resolution {
                 seeds: waiting,
-                // The flourish setting itself off, which nobody swapped.
+                // The flourish setting itself off, which nobody swapped. The
+                // specials it fires are ones it just minted onto the board, so
+                // the wave finds them the ordinary way.
                 matched: 0,
                 creations: Vec::new(),
                 spent: Vec::new(),
+                fires: Vec::new(),
                 jitter_ms: FINALE_JITTER_MS,
             });
             return true;
@@ -2830,7 +2865,7 @@ mod tests {
         game.board.set_gem(Pos::new(3, 7), Some(Gem { color: 1, special: Special::LineV }));
         game.board.set_gem(Pos::new(7, 7), Some(Gem { color: 2, special: Special::LineH }));
 
-        let blast = matching::detonate(&game.board, &[Pos::new(3, 0)], &[], &mut game.rng, 0.0);
+        let blast = matching::detonate(&game.board, &[Pos::new(3, 0)], &[], &[], &mut game.rng, 0.0);
         let step = matching::SPREAD_STEP_MS;
 
         let delay_at = |p: Pos| {
@@ -3449,6 +3484,61 @@ mod tests {
     }
 
     #[test]
+    fn a_spent_cross_clear_is_a_cross_going_off_and_not_a_shape_of_matches() {
+        // Spending one is the player firing a cross, so it has to do what a
+        // cross does. Handing the cells its beams cover in as though the
+        // player had lined them all up there is not the same thing, and comes
+        // apart in three places at once: a brick cell holds no gem, so the
+        // clear drops it and the beam passes straight over the one thing it
+        // was aimed at; cells the player lined up crack what they are beside,
+        // which a beam does not; and they all pop together rather than
+        // sweeping out from the middle.
+        let at = Pos::new(1, 2);
+        let brick = Pos::new(3, 2);
+
+        // What a real cross does there, to be measured against.
+        let mut real = bricked_game(180);
+        real.board.set_gem(at, Some(Gem { color: 1, special: Special::Cross }));
+        let blast = matching::detonate(&real.board, &[at], &[], &[], &mut real.rng, 0.0);
+        assert!(blast.struck.contains(&brick), "a real cross does not reach the brick either");
+
+        // Gems along the row, and one above the middle. Nothing next to the
+        // brick: (2,2) is left empty on purpose, so the only thing that can
+        // reach it is the beam itself rather than a clear going off beside it.
+        let mut game = bricked_game(180);
+        for c in 0..5 {
+            game.board.set_gem(Pos::new(1, c), Some(Gem::plain(if c % 2 == 0 { 1 } else { 2 })));
+        }
+        game.board.set_gem(Pos::new(0, 2), Some(Gem::plain(3)));
+        assert_eq!(game.board.brick(brick), 2, "the board did not start with a whole brick");
+
+        let (spent, seen) = spend(&mut game, Consumable::CrossClear, Some(at));
+        assert!(spent, "a cross clear aimed at an open cell was refused");
+        assert!(
+            seen.iter().any(|e| e.kind == EV_BRICK && (e.r, e.c) == (brick.r as u8, brick.c as u8)),
+            "the beam went down the column and over the brick in it",
+        );
+        assert_eq!(game.board.brick(brick), 1, "the brick should have been cracked once");
+
+        // And it sweeps outward rather than going off all at once, which is
+        // what makes a beam read as a beam.
+        let delay_at = |c: i32| {
+            seen.iter()
+                .find(|e| e.kind == EV_CLEAR && (e.r, e.c) == (1, c as u8))
+                .map(|e| e.value)
+                .unwrap_or_else(|| panic!("nothing cleared at (1, {c})"))
+        };
+        assert_eq!(delay_at(2), 0, "the cell it was aimed at should go first");
+        assert!(
+            delay_at(0) > delay_at(1) && delay_at(1) > delay_at(2),
+            "the row popped at {}, {}, {} rather than sweeping out",
+            delay_at(2),
+            delay_at(1),
+            delay_at(0),
+        );
+    }
+
+    #[test]
     fn nothing_is_spent_on_a_board_that_is_not_the_players_to_touch() {
         // Mid-animation and after the level is over are both hands off: a
         // consumable is a thing you do on your turn.
@@ -3839,7 +3929,7 @@ mod tests {
         game.board.set_gem(Pos::new(3, 4), Some(Gem::plain(4)));
 
         let blast =
-            matching::detonate(&game.board, &[Pos::new(3, 0)], &[], &mut game.rng, 0.0);
+            matching::detonate(&game.board, &[Pos::new(3, 0)], &[], &[], &mut game.rng, 0.0);
         assert!(blast.struck.contains(&seal), "the beam should have marked it");
         game.strike_bricks(&blast, 1);
         assert_eq!(game.board.brick(seal), 1, "and cracked it, though the color was wrong");
@@ -3858,7 +3948,7 @@ mod tests {
         }
 
         let blast =
-            matching::detonate(&game.board, &[Pos::new(2, 0)], &[], &mut game.rng, 0.0);
+            matching::detonate(&game.board, &[Pos::new(2, 0)], &[], &[], &mut game.rng, 0.0);
         assert!(blast.cleared.contains(&Pos::new(2, 2)), "the beam took the gem over the brick");
         game.strike_bricks(&blast, 1);
 
@@ -3880,6 +3970,7 @@ mod tests {
             &game.board,
             &[Pos::new(2, 2), Pos::new(0, 4)],
             &[],
+            &[],
             &mut game.rng,
             0.0,
         );
@@ -3899,6 +3990,7 @@ mod tests {
         let blast = matching::detonate(
             &game.board,
             &[Pos::new(3, 0)],
+            &[],
             &[],
             &mut game.rng,
             0.0,
