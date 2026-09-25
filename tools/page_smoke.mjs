@@ -1531,11 +1531,35 @@ let flightFrames = 0;
   // entirely, where a fifth of the gap is still a flip. Straight down, from a
   // rocket pointing straight up, is the worst case there is: half a turn.
   renderer.frameMs = 16;
-  const spun = renderer.turnToward(0, 100, { x: 0, y: 0, angle: 0, wants: 0 });
+  const spun = renderer.turnToward(0, 100, { x: 0, y: 0, angle: 0, wants: 0 }, true);
   assert.ok(Math.abs(spun.angle) > 0, 'a rocket pointed the wrong way never came round at all');
   assert.ok(
     Math.abs(spun.angle) <= MOST_PER_FRAME + 1e-6,
     `it turned ${spun.angle.toFixed(3)} radians in one frame, which is a flip`,
+  );
+
+  // A rocket's drawn position moves for reasons that are not flight: it falls
+  // when the gems under it clear, and slides when it is swapped. Only travel
+  // is a heading. Read the other way round, a rocket minted mid-cascade turned
+  // to face the way it was dropping and hung there, nose down, until it fired.
+  //
+  // Both halves, because a rule that never turns anything would pass the first
+  // of these on its own.
+  const drop = (flying) => {
+    let at;
+    for (let i = 0; i < 40; i += 1) {
+      at = renderer.turnToward(100, 100 + i * 3, at, flying);
+    }
+    return at.angle;
+  };
+  const degrees = (radians) => ((radians * 180) / Math.PI).toFixed(1);
+  assert.ok(
+    Math.abs(drop(false)) < 1e-9,
+    `a rocket that only fell came to rest ${degrees(drop(false))} degrees off upright`,
+  );
+  assert.ok(
+    Math.abs(Math.abs(drop(true)) - Math.PI) < 0.05,
+    `a rocket flying downward pointed ${degrees(drop(true))} degrees rather than straight down`,
   );
 
   // It struck something: the board has work to do that the tap started.

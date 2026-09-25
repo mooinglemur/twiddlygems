@@ -613,7 +613,8 @@ export class Renderer {
         continue;
       }
       const { x, y } = this.boardPoint(list[i].r, list[i].c);
-      const now = this.turnToward(x, y, this.flightWas?.get(i));
+      // Always flying: these exist for exactly as long as they are in the air.
+      const now = this.turnToward(x, y, this.flightWas?.get(i), true);
       heading.set(i, now);
       flying.push({ x, y, angle: now.angle });
     }
@@ -1114,9 +1115,12 @@ export class Renderer {
       this.drawParticles(ctx);
     }
 
+    // Only during a launch is a rocket's movement its own. Every other phase
+    // moves it for reasons of the board's: a fall, a spill, a swap.
+    const launching = this.engine.phase === Phase.LAUNCHING;
     const heading = new Map();
     for (const [x, y, scale, color, dx, dy, index] of airborne) {
-      const now = this.turnToward(x, y, this.rocketWas?.get(index));
+      const now = this.turnToward(x, y, this.rocketWas?.get(index), launching);
       heading.set(index, now);
       if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
         drawExhaust(ctx, x, y, cell * 0.42 * scale, now.angle);
@@ -1210,13 +1214,21 @@ export class Renderer {
   /// just appeared. One rule for every rocket: one flying off the board and
   /// one spent out of the inventory are drawn on different canvases and turn
   /// the same way.
-  turnToward(x, y, was) {
+  ///
+  /// `flying` is what tells travel from every other reason a rocket's drawn
+  /// position moves, and it matters because there are several. A rocket
+  /// standing on the board falls when the gems under it clear, and slides when
+  /// it is swapped. Read as travel, a fall turned the rocket to face the way
+  /// it was dropping: a rocket minted mid-cascade hung nose down until the
+  /// moment it launched. A rocket that is not flying is a rocket standing
+  /// somewhere, and one of those points up.
+  turnToward(x, y, was, flying) {
     const turn = 1 - Math.exp(-this.frameMs / ROCKET_TURN_MS);
     const most = ROCKET_TURN_PER_MS * this.frameMs;
     // Held from the last frame that moved, so a rocket barely under way keeps
     // the heading it has rather than reading no movement as upright.
-    let wants = was ? was.wants : 0;
-    if (was && Math.hypot(x - was.x, y - was.y) > 0.001) {
+    let wants = was && flying ? was.wants : 0;
+    if (flying && was && Math.hypot(x - was.x, y - was.y) > 0.001) {
       wants = Math.atan2(y - was.y, x - was.x) + Math.PI / 2;
     }
     // The short way round, or a rocket turning from just west of north to just
