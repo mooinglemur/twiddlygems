@@ -401,6 +401,17 @@ assert.equal(
   assert.equal(box.getAttribute('aria-expanded'), 'false');
 }
 assert.ok(elements.get('level-name').textContent.length > 0, 'the level has no name on screen');
+// Up in the bar with the level and the score, where the eye already is: the
+// number that runs out beside the one that climbs. Checked against the markup,
+// because the stub has no idea what is inside what.
+{
+  const markup = await readFile('web/index.html', 'utf8');
+  const bar = markup.slice(markup.indexOf('<header id="topbar"'), markup.indexOf('</header>'));
+  assert.ok(bar.includes('id="moves"'), 'the moves counter is not in the top bar');
+  assert.ok(bar.indexOf('id="moves"') > bar.indexOf('id="level-title"'), 'it is before the level');
+  assert.ok(bar.indexOf('id="moves"') < bar.indexOf('id="score"'), 'it is after the score');
+}
+
 // Read off the ladder rather than written here, so retuning a level's budget
 // does not break the front end's test.
 assert.equal(

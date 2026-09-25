@@ -67,6 +67,11 @@ html, body {
   flex: 0 0 auto;
 }
 
+/* The title and the score take an equal share of what is left over, so the
+   moves sit between them rather than wherever the level's name happens to
+   push them. An equal share of the leftover and not of the whole bar: pinning
+   the moves to the exact middle means giving each side half of everything,
+   and half is not enough for a level called Finding Fours. */
 #level-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 #level-number { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
 #level-name { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -78,6 +83,7 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
+  flex: 1;
   background: none;
   border: none;
   border-radius: 0;
@@ -136,7 +142,15 @@ html, body {
 }
 .label { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
 
-#moves-box { display: flex; align-items: baseline; gap: 6px; }
+/* Between the level and the score, which is where the eye already is: the
+   number that runs out is the one being watched alongside the one that climbs.
+   Its own width, so the two beside it stay balanced around it. */
+#moves-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 0 0 auto;
+}
 #moves { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 1.3rem; }
 #moves.low { color: var(--danger); }
 .spacer { flex: 1; }
