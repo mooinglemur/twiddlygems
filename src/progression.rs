@@ -117,6 +117,22 @@ pub enum Location {
     /// Reaching a chain this long: one clear setting off the next, that many
     /// deep, off a single move.
     Chain(u32),
+    /// Lining up exactly this many gems in one move.
+    ///
+    /// Exactly, so a five does not pay the four: each of these asks for a
+    /// particular shape rather than for "at least this good", and a player
+    /// going for the six has to aim for it rather than grow into it.
+    ///
+    /// The player's own swap and nothing else. What the match sets off is not
+    /// part of it, and neither is a match a cascade lines up afterwards: the
+    /// number is what the player did, not what the board did next.
+    ///
+    /// Counted in gems that lined up, which is what a match is made of: a
+    /// plain gem and one carrying a beam both count, while a rocket, a
+    /// rainbow and an Archipelago gem answer to no color and are never in a
+    /// match at all. Bricks and seals hold no gem; they are broken beside a
+    /// match rather than being part of one.
+    Match(u32),
     /// Collecting an Archipelago gem on the level at `level`.
     ///
     /// `index` is a place in that level's sequence rather than a particular
@@ -170,6 +186,13 @@ pub const LONGEST_CHAIN: u32 = 12;
 /// they will be holding somebody else's item.
 pub const RELIABLE_CHAIN: u32 = 6;
 
+/// The smallest match there is, and the largest asked for.
+///
+/// Three is the game. Six is a straight run of six, or two runs off one swap;
+/// past it the boards here are too small to rely on.
+pub const SHORTEST_MATCH: u32 = 3;
+pub const LONGEST_MATCH: u32 = 6;
+
 impl Location {
     /// Which sort of location this is, for the event that names it. A kind of
     /// [`NO_LOCATION`] means the item came from nowhere on this board, which
@@ -181,6 +204,7 @@ impl Location {
             Location::LevelSilver(_) => 2,
             Location::LevelGold(_) => 3,
             Location::ApGem { .. } => 4,
+            Location::Match(_) => 5,
         }
     }
 
@@ -191,6 +215,7 @@ impl Location {
             | Location::LevelSilver(index)
             | Location::LevelGold(index) => index as u16,
             Location::Chain(length) => length as u16,
+            Location::Match(gems) => gems as u16,
             // Both halves, because neither alone names it. Ten to a level, so
             // a fifty level ladder needs nine bits and this has sixteen.
             Location::ApGem { level, index } => {
@@ -215,6 +240,7 @@ impl Location {
             Location::ApGem { level, index } => {
                 AP_GEM_ID_BASE + level as u32 * AP_GEMS_PER_LEVEL + index
             }
+            Location::Match(gems) => MATCH_ID_BASE + gems,
         }
     }
 
@@ -223,6 +249,12 @@ impl Location {
     pub fn from_id(id: u32) -> Option<Location> {
         if id < CHAIN_ID_BASE {
             return Some(Location::LevelClear(id as usize));
+        }
+        if id >= MATCH_ID_BASE {
+            let gems = id - MATCH_ID_BASE;
+            return (SHORTEST_MATCH..=LONGEST_MATCH)
+                .contains(&gems)
+                .then_some(Location::Match(gems));
         }
         if id >= AP_GEM_ID_BASE {
             let at = id - AP_GEM_ID_BASE;
@@ -254,6 +286,9 @@ const GOLD_ID_BASE: u32 = 3_000;
 /// Fifty levels of ten fit inside this thousand, which is the ladder's own
 /// ceiling, so this stays one block like the rest.
 const AP_GEM_ID_BASE: u32 = 4_000;
+/// The match sizes, which puts a ceiling on the gems above: their block runs
+/// to the top of its own thousand and no further.
+const MATCH_ID_BASE: u32 = 5_000;
 
 /// How many Archipelago gem locations every level has, whatever a run puts in
 /// play.
@@ -454,6 +489,10 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
         // A chain is made on whatever board is in front of you, and the
         // opening one is in front of everybody.
         Location::Chain(_) => Requirement::Always,
+        // And so is a match: it is the one thing the game asks a player to do
+        // and it asks for no item to do it with. Which sizes a solo run is
+        // asked to line up for its own progression is [`worth_using`].
+        Location::Match(_) => Requirement::Always,
         // A gem is collected by playing its level, not by beating it, so it
         // asks for what reaching that level asks for and nothing more. Within
         // a level they go in order, because clearing one checks the lowest
@@ -541,6 +580,10 @@ pub fn location_name(location: Location) -> String {
         Location::LevelSilver(index) => format!("Level {} Silver", index + 1),
         Location::LevelGold(index) => format!("Level {} Gold", index + 1),
         Location::Chain(length) => format!("{length} Chain"),
+        // Troy's wording, 2026-09-24. Not "{n} Match", which would read like
+        // the chains above it: what these ask for is a thing to go and do,
+        // and the verb is what says so.
+        Location::Match(gems) => format!("Activate {gems} match"),
         // "AP Gem" rather than the word spelled out: this is what the feed
         // shows while a level is being played, where a line has to be read at
         // a glance and "Archipelago" is most of its width. Every other reader
@@ -568,6 +611,9 @@ pub fn locations(level_count: usize) -> Vec<Location> {
         .chain((0..level_count).flat_map(|level| {
             (0..AP_GEMS_PER_LEVEL).map(move |index| Location::ApGem { level, index })
         }))
+        // Last, because appending is the only safe way to change this order:
+        // see [`location_index`].
+        .chain((SHORTEST_MATCH..=LONGEST_MATCH).map(Location::Match))
         .collect()
 }
 
@@ -661,6 +707,12 @@ pub fn location_index(location: Location, levels: usize) -> Option<usize> {
                     + level * AP_GEMS_PER_LEVEL as usize
                     + index as usize
             }),
+        Location::Match(gems) => (SHORTEST_MATCH..=LONGEST_MATCH).contains(&gems).then(|| {
+            3 * levels
+                + (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize
+                + levels * AP_GEMS_PER_LEVEL as usize
+                + (gems - SHORTEST_MATCH) as usize
+        }),
     }
 }
 
@@ -947,6 +999,15 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
 /// A gem past what the run asked for is a different sort of unusable: it is in
 /// the table because the table is fixed, but nothing will ever spawn for it,
 /// so an item left there could never be found at all.
+///
+/// The matches are all usable, and deliberately have no threshold of their own.
+/// `make balance` measures a three in 98% of playthroughs, a four in 70%, a
+/// five in 37% and a six in 52%: note which one is rare. They are not a ladder
+/// the way the chains are, because two separate threes off one swap is six and
+/// happens by accident, while an exact five has to be a straight five or an L
+/// of three and three. A `<=` cutoff would be the wrong shape for that, and
+/// all four turn up often enough over a run to be worth a solo player's own
+/// progression.
 fn worth_using(location: Location, gems: u32) -> bool {
     match location {
         Location::Chain(length) => length <= RELIABLE_CHAIN,
@@ -1375,11 +1436,10 @@ mod tests {
         // nothing can already get to, and that is what keeps the fill from
         // having to back out of a corner.
         //
-        // A level clear, a chain, or an Archipelago gem: the gems joined this
-        // list when they were added, because collecting one asks only for
-        // being able to play its level. Anything claiming every one of these
-        // is holding all five unlocks whatever it was dealt, which is how the
-        // screenshot runs are set up.
+        // A level clear, a chain, a match, or an Archipelago gem: each joined
+        // this list when it was added, because none of them asks for an item.
+        // Anything claiming every one of these is holding all five unlocks
+        // whatever it was dealt, which is how the screenshot runs are set up.
         for (levels, seed, options) in every_run() {
             let placed = solo_placement(levels, seed, &options);
             for (at, held) in locations(levels).into_iter().zip(placed) {
@@ -1387,7 +1447,10 @@ mod tests {
                 assert!(
                     matches!(
                         at,
-                        Location::LevelClear(_) | Location::Chain(_) | Location::ApGem { .. }
+                        Location::LevelClear(_)
+                            | Location::Chain(_)
+                            | Location::Match(_)
+                            | Location::ApGem { .. }
                     ),
                     "on a ladder of {levels} dealt from {seed:#x} as {options:?}, {} is \
                      keeping {}, which reaching it would need",
@@ -1455,12 +1518,15 @@ mod tests {
             stuck.contains(&Location::LevelClear(0)),
             "a location asking for the item it holds was reached anyway",
         );
-        let survivors =
-            (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize + AP_GEMS_PER_LEVEL as usize;
+        // Everything that asks for nothing at all: the chains, the matches,
+        // and the opening level's gems, since playing it asks for nothing.
+        let survivors = (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize
+            + (LONGEST_MATCH - SHORTEST_MATCH + 1) as usize
+            + AP_GEMS_PER_LEVEL as usize;
         assert_eq!(
             stuck.len(),
             locations(levels).len() - survivors,
-            "only the chains and the opening level's gems should have survived",
+            "only what asks for nothing should have survived",
         );
     }
 
@@ -1519,7 +1585,10 @@ mod tests {
                 let options = Options { ap_gems: value, ..Options::default() };
                 assert_eq!(
                     locations(levels).len(),
-                    3 * levels + (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize + gems.len(),
+                    3 * levels
+                        + (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize
+                        + (LONGEST_MATCH - SHORTEST_MATCH + 1) as usize
+                        + gems.len(),
                     "the table changed size when the setting did, at {value}",
                 );
                 let playing = gems.iter().filter(|at| in_play(**at, levels, &options)).count();
@@ -1639,6 +1708,8 @@ mod tests {
             (2_012, "Level 13 Silver"),
             (3_000, "Level 1 Gold"),
             (3_049, "Level 50 Gold"),
+            (5_003, "Activate 3 match"),
+            (5_006, "Activate 6 match"),
         ];
         for (id, name) in places {
             let at = Location::from_id(id).expect("a number in use is a location");
@@ -1712,6 +1783,19 @@ mod tests {
         assert_eq!(unique.len(), ids.len(), "two locations share a number");
         assert_eq!(Location::from_id(CHAIN_ID_BASE), None, "a chain of none is not a location");
         assert_eq!(Location::from_id(CHAIN_ID_BASE + LONGEST_CHAIN + 1), None);
+        assert_eq!(
+            Location::from_id(MATCH_ID_BASE + SHORTEST_MATCH - 1),
+            None,
+            "a match of two is not a match",
+        );
+        assert_eq!(Location::from_id(MATCH_ID_BASE + LONGEST_MATCH + 1), None);
+        // The gems stop at the top of their own thousand now that something
+        // sits above them. Before, every number above 4000 read back as a gem
+        // on some level far past the end of the ladder.
+        assert_eq!(Location::from_id(MATCH_ID_BASE - 1), Some(Location::ApGem {
+            level: 99,
+            index: 9,
+        }));
     }
 
     #[test]

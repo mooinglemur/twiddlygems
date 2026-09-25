@@ -322,6 +322,15 @@ struct Launch {
 /// A clear that is about to happen: what sets it off, and what it leaves behind.
 struct Resolution {
     seeds: Vec<Pos>,
+    /// How many gems the matches themselves hold, which is the size of the
+    /// match rather than the size of what it sets off.
+    ///
+    /// Only what lined up: a group is made of gems that share a color, so a
+    /// plain gem counts and so does one carrying a beam, while a rocket, a
+    /// rainbow and an Archipelago gem answer to no color and are never in one.
+    /// Bricks and seals hold no gem at all; they are broken beside a match,
+    /// not part of it.
+    matched: u32,
     creations: Vec<(Pos, Gem)>,
     /// Specials the swap has already cashed in; see [`Activation::spent`].
     spent: Vec<Pos>,
@@ -391,6 +400,14 @@ pub struct Game {
     /// The board settles several times during the flourish that follows, and
     /// only the first of those is news.
     announced_clear: bool,
+    /// How many gems the player's last swap matched, or 0 for a swap that
+    /// matched nothing.
+    ///
+    /// The player's own match and nothing else: what the clear went on to set
+    /// off is not part of it, and neither is anything a cascade lined up
+    /// afterwards, because the point of the number is what the player did.
+    /// Set on every swap, so it is always the last one's.
+    swap_match: u32,
     /// Whether the beat for the goals to finish showing themselves met has
     /// been taken; see [`Phase::Tallying`]. Once a level, even though the
     /// board settles several times during the flourish that follows.
@@ -437,6 +454,7 @@ impl Game {
             selected: None,
             warned_low_moves: false,
             announced_clear: false,
+            swap_match: 0,
             tallied: false,
             goal_hold_ms: 0.0,
             ap_gems_wanted: 0,
@@ -477,6 +495,7 @@ impl Game {
         self.selected = None;
         self.warned_low_moves = false;
         self.announced_clear = false;
+        self.swap_match = 0;
         self.tallied = false;
         self.events.clear();
         self.deal();
@@ -510,6 +529,11 @@ impl Game {
 
     pub fn cascade(&self) -> u32 {
         self.cascade
+    }
+
+    /// How many gems the player's last swap matched. See [`Game::swap_match`].
+    pub fn swap_match(&self) -> u32 {
+        self.swap_match
     }
 
     pub fn selected(&self) -> Option<Pos> {
@@ -672,15 +696,20 @@ impl Game {
                 self.spend_move();
                 self.cascade = 1;
                 self.swap = None;
+                // The player's own match, before anything it sets off. See
+                // [`Game::swap_match`].
+                self.swap_match = resolution.matched;
                 self.begin_clear(resolution);
             }
             None if self.spec.rules.revert_invalid => {
                 // Nothing came of it: put the gems back and slide them home.
+                self.swap_match = 0;
                 self.board.swap_gems(a, b);
                 self.phase = Phase::Swapping { elapsed: 0.0, reverting: true };
                 self.events.push(Event::at(EV_REVERT, a, 255, Special::None, 0));
             }
             None => {
+                self.swap_match = 0;
                 self.spend_move();
                 self.swap = None;
                 self.settle();
@@ -837,6 +866,8 @@ impl Game {
             let seeds = std::mem::take(&mut self.triggered);
             self.begin_clear(Resolution {
                 seeds,
+                // Struck rather than matched, so no shape the player lined up.
+                matched: 0,
                 creations: Vec::new(),
                 spent: Vec::new(),
                 jitter_ms: 0.0,
@@ -1122,6 +1153,7 @@ impl Game {
         let mut creations: Vec<(Pos, Gem)> = Vec::new();
         let mut jitter_ms = 0.0_f32;
 
+        let mut matched = 0;
         for group in &groups {
             let special = group.award(&self.spec.rules.specials);
             if special != Special::None {
@@ -1130,6 +1162,12 @@ impl Game {
                     creations.push((pivot, Gem { color: group.color, special }));
                 }
             }
+            // Cells rather than groups: one swap can line up two runs at
+            // once, and both are the player's. Summing them is safe because a
+            // group is already everything that touches it, so an L is one
+            // group of five rather than two threes sharing a corner, and no
+            // two groups hold the same cell. See `matching::find_matches`.
+            matched += group.cells.len() as u32;
             seeds.extend_from_slice(&group.cells);
         }
 
@@ -1144,7 +1182,7 @@ impl Game {
         if seeds.is_empty() {
             None
         } else {
-            Some(Resolution { seeds, creations, spent, jitter_ms })
+            Some(Resolution { seeds, matched, creations, spent, jitter_ms })
         }
     }
 
@@ -1482,6 +1520,8 @@ impl Game {
             self.cascade += 1;
             self.begin_clear(Resolution {
                 seeds: waiting,
+                // The flourish setting itself off, which nobody swapped.
+                matched: 0,
                 creations: Vec::new(),
                 spent: Vec::new(),
                 jitter_ms: FINALE_JITTER_MS,
@@ -2827,6 +2867,169 @@ mod tests {
             beat >= FALL_HOLD_MS - step * 2.0,
             "the beat is {beat:.0}ms, short of the {FALL_HOLD_MS} it is set to",
         );
+    }
+
+    /// A still board with nothing matched on it yet, for weighing what one
+    /// swap lines up.
+    fn quiet_game(layout: &[&str]) -> Game {
+        let rows = layout.len() as i32;
+        let cols = layout[0].len() as i32;
+        let mut game = Game::new(spec(rows, cols, 8, 10), 1);
+        game.spec.rules.refill = RefillMode::None;
+        game.board = Board::from_layout(layout);
+        assert!(
+            matching::find_matches(&game.board, &game.spec.rules).is_empty(),
+            "the board already had a match on it before anything was swapped",
+        );
+        game
+    }
+
+    /// Swaps two cells, plays the board out, and says how many gems the
+    /// player lined up along with everything that happened afterwards.
+    ///
+    /// The number is read the frame the swap resolves, which is before
+    /// anything it sets off. The events have to be gathered as they go: the
+    /// clear the swap starts is raised on that same frame, and `update`
+    /// empties its list on the next one.
+    fn swap_and_settle(game: &mut Game, a: Pos, b: Pos) -> (u32, Vec<Event>) {
+        assert!(game.try_swap(a, b), "the swap was refused");
+        let mut lined_up = None;
+        let mut seen = Vec::new();
+        for _ in 0..4000 {
+            game.update(16.0);
+            seen.extend_from_slice(game.events());
+            if lined_up.is_none() && !matches!(game.phase(), Phase::Swapping { .. }) {
+                lined_up = Some(game.swap_match());
+            }
+            if game.phase() == Phase::Idle || game.phase() == Phase::Finished {
+                return (lined_up.expect("the swap never resolved"), seen);
+            }
+        }
+        panic!("board never settled");
+    }
+
+    fn lined_up(game: &mut Game, a: Pos, b: Pos) -> u32 {
+        swap_and_settle(game, a, b).0
+    }
+
+    #[test]
+    fn a_swap_is_weighed_by_the_gems_it_lines_up() {
+        // Three in a row is three.
+        let mut game = quiet_game(&["01010", "10101", "03230", "22101", "01010"]);
+        assert_eq!(lined_up(&mut game, Pos::new(2, 2), Pos::new(3, 2)), 3);
+
+        // Five in a row is five, and not the three it contains: each size is
+        // its own shape, so growing into a bigger one is not reaching a
+        // smaller one.
+        let mut game = quiet_game(&["01010", "10101", "03230", "22122", "01010"]);
+        assert_eq!(lined_up(&mut game, Pos::new(2, 2), Pos::new(3, 2)), 5);
+
+        // An L is two runs of three sharing a corner, which is five gems and
+        // not six. Counting the runs rather than the cells would say six.
+        let mut game = quiet_game(&["01010", "10201", "01210", "10322", "01210"]);
+        assert_eq!(lined_up(&mut game, Pos::new(3, 2), Pos::new(4, 2)), 5);
+
+        // One swap can line up two runs that touch nothing of each other's,
+        // and the player lined up all six.
+        let mut game = quiet_game(&["01010", "10101", "01210", "22101", "01010"]);
+        assert_eq!(lined_up(&mut game, Pos::new(2, 2), Pos::new(3, 2)), 6);
+    }
+
+    #[test]
+    fn a_swap_that_lines_nothing_up_is_worth_nothing() {
+        let mut game = quiet_game(&["01010", "10101", "03230", "22101", "01010"]);
+        assert_eq!(lined_up(&mut game, Pos::new(2, 2), Pos::new(3, 2)), 3);
+
+        // And the next swap is the next swap's own answer, not a number left
+        // over from the good one before it.
+        let mut game = quiet_game(&["01010", "10101", "03230", "22101", "01010"]);
+        game.swap_match = 5;
+        game.spec.rules.revert_invalid = false;
+        assert_eq!(lined_up(&mut game, Pos::new(0, 0), Pos::new(0, 1)), 0);
+
+        // The same for a swap the board slides back, which is the other way a
+        // move can come to nothing.
+        let mut game = quiet_game(&["01010", "10101", "03230", "22101", "01010"]);
+        game.swap_match = 5;
+        assert!(game.spec.rules.revert_invalid, "this half is about the revert");
+        assert_eq!(lined_up(&mut game, Pos::new(0, 0), Pos::new(0, 1)), 0);
+    }
+
+    #[test]
+    fn only_the_gems_that_lined_up_are_counted() {
+        // A gem carrying a beam is a gem of its color and matches like one,
+        // so it counts as the one gem it is. What it goes on to clear is the
+        // match's doing rather than part of the match: this row clears far
+        // more than three and the swap is still a three.
+        let mut game = quiet_game(&["01010", "10101", "03230", "22101", "01010"]);
+        game.board
+            .set_gem(Pos::new(3, 0), Some(Gem { color: 2, special: Special::LineH }));
+        let (matched, seen) = swap_and_settle(&mut game, Pos::new(2, 2), Pos::new(3, 2));
+        assert_eq!(matched, 3);
+        let cleared = seen.iter().filter(|e| e.kind == EV_CLEAR).count();
+        assert!(cleared > 3, "the beam should have taken the row, and took {cleared}");
+
+        // A brick is broken beside a match rather than being part of one, so
+        // it is not one of the gems that lined up.
+        let mut game = quiet_game(&["01010", "1010=", "03230", "22101", "01010"]);
+        assert_eq!(lined_up(&mut game, Pos::new(2, 2), Pos::new(3, 2)), 3);
+
+        // Nor is a rainbow: swapping one against a gem takes a whole color,
+        // and none of it is a match. A swap that matches nothing is worth
+        // nothing however much it clears.
+        let mut game = quiet_game(&["01010", "10101", "03230", "22101", "01010"]);
+        game.board
+            .set_gem(Pos::new(0, 0), Some(Gem { color: 0, special: Special::Rainbow }));
+        let (matched, seen) = swap_and_settle(&mut game, Pos::new(0, 0), Pos::new(0, 1));
+        assert_eq!(matched, 0);
+        let cleared = seen.iter().filter(|e| e.kind == EV_CLEAR).count();
+        assert!(cleared > 1, "the rainbow should have taken a color, and took {cleared}");
+    }
+
+    #[test]
+    fn a_match_a_cascade_lines_up_is_not_the_players() {
+        // The number is what the player did. A board that goes on to match
+        // itself several times over is the board's doing, and none of it
+        // changes what they swapped.
+        //
+        // A seed that chains, because a board that settles in one go proves
+        // nothing here. Swept rather than pinned: which seeds chain moves with
+        // the deal, and a hunt that finds one is a test that keeps working.
+        let mut chained = None;
+        for seed in 0..64 {
+            let mut game = Game::new(spec(9, 9, 5, 30), seed);
+            let (a, b) = game.hint().expect("a fresh board has a move");
+            assert!(game.try_swap(a, b));
+
+            let mut readings = Vec::new();
+            // Watched as it goes: the board ends its chain when it comes to
+            // rest, so the counter reads zero by the time it is idle.
+            let mut deepest = 0;
+            for _ in 0..4000 {
+                game.update(16.0);
+                deepest = deepest.max(game.cascade());
+                if !matches!(game.phase(), Phase::Swapping { .. }) {
+                    readings.push(game.swap_match());
+                }
+                if game.phase() == Phase::Idle || game.phase() == Phase::Finished {
+                    break;
+                }
+            }
+            if deepest > 1 {
+                readings.dedup();
+                chained = Some((seed, deepest, readings));
+                break;
+            }
+        }
+
+        let (seed, depth, readings) =
+            chained.expect("no board in sixty-four seeds ever chained off its first move");
+        assert_eq!(
+            readings.len(),
+            1,
+            "on seed {seed}, a chain {depth} deep moved the number: {readings:?}",
+        );
+        assert!(readings[0] >= 3, "the hint's own swap matched {} gems", readings[0]);
     }
 
     /// A board with a brick in the middle of the bottom row and a match lined

@@ -9,8 +9,8 @@ use crate::level::{levels, LevelSpec};
 use crate::options::{Kind, Options, SETTINGS};
 use crate::progression::{
     ap_gems_per_level, fill_seed, item_index, item_name, items, location_index, location_name,
-    locations, solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, NO_LOCATION,
-    SHORTEST_CHAIN,
+    locations, solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, LONGEST_MATCH,
+    NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
 };
 use crate::rng::Rng;
 
@@ -528,6 +528,14 @@ impl Session {
         for length in SHORTEST_CHAIN..=reached {
             self.check(Location::Chain(length));
         }
+        // A match does not work that way: each size is its own shape, so a
+        // five pays the five and nothing else. The board's number is the
+        // player's own last swap, which is what these are about; a cascade
+        // lining one up afterwards is the board's doing, not theirs.
+        let lined_up = self.game.swap_match();
+        if (SHORTEST_MATCH..=LONGEST_MATCH).contains(&lined_up) {
+            self.check(Location::Match(lined_up));
+        }
         for _ in 0..self.game.events().iter().filter(|e| e.kind == EV_AP_CLEAR).count() {
             self.check_next_ap_gem();
         }
@@ -796,23 +804,71 @@ mod tests {
     }
 
     #[test]
+    fn lining_up_gems_checks_that_size_and_only_that_size() {
+        // Each size is its own shape, so a five pays the five and leaves the
+        // four for somebody who lines up a four.
+        let mut session = Session::new(7);
+        let matches = |session: &Session| -> Vec<u32> {
+            session
+                .checked()
+                .iter()
+                .filter_map(|id| match Location::from_id(*id) {
+                    Some(Location::Match(gems)) => Some(gems),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert!(matches(&session).is_empty(), "a run that has swapped nothing has matched");
+
+        // Laid on rather than played for, because which boards a seed deals
+        // is its own business and this is about what a given match pays.
+        let board = &mut session.game_mut().board;
+        for c in 0..5 {
+            board.set_gem(Pos::new(4, c), Some(Gem::plain(if c == 2 { 3 } else { 1 })));
+        }
+        board.set_gem(Pos::new(3, 2), Some(Gem::plain(1)));
+        assert!(session.game_mut().try_swap(Pos::new(3, 2), Pos::new(4, 2)));
+        for _ in 0..400 {
+            session.update(16.0);
+            if session.game().phase() == Phase::Idle {
+                break;
+            }
+        }
+        assert_eq!(
+            session.game().swap_match(),
+            5,
+            "the board was laid out for a five and did not make one",
+        );
+        assert_eq!(matches(&session), [5], "a five paid the wrong sizes");
+    }
+
+    #[test]
     fn a_level_remembers_the_best_score_it_was_beaten_with() {
         let mut session = run_finding_no_unlock();
         assert_eq!(session.best_score(0), 0, "a run that has played nothing has a best score");
 
+        // At least the pin rather than exactly it: the helper holds the score
+        // there every frame while the flourish keeps adding to it, so the
+        // best is taken a hair above what it was pinned at. Which is the
+        // behavior wanted, since the score really does climb through the
+        // flourish; the gaps below are wide enough that it cannot matter.
         force_win_at(&mut session, 9_000);
-        assert_eq!(session.best_score(0), 9_000);
+        let first = session.best_score(0);
+        assert!(first >= 9_000, "a level beaten at 9,000 kept {first}");
 
         // A worse attempt does not take it away: the number belongs to the
         // level, not to the last go at it, which is the same rule the marks
         // follow.
         session.retry();
         force_win_at(&mut session, 4_000);
-        assert_eq!(session.best_score(0), 9_000, "a worse attempt lowered the best");
+        assert_eq!(session.best_score(0), first, "a worse attempt lowered the best");
 
         session.retry();
         force_win_at(&mut session, 21_000);
-        assert_eq!(session.best_score(0), 21_000, "a better attempt did not raise it");
+        assert!(
+            session.best_score(0) > first,
+            "a better attempt did not raise it past {first}",
+        );
 
         // Per level, and only where it was earned.
         assert_eq!(session.best_score(1), 0, "a level never played has a score");
@@ -1052,8 +1108,17 @@ mod tests {
         assert!(session.checked().is_empty());
 
         collect_one_gem(&mut session);
+        // The gems it checked rather than everything it checked: the move
+        // that clears a gem is a match and may set off a chain, and both of
+        // those are locations too.
+        let gems: Vec<u32> = session
+            .checked()
+            .iter()
+            .copied()
+            .filter(|id| matches!(Location::from_id(*id), Some(Location::ApGem { .. })))
+            .collect();
         assert_eq!(
-            session.checked(),
+            gems,
             [Location::ApGem { level: 0, index: 0 }.id()],
             "the first gem collected did not check the first of the sequence",
         );

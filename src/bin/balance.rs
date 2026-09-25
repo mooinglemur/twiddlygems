@@ -23,7 +23,9 @@ use twiddlygems::board::{Pos, Special};
 use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
-use twiddlygems::progression::{Inventory, Item, LONGEST_CHAIN, SHORTEST_CHAIN, UNLOCKS};
+use twiddlygems::progression::{
+    Inventory, Item, LONGEST_CHAIN, LONGEST_MATCH, SHORTEST_CHAIN, SHORTEST_MATCH, UNLOCKS,
+};
 
 /// The ladder as the unluckiest run meets it: nothing in hand at all.
 ///
@@ -93,6 +95,8 @@ fn main() {
     tiers(Bot::Greedy, 25);
     println!();
     chains(Bot::Greedy, 25);
+    println!();
+    match_sizes(Bot::Greedy, 25);
     println!();
     // More seeds than the other tables get, because the number that matters is
     // a tail rather than a middle: a bare run reaching a mark is rare by
@@ -292,6 +296,79 @@ fn chains(bot: Bot, seeds: u64) {
             "{:<16}  {:>4}% {}",
             format!("{length} Chain"),
             hits * 100 / runs.max(1),
+            if hits == 0 { "  NOBODY EVER GETS HERE" } else { "" },
+        );
+    }
+}
+
+/// How often a playthrough lines up exactly each match size.
+///
+/// The table [`RELIABLE_MATCH`] is set off, and the same question the chains
+/// table asks: a location a run rarely reaches is one a solo player would be
+/// asked to be lucky to finish their own progression at.
+///
+/// Exactly, because that is what these locations ask for: a six does not pay
+/// the five, so growing into bigger matches does not fill the smaller ones in
+/// on the way. Read against a run holding nothing, which is what their rule
+/// asks for, and counted per playthrough rather than per move: what a player
+/// feels is how many times they have to play a level before one happens.
+fn match_sizes(bot: Bot, seeds: u64) {
+    println!("how often a move lines up exactly this many gems, holding nothing \
+              ({seeds} runs per level)");
+    // The opening level on its own as well, because these ask for no item at
+    // all: they are sphere one, so a solo run may keep its first progression
+    // behind one while only the opener is unlocked.
+    println!("{:<20}  {:>12}  {:>12}", "size", "whole ladder", "opener only");
+
+    let ladder = bare();
+    let mut reached = vec![0u64; (LONGEST_MATCH + 2) as usize];
+    let mut opener = vec![0u64; (LONGEST_MATCH + 2) as usize];
+    let mut runs = 0u64;
+    let mut opener_runs = 0u64;
+    for (index, spec) in ladder.iter().enumerate() {
+        for seed in 0..seeds {
+            let mut game = Game::new(spec.clone(), seed * 7919 + index as u64);
+            let mut seen = vec![false; (LONGEST_MATCH + 2) as usize];
+            for _ in 0..4_000 {
+                if game.status() != Status::Playing {
+                    break;
+                }
+                if game.phase() == Phase::Idle {
+                    let choice = match bot {
+                        Bot::First => game.hint(),
+                        Bot::Greedy => best_move(&game),
+                    };
+                    match choice {
+                        Some((a, b)) => {
+                            game.try_swap(a, b);
+                        }
+                        None => break,
+                    }
+                }
+                game.update(16.0);
+                let lined_up = game.swap_match();
+                if (SHORTEST_MATCH..=LONGEST_MATCH).contains(&lined_up) {
+                    seen[lined_up as usize] = true;
+                }
+            }
+            runs += 1;
+            opener_runs += u64::from(index == 0);
+            for size in SHORTEST_MATCH..=LONGEST_MATCH {
+                reached[size as usize] += u64::from(seen[size as usize]);
+                if index == 0 {
+                    opener[size as usize] += u64::from(seen[size as usize]);
+                }
+            }
+        }
+    }
+
+    for size in SHORTEST_MATCH..=LONGEST_MATCH {
+        let hits = reached[size as usize];
+        println!(
+            "{:<20}  {:>11}%  {:>11}% {}",
+            format!("Activate {size} match"),
+            hits * 100 / runs.max(1),
+            opener[size as usize] * 100 / opener_runs.max(1),
             if hits == 0 { "  NOBODY EVER GETS HERE" } else { "" },
         );
     }

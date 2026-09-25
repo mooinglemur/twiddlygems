@@ -680,7 +680,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // against the feed below, which keeps every line rather than the last.
   assert.match(
     elements.get('overlay-body').textContent,
-    /Found .+ \((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain)\)\./,
+    /Found .+ \((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain|Activate \d match)\)\./,
     'clearing the level announced nothing',
   );
 
@@ -701,13 +701,21 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // everywhere.
   assert.ok(
     lines.every((line) =>
-      /^Found \S.*\((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain)\)$/.test(line),
+      /^Found \S.*\((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain|Activate \d match)\)$/
+        .test(line),
     ),
     `the feed has a line it cannot place: ${JSON.stringify(lines)}`,
   );
   assert.ok(
     lines.some((line) => / Chain\)$/.test(line)),
     `nothing was ever found on a chain, which the placement says it should be: ${JSON.stringify(lines)}`,
+  );
+  // And a match pays too. Three in a row is the game itself, so a level
+  // played out has certainly made one: a run that never found anything there
+  // would mean the swap is not being weighed at all.
+  assert.ok(
+    lines.some((line) => /\(Activate 3 match\)$/.test(line)),
+    `lining up three never paid anything: ${JSON.stringify(lines)}`,
   );
 
   // What the run has found goes in the save. Without it a reload keeps the
@@ -792,10 +800,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
     best.children.map((part) => part.textContent).join(' '),
     `Your best ${beaten.toLocaleString()}`,
   );
-  // And a mark it reached is checked off rather than left as a target.
-  assert.ok(
-    elements.get('score-marks').children.some((row) => row.classList.contains('taken')),
-    'the level was beaten past a mark and the popover still offers it',
+  // And the marks it reached are checked off rather than left as targets,
+  // however many that turned out to be: which items this run was dealt is the
+  // seed's business, and how well it did here follows from them.
+  const past = [Tier.SILVER, Tier.GOLD].filter((tier) => engine.levelBest(LEVEL) >= tier).length;
+  assert.equal(
+    elements.get('score-marks').children.filter((row) => row.classList.contains('taken')).length,
+    past,
+    'the popover disagrees with the engine about which marks are behind',
   );
   gesture('pointerdown');
 
