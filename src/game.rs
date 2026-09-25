@@ -356,6 +356,17 @@ struct Resolution {
     /// and does everything a beam does, but no gem on the board is holding it.
     /// Empty for everything the board sets off itself.
     fires: Vec<(Pos, Special)>,
+    /// Whether this clear is a step of the chain, which is what the rising
+    /// chord counts. See [`EV_MATCH`].
+    ///
+    /// True for anything the player lined up, for each link a cascade adds,
+    /// and for anything they spent out of the inventory, all of which open a
+    /// chain or carry one forward.
+    ///
+    /// False for the clear a rocket sets off by landing on something. A strike
+    /// is not a step: the cascade does not climb for one, so the chord rung
+    /// for it is the last chord over again, which is what it sounds like.
+    steps_the_chain: bool,
     /// Scatters the starting cells in time. A rainbow wants this; an ordinary
     /// match does not.
     jitter_ms: f32,
@@ -649,6 +660,9 @@ impl Game {
                     // going away because the player spent it on them, so they
                     // are seeds and nothing here is fired.
                     fires: Vec::new(),
+                    // Spending one opens a chain of its own, so it is a first
+                    // chord rather than a repeat of anything.
+                    steps_the_chain: true,
                     matched: 0,
                     creations: Vec::new(),
                     spent: Vec::new(),
@@ -680,6 +694,8 @@ impl Game {
                 self.begin_clear(Resolution {
                     seeds: Vec::new(),
                     fires: vec![(at, Special::Cross)],
+                    // As above: the player set this off, and it opens a chain.
+                    steps_the_chain: true,
                     matched: 0,
                     creations: Vec::new(),
                     spent: Vec::new(),
@@ -1090,6 +1106,10 @@ impl Game {
                 // Whatever a rocket landed on is carrying its own special, so
                 // the wave finds it where it stands.
                 fires: Vec::new(),
+                // The one clear that is not a step. A strike opens no link, so
+                // the cascade stays where it was, and a chord rung at a level
+                // already rung is the same chord again.
+                steps_the_chain: false,
                 jitter_ms: 0.0,
             });
             return;
@@ -1413,7 +1433,15 @@ impl Game {
         } else {
             // Nothing fired: a match is gems the player lined up, and any
             // special among them is on the board for the wave to find.
-            Some(Resolution { seeds, matched, creations, spent, fires: Vec::new(), jitter_ms })
+            Some(Resolution {
+                seeds,
+                matched,
+                creations,
+                spent,
+                fires: Vec::new(),
+                steps_the_chain: true,
+                jitter_ms,
+            })
         }
     }
 
@@ -1587,7 +1615,9 @@ impl Game {
         }
 
         let cascade = self.cascade.max(1);
-        self.events.push(Event::plain(EV_MATCH, cascade.min(65_535) as u16));
+        if resolution.steps_the_chain {
+            self.events.push(Event::plain(EV_MATCH, cascade.min(65_535) as u16));
+        }
         let points = (blast.cleared.len() as u64 * SCORE_PER_GEM
             + blast.fired.len() as u64 * SCORE_PER_SPECIAL_FIRED
             + resolution.creations.len() as u64 * SCORE_PER_SPECIAL_MADE)
@@ -1762,6 +1792,10 @@ impl Game {
                 creations: Vec::new(),
                 spent: Vec::new(),
                 fires: Vec::new(),
+                // The flourish climbs a chain of its own, one link per move it
+                // spends, and the chord climbing with it is most of the sound
+                // of a level ending.
+                steps_the_chain: true,
                 jitter_ms: FINALE_JITTER_MS,
             });
             return true;
@@ -3017,6 +3051,54 @@ mod tests {
 
         assert_eq!(hits, 1, "the rocket should have landed");
         assert_eq!(steps, 0, "and raised no step of the chain doing it");
+    }
+
+    #[test]
+    fn what_a_rocket_lands_on_going_off_is_not_a_step_either() {
+        // The test above watches the flight and stops at the end of it, which
+        // is exactly where this begins: a rocket that lands on something that
+        // goes off starts a clear, and a clear rang the chord whatever set it
+        // off. The cascade does not climb for a strike, so what sounded was
+        // the last chord over again.
+        //
+        // Both things a landing can set off, because they reach it by the same
+        // road: a special, which fires, and an Archipelago gem, which is
+        // collected.
+        for (name, target) in [("a special", Special::Cross), ("a check", Special::Archipelago)] {
+            let mut game = Game::new(spec(8, 8, 6, 10), 116);
+            let (from, at) = (Pos::new(0, 0), Pos::new(4, 4));
+            let gem = game.board.gem(from).expect("the board is full");
+            game.board.set_gem(from, Some(Gem { special: Special::Rocket, ..gem }));
+            let hit = game.board.gem(at).expect("the board is full");
+            game.board.set_gem(at, Some(Gem { special: target, ..hit }));
+
+            // A rocket a match made, part way through a chain, which is where
+            // this is heard: a chord rung for the strike is the one the player
+            // has just heard over again, because a strike does not climb.
+            game.cascade = 3;
+            let launch = Launch {
+                from,
+                to: at,
+                flight_ms: flight_time(cells_between(from, at)),
+                landed: false,
+                from_inventory: false,
+            };
+            game.launches = vec![launch];
+            game.launch_ms = launch.flight_ms;
+            game.phase = Phase::Launching { elapsed: 0.0 };
+
+            let seen = settle(&mut game);
+            assert!(
+                seen.iter().any(|e| e.kind == EV_ROCKET_HIT),
+                "{name}: the rocket never landed",
+            );
+
+            // Whatever the board went on to do once it settled is its own
+            // business, and climbs from here. What must not be there is a step
+            // at the cascade the strike itself happened on.
+            let repeated = seen.iter().filter(|e| e.kind == EV_MATCH && e.value == 3).count();
+            assert_eq!(repeated, 0, "{name}: landing on it rang the chord again");
+        }
     }
 
     #[test]
