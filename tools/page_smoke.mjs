@@ -1353,10 +1353,50 @@ click(overlayButton('Close'), 'the level picker has no way out');
 // happens to the board when one is spent.
 let flightFrames = 0;
 {
-  const { Consumable } = await import(path.resolve('web/js/engine.js'));
+  const { Consumable, EMPTY_CELL, Flag, Special } = await import(path.resolve('web/js/engine.js'));
   const { engine, renderer, hud } = window.twiddlygems;
   const inventory = elements.get('inventory');
   const kinds = Object.values(Consumable);
+
+  /// Puts the level up again and waits for it to settle.
+  ///
+  /// Before each thing spent below, rather than once at the top, because
+  /// spending one of these can end the level outright: a rainbow takes a whole
+  /// color off the board, which on a color goal is most of what the level was
+  /// asking for, and a board that has been won accepts no more input. Reloading
+  /// costs nothing here and leaves what the run is carrying alone, which is run
+  /// state rather than the level's.
+  const freshBoard = (why) => {
+    dispatch('retry-button', 'click', {});
+    for (let i = 0; i < 900 && !engine.acceptsInput; i += 1) {
+      pump(1);
+    }
+    assert.ok(engine.acceptsInput, `the board never came back to rest for ${why}`);
+  };
+
+  /// A cell holding an ordinary gem, and where it is on screen.
+  ///
+  /// Read off the board rather than aimed at a fixed pixel. What is under any
+  /// given point changes with the level and with whatever the last thing spent
+  /// took off the board, and two of the cells there are refuse on purpose: a
+  /// rainbow pointed at an Archipelago gem is declined rather than wasted, and
+  /// a brick holds no gem at all.
+  const plainCell = (why) => {
+    const { cells } = engine.snapshot();
+    for (let i = 0; i < cells.length / 4; i += 1) {
+      const colorless = cells[i * 4] === EMPTY_CELL;
+      const blocked = (cells[i * 4 + 3] & (Flag.BRICK | Flag.WALL)) !== 0;
+      if (!colorless && !blocked && cells[i * 4 + 1] === Special.NONE) {
+        const cell = { r: Math.floor(i / engine.cols), c: i % engine.cols };
+        return {
+          ...cell,
+          clientX: renderer.pad + (cell.c + 0.5) * renderer.cell,
+          clientY: renderer.pad + (cell.r + 0.5) * renderer.cell,
+        };
+      }
+    }
+    throw new assert.AssertionError({ message: `no ordinary gem on the board to aim ${why} at` });
+  };
 
   // Somewhere with room to shoot at, reached the way a player reaches it.
   dispatch('levels-button', 'click', {});
@@ -1430,8 +1470,9 @@ let flightFrames = 0;
   // the one refusal that can be arranged on any board. Still armed from the
   // check above, which is why nothing arms it again here.
   engine.restoreConsumables(Consumable.ROCKET, 0);
-  dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
-  dispatch('board', 'pointerup', { clientX: 40, clientY: 40 });
+  const refused = plainCell('a refused rocket');
+  dispatch('board', 'pointerdown', refused);
+  dispatch('board', 'pointerup', refused);
   // A frame, because selecting a gem marks the board and the board is only
   // written out for reading on the tick after. Without this the check below
   // reads the frame before the tap and passes whatever happened.
@@ -1444,7 +1485,7 @@ let flightFrames = 0;
   // no move is spent, because a bonus is not a turn.
   const movesBefore = engine.movesLeft;
   const heldBefore = engine.consumables(Consumable.ROCKET);
-  dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+  dispatch('board', 'pointerdown', plainCell('a rocket'));
   assert.equal(hud.armed, null, 'spending it left it armed');
   assert.equal(engine.consumables(Consumable.ROCKET), heldBefore - 1, 'the run was not charged');
   assert.equal(engine.movesLeft, movesBefore, 'spending a bonus cost a move');
@@ -1514,27 +1555,21 @@ let flightFrames = 0;
   // and the engine only ever reports what the last call raised. Leaving that
   // for the next tick to notice drops every pop, every piece of debris and
   // every mote of it, so the page has to collect them then and there.
-  pump(60);
-  assert.ok(engine.acceptsInput, 'the board never settled after the rocket');
+  freshBoard('the rainbow');
   engine.restoreConsumables(Consumable.RAINBOW, 1);
   pump(1);
   renderer.pendingBursts.length = 0;
   renderer.particles.length = 0;
   click(slots[Consumable.RAINBOW], 'the rainbow slot');
-  dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+  dispatch('board', 'pointerdown', plainCell('a rainbow'));
   assert.equal(engine.consumables(Consumable.RAINBOW), 0, 'the rainbow was not spent');
   assert.ok(
     renderer.pendingBursts.length + renderer.particles.length > 0,
     'the clear a spent rainbow raised was never collected, so none of it was drawn',
   );
 
-  // The cluster aims itself, so tapping it is the whole gesture. Pumped until
-  // the board is done rather than for a set number of frames: a rainbow takes
-  // a whole color off the board and the cascades behind it run for a while.
-  for (let i = 0; i < 600 && !engine.acceptsInput; i += 1) {
-    pump(1);
-  }
-  assert.ok(engine.acceptsInput, 'the board never settled after the rainbow');
+  // The cluster aims itself, so tapping it is the whole gesture.
+  freshBoard('the cluster');
   click(slots[Consumable.ROCKET_CLUSTER], 'the cluster slot');
   assert.equal(hud.armed, null, 'the cluster asked for a cell');
   assert.equal(engine.consumables(Consumable.ROCKET_CLUSTER), 0, 'the cluster was not spent');

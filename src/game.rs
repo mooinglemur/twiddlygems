@@ -1000,11 +1000,22 @@ impl Game {
                 None => continue,
             };
 
-            // A special is set off rather than taken. It stays where it is for
-            // now and goes on a list; once every rocket is down, the lot of
-            // them fire together as an ordinary clear. Taking it instead would
-            // waste the best thing a rocket can land on.
-            if gem.special.is_special() {
+            // A special is set off rather than taken, and so, for its own
+            // reasons, is an Archipelago gem. Both stay where they are for now
+            // and go on a list; once every rocket is down, the lot of them go
+            // through an ordinary clear together. Taking a special instead
+            // would waste the best thing a rocket can land on.
+            //
+            // Taking a check instead would be worse than waste. Collecting one
+            // happens in the clear, which is the only place that raises it and
+            // the only place that tells the level it has one fewer to drop; a
+            // rocket lifting the gem off the board here took the check away
+            // with it and nothing anywhere said so.
+            //
+            // So the test is "not a plain gem" rather than `is_special`, which
+            // an Archipelago gem is deliberately not: it is a check sitting on
+            // the board, not a charge waiting to go off.
+            if gem.special != Special::None {
                 self.triggered.push(launch.to);
                 self.events.push(Event::at(
                     EV_ROCKET_HIT,
@@ -1262,6 +1273,15 @@ impl Game {
             // level.
             let Some(gem) = self.board.gem(p) else { continue };
             if gem.special == Special::Rocket {
+                continue;
+            }
+            // A check is worth as much as a brick, so it sits in the same tier:
+            // the top one, beside the bricks and the cells that move a goal
+            // along. Left to fall through as an ordinary gem it read as one of
+            // the plain ones, which meant a rocket took it by accident and only
+            // once everything that advanced an objective was gone.
+            if gem.special == Special::Archipelago {
+                best.push(p);
                 continue;
             }
             if (wants_jelly && self.board.jelly(p) > 0) || wanted_colors.contains(&gem.color) {
@@ -4905,6 +4925,61 @@ mod tests {
             "a row of Archipelago gems matched itself",
         );
         assert_eq!(game.board.match_color(Pos::new(2, 0)), None);
+    }
+
+    #[test]
+    fn a_rocket_struck_archipelago_gem_is_collected_rather_than_destroyed() {
+        // A check is the best thing on the board, and a rocket is a thing that
+        // reaches across it. Striking one has to collect it: taking the gem
+        // away without raising the collection is the check gone for good, and
+        // nothing on the level would ever say so.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        let at = Pos::new(2, 3);
+        ap_board(&mut game, at);
+        game.ap_gems_wanted = 1;
+
+        let (spent, seen) = spend(&mut game, Consumable::Rocket, Some(at));
+        assert!(spent, "a rocket aimed at an Archipelago gem was refused");
+        assert!(
+            seen.iter().any(|e| e.kind == EV_ROCKET_HIT && (e.r, e.c) == (at.r as u8, at.c as u8)),
+            "the rocket never reached it",
+        );
+        assert_eq!(
+            seen.iter().filter(|e| e.kind == EV_AP_CLEAR).count(),
+            1,
+            "the gem was taken off the board without the check being collected",
+        );
+        // And the level knows it has one fewer worth dropping, or the next
+        // refill sends another down for a check that is no longer there.
+        assert_eq!(game.ap_gems_wanted, 0, "the level still wants a gem it has already given");
+    }
+
+    #[test]
+    fn a_rocket_aims_at_an_archipelago_gem_as_readily_as_at_a_brick() {
+        // Both are the best thing a rocket can be pointed at, so both go in
+        // the top tier. A check sitting among plain gems used to read as one
+        // of them, which meant a rocket took it only by accident and only
+        // once everything that moved a goal along was gone.
+        let mut game = Game::new(spec(6, 6, 4, 20), 9);
+        let at = Pos::new(2, 3);
+        ap_board(&mut game, at);
+
+        // No goal is outstanding on this board and nothing is bricked, so the
+        // top tier holds the check and nothing else: every rocket must take
+        // it. Twenty runs, because one rocket landing on it proves nothing
+        // when the board is mostly plain gems.
+        let mut taken = 0;
+        for seed in 0..20 {
+            let mut game = Game::new(spec(6, 6, 4, 20), seed);
+            ap_board(&mut game, at);
+            let from = Pos::new(5, 0);
+            let picked = game.pick_targets(&[from]);
+            taken += usize::from(picked.first().map(|(_, to)| *to) == Some(at));
+        }
+        assert_eq!(taken, 20, "a rocket passed over the check {} times in 20", 20 - taken);
+        // And the tiers still hold: it is chosen over plain gems, not because
+        // it is the only thing there.
+        assert!(game.board.gem(at).is_some(), "the board lost the gem before anything was aimed");
     }
 
     #[test]
