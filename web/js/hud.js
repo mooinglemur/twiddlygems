@@ -136,6 +136,12 @@ export class Hud {
         // as its count loses a digit, and every chip to its right slides along
         // to take up the slack. `ch` is a digit's own width, which is a width
         // at all because the stylesheet sets tabular numerals.
+        //
+        // Digits and not characters, which is safe here and would not be a few
+        // lines up: past a thousand the number on screen carries a comma, and
+        // a comma is not a digit wide. The only goals with numbers that size
+        // are scores, and a score never reaches this branch, because a score
+        // is a target that is written once rather than a count coming down.
         count.style.minWidth = `${String(objective.need).length}ch`;
       }
       return { item, count, icon, target, objective };

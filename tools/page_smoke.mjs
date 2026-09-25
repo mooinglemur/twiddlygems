@@ -1229,16 +1229,16 @@ click(overlayButton('Close'), 'the level picker has no way out');
   pump(2);
   const objective = engine.objectives()[renderer.goals[0].at];
   assert.equal(
-    renderer.goalsMet[0],
-    objective.have >= objective.need,
-    'the renderer disagrees with the engine about whether the goal is done',
+    renderer.goalsLeft[0],
+    objective.need - objective.have,
+    'the renderer disagrees with the engine about how much the goal has left',
   );
 
   // Set rather than played to: following hints does not meet a goal on any
   // level in the ladder, so a test that waited for one would never run. What
-  // the line above checks is that the flag is read off the engine at all.
+  // the line above checks is that the number is read off the engine at all.
   pickLevel(5, 'again, for a board with moves left on it');
-  assert.equal(renderer.goalsMet[0], false, 'a fresh level starts with its goal done');
+  assert.ok(renderer.goalsLeft[0] > 1, 'a fresh level starts with its goal all but done');
   const asked = renderer.goals[0].color;
   clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: asked });
   assert.ok(renderer.tributes.length > 0, 'the goal took nothing while it still wanted some');
@@ -1264,9 +1264,31 @@ click(overlayButton('Close'), 'the level picker has no way out');
     'a clear on its way to a goal was not owed while it waited for its blast',
   );
 
-  renderer.goalsMet[0] = true;
+  renderer.goalsLeft[0] = 0;
+  renderer.owedThisFrame[0] = 0;
   clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: asked });
   assert.equal(renderer.tributes.length, 0, 'a goal already met was still being fed');
+
+  // And a goal takes only what it still has to take. The engine stops counting
+  // at the total, so clearing three of a color it wanted two more of counts as
+  // two: a third cell paying anyway would leave the chip owed three against a
+  // goal with two outstanding, and it would climb to three before falling.
+  pickLevel(5, 'once more, for a goal with a known amount left');
+  renderer.goalsLeft[0] = 2;
+  renderer.owedThisFrame[0] = 0;
+  renderer.tributes.length = 0;
+  renderer.pendingBursts.length = 0;
+  renderer.goalInFlight.fill(0);
+  const at = renderer.goals[0].at;
+  renderer.addEvents(
+    [3, 4, 5].map((c) => ({ kind: EventKind.CLEAR, r: 3, c, color: asked, value: 0 })),
+    performance.now(),
+  );
+  assert.equal(
+    renderer.unitsInFlight(at),
+    2,
+    `three gems cleared against two outstanding owed ${renderer.unitsInFlight(at)}`,
+  );
 }
 
 // A rocket turns the short way round.

@@ -145,7 +145,10 @@ export class Renderer {
     /// gem sat on nothing and paid a goal that was already met, when in fact
     /// it peeled the jelly and was the clear that met the goal.
     this.jellySeen = null;
-    this.goalsMet = [];
+    /// How much each goal still had to do, and how much of that has been
+    /// promised to it already this frame. See `goalsFor`.
+    this.goalsLeft = [];
+    this.owedThisFrame = [];
     /// Where each rocket in the air was a frame ago, keyed by cell, which is
     /// how a rocket on an arc knows which way it is pointing.
     this.rocketWas = null;
@@ -164,7 +167,8 @@ export class Renderer {
   setGoals(goals) {
     this.goals = goals;
     this.goalFlash = goals.map(() => 0);
-    this.goalsMet = goals.map(() => false);
+    this.goalsLeft = goals.map(() => 0);
+    this.owedThisFrame = goals.map(() => 0);
     this.goalInFlight = goals.map(() => 0);
     this.tributes.length = 0;
   }
@@ -266,9 +270,14 @@ export class Renderer {
    * peeled the last layer off its cell. A cell can feed two goals at once, and
    * saying so is the point of the effect.
    *
-   * A goal already met takes nothing more. It is done, and a stream still
-   * running into it would be saying that clearing more of that color was worth
-   * something, which is the one thing it is not.
+   * **A goal takes only what it still has to take.** The engine stops counting
+   * at the total, so clearing three of a color a goal wanted two more of
+   * counts as two; a third mote sent anyway would be owed against a goal with
+   * nothing left owing, and the chip would climb to three before falling,
+   * which is the one direction it must never go. Counted against what was left
+   * at the top of the frame, and against what this frame has promised out of
+   * it already, so a clear that pays several cells at once stops at the right
+   * one. A goal already met is simply the case where nothing is left.
    */
   goalsFor(event) {
     const hits = [];
@@ -282,7 +291,7 @@ export class Renderer {
     // A brick that only cracked is still a brick, and still in the way.
     const broken = event.kind === EventKind.BRICK && event.value === 0;
     for (let i = 0; i < this.goals.length; i += 1) {
-      if (this.goalsMet[i]) {
+      if (this.goalsLeft[i] - this.owedThisFrame[i] < 1) {
         continue;
       }
       const goal = this.goals[i];
@@ -313,6 +322,7 @@ export class Renderer {
   owe(goals) {
     for (const goal of goals) {
       this.goalInFlight[goal] += TRIBUTES_PER_GOAL;
+      this.owedThisFrame[goal] += 1;
     }
   }
 
@@ -339,7 +349,9 @@ export class Renderer {
     const objectives = this.engine.objectives();
     for (let i = 0; i < this.goals.length; i += 1) {
       const objective = objectives[this.goals[i].at];
-      this.goalsMet[i] = objective !== undefined && objective.have >= objective.need;
+      this.goalsLeft[i] = objective === undefined ? 0 : Math.max(0, objective.need - objective.have);
+      // A fresh frame, so nothing has been promised out of that yet.
+      this.owedThisFrame[i] = 0;
     }
   }
 
