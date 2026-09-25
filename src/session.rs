@@ -4,12 +4,14 @@
 //! level when you clear one, and later the Archipelago layer will answer the
 //! same question (which levels may be played) from received items instead.
 
+use crate::board::Pos;
 use crate::game::{Event, Game, Status, EV_AP_CLEAR, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::options::{Kind, Options, SETTINGS};
 use crate::progression::{
     ap_gems_per_level, fill_seed, item_index, item_name, items, location_index, location_name,
-    locations, solo_placement, Inventory, Item, Location, Tier, LONGEST_CHAIN, LONGEST_MATCH,
+    locations, solo_placement, Consumable, Inventory, Item, Location, Tier, LONGEST_CHAIN,
+    LONGEST_MATCH,
     NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
 };
 use crate::rng::Rng;
@@ -423,6 +425,35 @@ impl Session {
     ///
     /// Read back off the checked locations, so what the level select shows and
     /// what the run has actually found cannot drift apart.
+    /// Spends one of the things the run is carrying, reporting whether it
+    /// happened.
+    ///
+    /// The board is asked first and the item is taken out only if the board
+    /// took it, so a tap that could do nothing costs nothing: an aimed one
+    /// pointed at a cell it cannot work on, or any of them while the board is
+    /// busy, is refused with the inventory untouched.
+    pub fn use_consumable(&mut self, kind: Consumable, target: Option<Pos>) -> bool {
+        if self.inventory.consumables(kind) == 0 {
+            return false;
+        }
+        if !self.game.use_consumable(kind, target) {
+            return false;
+        }
+        self.inventory.spend(kind);
+        true
+    }
+
+    /// How many of one thing the run is carrying.
+    pub fn consumables(&self, kind: Consumable) -> u32 {
+        self.inventory.consumables(kind)
+    }
+
+    /// Hands a count back to a run being rebuilt from a save. See
+    /// [`Inventory::restore_consumables`] on why this sets rather than raises.
+    pub fn restore_consumables(&mut self, kind: Consumable, held: u32) {
+        self.inventory.restore_consumables(kind, held);
+    }
+
     /// How long a beaten level holds still before its flourish starts, so the
     /// goals can be seen reaching their totals. See [`Phase::Tallying`].
     ///

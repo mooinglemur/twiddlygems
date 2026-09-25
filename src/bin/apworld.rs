@@ -228,6 +228,12 @@ fn copies(item: Item) -> Count {
         // able to say what it was handed, and it arrives by topping up the
         // leftover locations rather than by being placed.
         Item::Filler => Count::Exactly(0),
+        // None yet either, and for a different reason: how many a run carries
+        // is going to be a setting, and how they are split between the kinds
+        // another. Named and numbered ahead of that, because the datapackage
+        // is fixed and adding a name to it later is the thing that breaks
+        // seeds already rolled.
+        Item::Consumable(_) => Count::Exactly(0),
     }
 }
 
@@ -242,6 +248,10 @@ fn classification(item: Item) -> &'static str {
         Item::Unlock(_) => "progression",
         Item::Moves { .. } => "progression",
         Item::Filler => "filler",
+        // Worth having and needed by nothing: no location asks for one, so a
+        // seed is finishable whether or not any are found, and the fill is
+        // free to put them anywhere. That is what "useful" means.
+        Item::Consumable(_) => "useful",
     }
 }
 
@@ -261,6 +271,10 @@ fn tops_up(item: Item) -> bool {
         Item::Unlock(_) => false,
         Item::Moves { .. } => false,
         Item::Filler => true,
+        // Not yet. How many of these a world holds is going to be asked for
+        // in the yaml, and a leftover location quietly making more of them
+        // would answer that question a second time.
+        Item::Consumable(_) => false,
     }
 }
 

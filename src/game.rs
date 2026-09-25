@@ -9,6 +9,7 @@
 use crate::board::{Board, Gem, Pos, Special, ANY_COLOR};
 use crate::level::{LevelSpec, Objective, Progress};
 use crate::matching::{self, MatchGroup};
+use crate::progression::Consumable;
 use crate::rng::Rng;
 use crate::rules::{Rules, MAX_COLORS};
 
@@ -97,6 +98,10 @@ const END_HOLD_MS: f32 = 1_000.0;
 /// Splits the hint's own stream off the deal's. Any constant would do; what
 /// matters is that the two streams differ. See [`Game::hint_rng`].
 const HINT_STREAM: u64 = 0x4849_4e54_5f5f_5f5f;
+
+/// How many rockets a cluster is worth, at each end.
+const CLUSTER_LEAST: u32 = 3;
+const CLUSTER_MOST: u32 = 5;
 
 /// What a leftover move can be turned into.
 ///
@@ -321,6 +326,13 @@ struct Launch {
     /// How long this one is in the air, which depends on how far it is going.
     flight_ms: f32,
     landed: bool,
+    /// Spent out of the inventory rather than fired off the board.
+    ///
+    /// Its `from` is a point below the bottom row, which is where the bar the
+    /// inventory sits in is, so it flies up into the board. There is no gem
+    /// there to take away when it goes, and no cell to hang an offset on;
+    /// both of those are what this says.
+    from_inventory: bool,
 }
 
 /// A clear that is about to happen: what sets it off, and what it leaves behind.
@@ -573,6 +585,102 @@ impl Game {
         self.phase == Phase::Idle && self.status == Status::Playing
     }
 
+    /// Spends something out of the inventory, reporting whether it happened.
+    ///
+    /// Refused rather than wasted when it cannot do anything: the board has to
+    /// be the player's to touch, and an aimed one has to be aimed at something
+    /// it can work on. The caller only takes the item out of the inventory
+    /// when this says yes, so a refused tap costs nothing.
+    ///
+    /// None of these costs a move. They are a bonus rather than a turn, and a
+    /// rocket that cost a move would be worth less than the move.
+    pub fn use_consumable(&mut self, kind: Consumable, target: Option<Pos>) -> bool {
+        if !self.accepts_input() {
+            return false;
+        }
+        // A player action, so it opens a chain of its own the way a swap does.
+        // Not a match, though: nothing was lined up, so it pays no match
+        // location. See [`Game::swap_match`].
+        match kind {
+            Consumable::Rocket => {
+                let Some(at) = target.filter(|p| self.board.is_open(*p)) else { return false };
+                self.cascade = 1;
+                self.swap_match = 0;
+                self.fly(vec![(self.below_the_board(at.c), at)], true)
+            }
+            Consumable::RocketCluster => {
+                let count = CLUSTER_LEAST + self.rng.below(CLUSTER_MOST - CLUSTER_LEAST + 1);
+                // Each picks its own target the way any rocket does, so they
+                // spread over what the level actually wants rather than
+                // landing in a heap.
+                let sources: Vec<Pos> =
+                    (0..count).map(|i| self.below_the_board(i as i32 % self.board.cols)).collect();
+                let pairs = self.pick_targets(&sources);
+                self.cascade = 1;
+                self.swap_match = 0;
+                self.fly(pairs, true)
+            }
+            Consumable::Rainbow => {
+                let Some(at) = target else { return false };
+                let seeds = self.rainbow_sweep(at);
+                if seeds.is_empty() {
+                    return false;
+                }
+                self.cascade = 1;
+                self.swap_match = 0;
+                self.begin_clear(Resolution {
+                    seeds,
+                    matched: 0,
+                    creations: Vec::new(),
+                    spent: Vec::new(),
+                    jitter_ms: matching::RAINBOW_SPREAD_MS,
+                });
+                true
+            }
+            Consumable::CrossClear => {
+                let Some(at) = target.filter(|p| self.board.is_open(*p)) else { return false };
+                let mut seeds = Vec::new();
+                matching::blast(&self.board, at, Special::Cross, ANY_COLOR, &mut seeds);
+                if seeds.is_empty() {
+                    return false;
+                }
+                self.cascade = 1;
+                self.swap_match = 0;
+                self.begin_clear(Resolution {
+                    seeds,
+                    matched: 0,
+                    creations: Vec::new(),
+                    spent: Vec::new(),
+                    jitter_ms: 0.0,
+                });
+                true
+            }
+        }
+    }
+
+    /// What a rainbow spent on this cell takes with it, or nothing when there
+    /// is nothing there it can answer to.
+    ///
+    /// A color it can name, and every gem wearing it. Against another rainbow
+    /// it takes the board, the same as swapping two together. Against
+    /// anything with no color of its own the tap is refused rather than spent:
+    /// an Archipelago gem answers to nothing, and spending a rainbow to clear
+    /// one cell would be the worst trade in the game.
+    fn rainbow_sweep(&self, at: Pos) -> Vec<Pos> {
+        let Some(gem) = self.board.gem(at) else { return Vec::new() };
+        if gem.special == Special::Rainbow {
+            return self.board.occupied();
+        }
+        let Some(color) = self.board.match_color(at) else { return Vec::new() };
+        self.board.positions().filter(|p| self.board.match_color(*p) == Some(color)).collect()
+    }
+
+    /// A point below the bottom row, which is where the bar the inventory sits
+    /// in is. Nothing is ever there; it is where a spent rocket flies in from.
+    fn below_the_board(&self, column: i32) -> Pos {
+        Pos::new(self.board.rows, column.clamp(0, self.board.cols - 1))
+    }
+
     /// A legal move to nudge the player with, chosen from all of them.
     ///
     /// The whole board rather than the first move found. Walking the board in
@@ -786,20 +894,32 @@ impl Game {
     /// are in the air, so the cells they leave and the cells they hit collapse
     /// in the same drop.
     fn begin_launch(&mut self, rockets: &[Pos]) -> bool {
-        self.launches = self
-            .pick_targets(rockets)
+        let pairs = self.pick_targets(rockets);
+        self.fly(pairs, false)
+    }
+
+    /// Puts a set of rockets in the air and runs the phase until they are all
+    /// down. `from_inventory` says they were spent rather than fired, which
+    /// changes what there is to clean up behind them.
+    fn fly(&mut self, pairs: Vec<(Pos, Pos)>, from_inventory: bool) -> bool {
+        self.launches = pairs
             .into_iter()
             .map(|(from, to)| Launch {
                 from,
                 to,
                 flight_ms: flight_time(cells_between(from, to)),
                 landed: false,
+                from_inventory,
             })
             .collect();
         if self.launches.is_empty() {
             // Nowhere worth aiming: drop them rather than stall the board.
-            for p in rockets {
-                self.board.set_gem(*p, None);
+            // Nothing to drop when they came out of the inventory, which is
+            // also why one is refused before it is spent rather than here.
+            if !from_inventory {
+                for p in self.rockets_on_board() {
+                    self.board.set_gem(p, None);
+                }
             }
             return false;
         }
@@ -840,7 +960,9 @@ impl Game {
                 continue;
             }
             self.launches[index].landed = true;
-            self.board.set_gem(launch.from, None);
+            if !launch.from_inventory {
+                self.board.set_gem(launch.from, None);
+            }
 
             // A brick target takes the hit itself rather than being cleared.
             // The strike still lands as a strike, so it booms and throws
@@ -2728,6 +2850,7 @@ mod tests {
             to,
             flight_ms: flight_time(cells_between(from, to)),
             landed: false,
+            from_inventory: false,
         };
         game.launches = vec![launch];
         game.launch_ms = launch.flight_ms;
@@ -2784,6 +2907,7 @@ mod tests {
             to,
             flight_ms: flight_time(cells_between(from, to)),
             landed: false,
+            from_inventory: false,
         };
         game.launches = vec![launch];
         game.launch_ms = launch.flight_ms;
@@ -2815,12 +2939,14 @@ mod tests {
             to: Pos::new(0, 1),
             flight_ms: flight_time(1.0),
             landed: false,
+            from_inventory: false,
         };
         let far = Launch {
             from: Pos::new(7, 0),
             to: Pos::new(7, 7),
             flight_ms: flight_time(7.0),
             landed: false,
+            from_inventory: false,
         };
         assert!(far.flight_ms > near.flight_ms * 2.0, "the flights should differ plainly");
 
@@ -2902,8 +3028,13 @@ mod tests {
         assert!(matches!(game.phase(), Phase::Launching { .. }), "the rocket should have fired");
         let from = Pos::new(0, 0);
         let to = Pos::new(3, 2);
-        let shot =
-            Launch { from, to, flight_ms: flight_time(cells_between(from, to)), landed: false };
+        let shot = Launch {
+            from,
+            to,
+            flight_ms: flight_time(cells_between(from, to)),
+            landed: false,
+            from_inventory: false,
+        };
         game.launches = vec![shot];
         game.launch_ms = shot.flight_ms + LAUNCH_HOLD_MS;
         game.phase = Phase::Launching { elapsed: 0.0 };
@@ -3075,6 +3206,144 @@ mod tests {
                     "flying {from:?} to {to:?}, at {t} it was at row {r}, column {c}",
                 );
             }
+        }
+    }
+
+    /// Plays a consumable out and hands back everything it raised.
+    fn spend(game: &mut Game, kind: Consumable, target: Option<Pos>) -> (bool, Vec<Event>) {
+        let spent = game.use_consumable(kind, target);
+        // Taken before a frame goes by, because spending one raises its whole
+        // first clear then and there and `update` empties the list.
+        let mut seen: Vec<Event> = game.events().to_vec();
+        for _ in 0..4000 {
+            if game.phase() == Phase::Idle || game.phase() == Phase::Finished {
+                break;
+            }
+            game.update(16.0);
+            seen.extend_from_slice(game.events());
+        }
+        (spent, seen)
+    }
+
+    #[test]
+    fn a_spent_rocket_strikes_where_it_was_pointed_and_costs_no_move() {
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        let at = Pos::new(4, 4);
+        let before = game.moves_left;
+
+        let (spent, seen) = spend(&mut game, Consumable::Rocket, Some(at));
+        assert!(spent, "a rocket pointed at an open cell was refused");
+        assert_eq!(game.moves_left, before, "a bonus cost a move");
+        assert!(
+            seen.iter().any(|e| e.kind == EV_ROCKET_HIT && (e.r, e.c) == (at.r as u8, at.c as u8)),
+            "nothing struck the cell it was pointed at",
+        );
+
+        // Nothing to point at is a refusal rather than a waste. The caller
+        // only takes the item out of the inventory when this says yes.
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        assert!(!game.use_consumable(Consumable::Rocket, None), "an aimed one fired unaimed");
+        assert!(
+            !game.use_consumable(Consumable::Rocket, Some(Pos::new(99, 99))),
+            "it fired at a cell off the board",
+        );
+    }
+
+    #[test]
+    fn a_spent_rainbow_takes_the_color_it_was_pointed_at() {
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        let at = Pos::new(4, 4);
+        let color = game.board.color(at).expect("a gem to point at");
+        let wearing =
+            game.board.positions().filter(|p| game.board.match_color(*p) == Some(color)).count();
+        assert!(wearing > 3, "this board has too few of that color to tell anything");
+
+        let (spent, seen) = spend(&mut game, Consumable::Rainbow, Some(at));
+        assert!(spent);
+        let took = seen.iter().filter(|e| e.kind == EV_CLEAR && e.color == color).count();
+        assert!(took >= wearing, "it took {took} of the {wearing} on the board");
+
+        // An Archipelago gem answers to no color, and spending a rainbow to
+        // clear one cell would be the worst trade in the game. Refused.
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        game.board.set_gem(at, Some(Gem::archipelago()));
+        assert!(
+            !game.use_consumable(Consumable::Rainbow, Some(at)),
+            "a rainbow was spent on a check",
+        );
+
+        // Against another rainbow it takes the board, the same as swapping
+        // two together.
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        game.board.set_gem(at, Some(Gem { color: 0, special: Special::Rainbow }));
+        let occupied = game.board.occupied().len();
+        let (spent, seen) = spend(&mut game, Consumable::Rainbow, Some(at));
+        assert!(spent);
+        let cleared = seen.iter().filter(|e| e.kind == EV_CLEAR).count();
+        assert!(cleared >= occupied, "it took {cleared} of the {occupied} on the board");
+    }
+
+    #[test]
+    fn a_spent_cross_takes_the_row_and_the_column() {
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        game.spec.rules.refill = RefillMode::None;
+        let at = Pos::new(4, 6);
+
+        let (spent, seen) = spend(&mut game, Consumable::CrossClear, Some(at));
+        assert!(spent);
+        let struck: Vec<(u8, u8)> =
+            seen.iter().filter(|e| e.kind == EV_CLEAR).map(|e| (e.r, e.c)).collect();
+        for c in 0..9u8 {
+            assert!(struck.contains(&(4, c)), "the row missed column {c}");
+        }
+        for r in 0..9u8 {
+            assert!(struck.contains(&(r, 6)), "the column missed row {r}");
+        }
+    }
+
+    #[test]
+    fn a_spent_cluster_fires_a_handful_and_aims_none_of_them() {
+        // Three to five, each choosing its own target the way any rocket does,
+        // and no cell named by the player.
+        let mut seen_counts = Vec::new();
+        for seed in 0..40 {
+            let mut game = Game::new(spec(9, 9, 5, 20), seed);
+            let before = game.moves_left;
+            assert!(
+                game.use_consumable(Consumable::RocketCluster, None),
+                "a cluster was refused on a full board",
+            );
+            // Counted where they set off rather than over the whole settle:
+            // what the strikes go on to mint is the board's doing, and a
+            // rocket the cascade made fires the same event.
+            let hits = game
+                .events()
+                .iter()
+                .filter(|e| e.kind == EV_SPECIAL_FIRED && e.special == Special::Rocket.code())
+                .count();
+            seen_counts.push(hits);
+            settle(&mut game);
+            assert_eq!(game.moves_left, before, "a bonus cost a move");
+        }
+        let least = *seen_counts.iter().min().unwrap();
+        let most = *seen_counts.iter().max().unwrap();
+        assert_eq!(least, 3, "the smallest cluster was {least}");
+        assert_eq!(most, 5, "the biggest cluster was {most}");
+    }
+
+    #[test]
+    fn nothing_is_spent_on_a_board_that_is_not_the_players_to_touch() {
+        // Mid-animation and after the level is over are both hands off: a
+        // consumable is a thing you do on your turn.
+        let mut game = Game::new(spec(9, 9, 5, 20), 4);
+        let (a, b) = matching::find_move(&game.board, game.rules()).expect("a move");
+        game.try_swap(a, b);
+        assert!(!game.accepts_input(), "the board should be busy mid-swap");
+        for kind in [Consumable::Rocket, Consumable::RocketCluster] {
+            assert!(
+                !game.use_consumable(kind, Some(Pos::new(4, 4))),
+                "{kind:?} went off while the board was busy",
+            );
         }
     }
 
@@ -3528,8 +3797,13 @@ mod tests {
     /// handing back everything raised on the way.
     fn strike(game: &mut Game, from: Pos, to: Pos) -> Vec<Event> {
         game.board.set_gem(from, Some(Gem { color: 2, special: Special::Rocket }));
-        game.launches =
-            vec![Launch { from, to, flight_ms: flight_time(cells_between(from, to)), landed: false }];
+        game.launches = vec![Launch {
+            from,
+            to,
+            flight_ms: flight_time(cells_between(from, to)),
+            landed: false,
+            from_inventory: false,
+        }];
         game.launch_ms = game.launches[0].flight_ms + LAUNCH_HOLD_MS;
         game.phase = Phase::Launching { elapsed: 0.0 };
 
@@ -3944,8 +4218,13 @@ mod tests {
         let mut game = Game::new(spec(8, 8, 6, 10), 113);
         let from = Pos::new(0, 0);
         let to = Pos::new(4, 3);
-        let shot =
-            Launch { from, to, flight_ms: flight_time(cells_between(from, to)), landed: false };
+        let shot = Launch {
+            from,
+            to,
+            flight_ms: flight_time(cells_between(from, to)),
+            landed: false,
+            from_inventory: false,
+        };
         let gem = game.board.gem(from).expect("the board is full");
         game.board.set_gem(from, Some(Gem { special: Special::Rocket, ..gem }));
         game.launches = vec![shot];

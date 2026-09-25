@@ -386,7 +386,7 @@ pub fn legal_moves(board: &Board, rules: &Rules) -> Vec<(Pos, Pos)> {
 /// What a special does when it goes off. A rocket does nothing here: it waits
 /// for the clear to finish and then flies, which the game drives as its own
 /// phase.
-fn blast(board: &Board, p: Pos, special: Special, rainbow_color: u8, out: &mut Vec<Pos>) {
+pub fn blast(board: &Board, p: Pos, special: Special, rainbow_color: u8, out: &mut Vec<Pos>) {
     match special {
         // An Archipelago gem is a check, not a charge: clearing it hands over
         // what it was hiding and takes nothing else with it.

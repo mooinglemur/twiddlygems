@@ -61,6 +61,54 @@ pub enum Item {
     /// nothing, so a run could clear a level, be handed an item it already had
     /// all of, and be none the wiser. Better a name that says so.
     Filler,
+    /// Something to spend, kept until the player spends it.
+    ///
+    /// Useful rather than progression: no level and no location asks for one,
+    /// so a seed is finishable whether or not any are found and the fill may
+    /// put them anywhere. What they buy is a better run at a level, on any
+    /// level, whenever the player likes.
+    Consumable(Consumable),
+}
+
+/// The kinds of thing a run can be given to spend. See [`Item::Consumable`].
+///
+/// Three of them are aimed: the player picks one and then picks a cell. The
+/// cluster is not, because what a rocket aims at is the rocket's own business
+/// and a handful of them at once is the point of it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Consumable {
+    /// One rocket, at a cell the player names rather than one of its own
+    /// choosing.
+    Rocket,
+    /// Takes the color of the cell the player names, the way a rainbow does.
+    Rainbow,
+    /// Blasts the row and the column the player names.
+    CrossClear,
+    /// Three to five rockets at once, each choosing its own target the way any
+    /// rocket does.
+    RocketCluster,
+}
+
+/// Every kind, in the order the item table numbers them. Appending is safe;
+/// reordering is not, for the reason [`Item::id`] gives.
+pub const CONSUMABLES: [Consumable; 4] =
+    [Consumable::Rocket, Consumable::Rainbow, Consumable::CrossClear, Consumable::RocketCluster];
+
+impl Consumable {
+    /// Its place in [`CONSUMABLES`], which is what its id and its event are
+    /// built from.
+    pub fn code(self) -> u32 {
+        CONSUMABLES.iter().position(|kind| *kind == self).unwrap_or(0) as u32
+    }
+
+    pub fn from_code(code: u32) -> Option<Consumable> {
+        CONSUMABLES.get(code as usize).copied()
+    }
+
+    /// Whether spending it needs a cell to spend it on.
+    pub fn needs_a_target(self) -> bool {
+        self != Consumable::RocketCluster
+    }
 }
 
 impl Item {
@@ -77,6 +125,7 @@ impl Item {
             Item::Unlock(special) => special.code() as u32,
             Item::Moves { level } => MOVES_ID_BASE + level as u32,
             Item::Filler => FILLER_ID,
+            Item::Consumable(kind) => CONSUMABLE_ID_BASE + kind.code(),
         }
     }
 
@@ -87,6 +136,7 @@ impl Item {
             Item::Unlock(_) => 0,
             Item::Moves { .. } => 1,
             Item::Filler => 2,
+            Item::Consumable(_) => 3,
         }
     }
 
@@ -97,6 +147,7 @@ impl Item {
             Item::Moves { level } => level as u16,
             // Nothing to say about it; there is only the one.
             Item::Filler => 0,
+            Item::Consumable(kind) => kind.code() as u16,
         }
     }
 }
@@ -304,6 +355,10 @@ const MOVES_ID_BASE: u32 = 1_000;
 
 /// Filler's own number, in a thousand of its own like every other kind.
 const FILLER_ID: u32 = 2_000;
+
+/// Where the things a run can spend start, in a thousand of their own like
+/// every other kind.
+const CONSUMABLE_ID_BASE: u32 = 3_000;
 
 /// What Archipelago's own numbers are offset by.
 ///
@@ -547,6 +602,7 @@ pub fn items(levels: usize) -> Vec<Item> {
         // to be able to name what it was handed, and this is what the
         // leftover locations hold.
         .chain(std::iter::once(Item::Filler))
+        .chain(CONSUMABLES.iter().map(|kind| Item::Consumable(*kind)))
         .collect()
 }
 
@@ -570,6 +626,19 @@ pub fn item_name(item: Item) -> String {
         },
         Item::Moves { level } => format!("Level {} Moves Upgrade", level + 1),
         Item::Filler => "Filler".to_string(),
+        // Said out loud, because three of the four share a name with an
+        // unlock and two items in a datapackage may not. It is also the
+        // difference that matters to a player reading a spoiler: one of these
+        // teaches the board to make a rainbow, the other is a rainbow.
+        Item::Consumable(kind) => format!(
+            "Inventory Item: {}",
+            match kind {
+                Consumable::Rocket => "Rocket",
+                Consumable::Rainbow => "Rainbow",
+                Consumable::CrossClear => "Cross Clear",
+                Consumable::RocketCluster => "Rocket Cluster",
+            }
+        ),
     }
 }
 
@@ -687,6 +756,7 @@ pub fn item_index(item: Item, levels: usize) -> Option<usize> {
         // an item's place in the table is what an event carries instead of its
         // name, and everything already numbered has to keep its number.
         Item::Filler => Some(UNLOCKABLE.len() + levels),
+        Item::Consumable(kind) => Some(UNLOCKABLE.len() + levels + 1 + kind.code() as usize),
     }
 }
 
@@ -742,12 +812,23 @@ pub struct Inventory {
     /// How much of nothing the run has been handed. Kept only so
     /// [`Inventory::count`] can answer honestly.
     filler: u32,
+    /// How many of each thing there is to spend, by [`Consumable::code`].
+    ///
+    /// These are the only holdings that go down as well as up, because they
+    /// are the only ones the player spends. Everything else here is something
+    /// the run learned, and a run does not unlearn.
+    consumables: [u32; CONSUMABLES.len()],
 }
 
 impl Inventory {
     /// A run that has been given nothing.
     pub fn empty() -> Self {
-        Inventory { specials: SpecialSet::NONE, moves: Vec::new(), filler: 0 }
+        Inventory {
+            specials: SpecialSet::NONE,
+            moves: Vec::new(),
+            filler: 0,
+            consumables: [0; CONSUMABLES.len()],
+        }
     }
 
     /// Takes an item in. Returns whether the run is better off for it, which
@@ -789,7 +870,41 @@ impl Inventory {
                 self.filler += 1;
                 true
             }
+            // They stack, so a second one is as welcome as the first and just
+            // as worth saying.
+            Item::Consumable(kind) => {
+                self.consumables[kind.code() as usize] += 1;
+                true
+            }
         }
+    }
+
+    /// How many of one thing there is to spend.
+    pub fn consumables(&self, kind: Consumable) -> u32 {
+        self.consumables[kind.code() as usize]
+    }
+
+    /// Spends one, reporting whether there was one to spend.
+    ///
+    /// The only thing here that ever goes down, and the only one that can
+    /// refuse: everything else a run holds, it holds for good.
+    pub fn spend(&mut self, kind: Consumable) -> bool {
+        let held = &mut self.consumables[kind.code() as usize];
+        if *held == 0 {
+            return false;
+        }
+        *held -= 1;
+        true
+    }
+
+    /// Hands a count straight back, for a run being rebuilt from a save.
+    ///
+    /// What is held is what the save says, rather than the larger of the two:
+    /// these are spent, so a save is allowed to record fewer than the run was
+    /// once given. That is the opposite of every other holding here; see
+    /// `restore_best_score` for one that only ever climbs.
+    pub fn restore_consumables(&mut self, kind: Consumable, held: u32) {
+        self.consumables[kind.code() as usize] = held;
     }
 
     pub fn has(&self, item: Item) -> bool {
@@ -801,6 +916,7 @@ impl Inventory {
             }
             Item::Moves { level } => self.moves.get(level).copied().unwrap_or(0) > 0,
             Item::Filler => self.filler > 0,
+            Item::Consumable(kind) => self.consumables(kind) > 0,
         }
     }
 
@@ -823,6 +939,9 @@ impl Inventory {
             // whatever asks. Nothing does: no rule can sensibly be built on
             // how much nothing a run has been handed.
             Item::Filler => self.filler,
+            // Held now rather than ever found, which is the answer a rule
+            // would want and is also the only honest one: these are spent.
+            Item::Consumable(kind) => self.consumables(kind),
         }
     }
 
@@ -1099,6 +1218,66 @@ mod tests {
     }
 
     #[test]
+    fn a_consumable_stacks_and_is_the_one_holding_that_goes_down() {
+        // Everything else a run is given, it keeps: an unlock is learned, a
+        // moves upgrade is granted. These are spent, which makes them the only
+        // holding that can run out and the only one a save may record less of
+        // than the run was handed.
+        let mut inventory = Inventory::empty();
+        assert_eq!(inventory.consumables(Consumable::Rocket), 0);
+        assert!(!inventory.spend(Consumable::Rocket), "spent one it never had");
+
+        // A second is as welcome as the first, and as worth announcing: two
+        // rockets are two rockets, unlike two copies of an unlock.
+        assert!(inventory.receive(Item::Consumable(Consumable::Rocket)));
+        assert!(inventory.receive(Item::Consumable(Consumable::Rocket)));
+        assert_eq!(inventory.consumables(Consumable::Rocket), 2);
+        assert_eq!(inventory.count(Item::Consumable(Consumable::Rocket)), 2);
+        assert!(inventory.has(Item::Consumable(Consumable::Rocket)));
+
+        // One kind at a time: they do not share a pile.
+        assert_eq!(inventory.consumables(Consumable::Rainbow), 0);
+
+        assert!(inventory.spend(Consumable::Rocket));
+        assert_eq!(inventory.consumables(Consumable::Rocket), 1);
+        assert!(inventory.spend(Consumable::Rocket));
+        assert_eq!(inventory.consumables(Consumable::Rocket), 0);
+        assert!(!inventory.spend(Consumable::Rocket), "spent one it had run out of");
+        assert!(!inventory.has(Item::Consumable(Consumable::Rocket)));
+
+        // A save says what is held now, not what was ever found, so restoring
+        // sets rather than raises.
+        inventory.restore_consumables(Consumable::Rocket, 5);
+        assert_eq!(inventory.consumables(Consumable::Rocket), 5);
+        inventory.restore_consumables(Consumable::Rocket, 1);
+        assert_eq!(inventory.consumables(Consumable::Rocket), 1, "a save could not spend any");
+    }
+
+    #[test]
+    fn every_kind_of_consumable_is_its_own_item() {
+        // Four kinds, four numbers, four names, and none of those names is an
+        // unlock's: three of them would collide, and two items in a
+        // datapackage that share a name are two nobody can tell apart.
+        let table = items(13);
+        for kind in CONSUMABLES {
+            let item = Item::Consumable(kind);
+            assert!(table.contains(&item), "{item:?} is not in the item table");
+            assert_eq!(Consumable::from_code(kind.code()), Some(kind));
+        }
+        let names: Vec<String> = table.iter().map(|item| item_name(*item)).collect();
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len(), "two items share a name: {names:?}");
+
+        // Only the cluster goes off without being pointed at something.
+        assert!(Consumable::Rocket.needs_a_target());
+        assert!(Consumable::Rainbow.needs_a_target());
+        assert!(Consumable::CrossClear.needs_a_target());
+        assert!(!Consumable::RocketCluster.needs_a_target());
+    }
+
+    #[test]
     fn a_count_can_be_asked_of_a_setting_rather_than_written_down() {
         // No rule uses this at the moment: a level's upgrade is one item, so
         // its gold asks for exactly one. It is how an option-dependent rule
@@ -1358,7 +1537,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 Item::Unlock(special) => Some(*special),
-                Item::Moves { .. } | Item::Filler => None,
+                Item::Moves { .. } | Item::Filler | Item::Consumable(_) => None,
             })
             .collect();
         let mut by_code = unlocks.clone();
@@ -1731,6 +1910,10 @@ mod tests {
             (1_000, "Level 1 Moves Upgrade", Item::Moves { level: 0 }),
             (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
             (2_000, "Filler", Item::Filler),
+            (3_000, "Inventory Item: Rocket", Item::Consumable(Consumable::Rocket)),
+            (3_001, "Inventory Item: Rainbow", Item::Consumable(Consumable::Rainbow)),
+            (3_002, "Inventory Item: Cross Clear", Item::Consumable(Consumable::CrossClear)),
+            (3_003, "Inventory Item: Rocket Cluster", Item::Consumable(Consumable::RocketCluster)),
         ];
         for (id, name) in [
             (4_000, "Level 1 AP Gem 1"),
@@ -1764,6 +1947,9 @@ mod tests {
                 Item::Unlock(_) => item.id() < MOVES_ID_BASE,
                 Item::Moves { .. } => (MOVES_ID_BASE..FILLER_ID).contains(&item.id()),
                 Item::Filler => item.id() == FILLER_ID,
+                Item::Consumable(_) => (CONSUMABLE_ID_BASE
+                    ..CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32)
+                    .contains(&item.id()),
             }),
             "an item is numbered outside its own range",
         );

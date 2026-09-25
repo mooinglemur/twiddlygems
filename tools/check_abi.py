@@ -23,11 +23,27 @@ def read(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def rust_arms(source: str, function: str) -> dict[str, int]:
-    """Pulls `Variant => 3,` arms out of a named function body."""
+def rust_arms(source: str, function: str, within: str | None) -> dict[str, int]:
+    """Pulls `Variant => 3,` arms out of a named function body.
+
+    `within` is the impl block to look in, or None for a free function. It has
+    to be said either way rather than defaulted, because most of these
+    functions are called `code` and a search of a whole file finds whichever
+    type happens to be written first. When a second type in one file grew a
+    `code` of its own, this quietly started reading that one and reported the
+    first one's variants as missing from the engine: a true sentence about the
+    wrong enum, which sends you looking in the wrong place.
+    """
+    if within is not None:
+        block = re.search(rf"\nimpl {within} \{{(.*?)\n\}}", source, re.S)
+        if not block:
+            problems.append(f"could not find impl {within} to read fn {function} from")
+            return {}
+        source = block.group(1)
     match = re.search(rf"fn {function}\b.*?\{{(.*?)\n    \}}", source, re.S)
     if not match:
-        problems.append(f"could not find fn {function} to read its codes from")
+        where = f" on {within}" if within else ""
+        problems.append(f"could not find fn {function}{where} to read its codes from")
         return {}
     # Arms read `Enum::Variant => 3,`, with an optional `{ .. }` or `(_)`
     # binding that must not be allowed to run past the end of its own line.
@@ -134,7 +150,7 @@ compare(
 
 compare(
     "phases",
-    rust_arms(game_source, "code"),
+    rust_arms(game_source, "code", "Phase"),
     js_object(engine_source, "Phase"),
     [
         ("Idle", "IDLE"),
@@ -151,7 +167,7 @@ compare(
 
 compare(
     "tiers",
-    rust_arms(read(ROOT / "src" / "progression.rs"), "code"),
+    rust_arms(read(ROOT / "src" / "progression.rs"), "code", "Tier"),
     js_object(engine_source, "Tier"),
     [
         ("None", "NONE"),
@@ -163,7 +179,7 @@ compare(
 
 compare(
     "specials",
-    rust_arms(read(ROOT / "src" / "board.rs"), "code"),
+    rust_arms(read(ROOT / "src" / "board.rs"), "code", "Special"),
     js_object(engine_source, "Special"),
     [
         ("None", "NONE"),
@@ -177,14 +193,14 @@ compare(
 
 compare(
     "level status",
-    rust_arms(ffi_source, "tg_status"),
+    rust_arms(ffi_source, "tg_status", None),
     js_object(engine_source, "Status"),
     [("Playing", "PLAYING"), ("Won", "WON"), ("Lost", "LOST")],
 )
 
 compare(
     "objective kinds",
-    rust_arms(read(ROOT / "src" / "level.rs"), "kind_code"),
+    rust_arms(read(ROOT / "src" / "level.rs"), "kind_code", "Objective"),
     js_object(engine_source, "ObjectiveKind"),
     [
         ("Score", "SCORE"),
