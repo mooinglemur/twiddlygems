@@ -1623,10 +1623,18 @@ impl Game {
     /// so the spending is seen and heard wherever it lands. Only a placement
     /// that actually happened is worth points.
     fn mint_one(&mut self) {
+        // Carrying nothing at all, rather than not carrying a special.
+        //
+        // Those are not the same set, because an Archipelago gem carries no
+        // special by that measure: it answers to no color and fires no beam,
+        // so [`Special::is_special`] says no, and it used to land in here and
+        // be minted over. A gem is worth a few hundred points; one of these
+        // is worth an item, and overwriting it takes the check off the board
+        // for good, with nothing to say it ever happened.
         let plain: Vec<Pos> = self
             .board
             .positions()
-            .filter(|p| self.board.gem(*p).map_or(false, |gem| !gem.special.is_special()))
+            .filter(|p| self.board.gem(*p).map_or(false, |gem| gem.special == Special::None))
             .collect();
         let Some(&at) = plain.get(self.rng.below(plain.len() as u32) as usize) else { return };
         let Some(gem) = self.board.gem(at) else { return };
@@ -3068,6 +3076,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_flourish_never_spends_a_move_on_an_archipelago_gem() {
+        // One of these is a check standing on the board. Minting over it takes
+        // the check away with it and the run can never find it, which is a
+        // worse thing to spend a leftover move on than anything else there.
+        //
+        // The trap is that an Archipelago gem carries no special by
+        // `is_special`, so "not a special" and "plain" are different sets and
+        // the flourish was reading the wrong one.
+        let mut game = Game::new(spec(4, 4, 6, 10), 5);
+        game.spec.rules.refill = RefillMode::None;
+        game.board = Board::from_layout(&["0*1*", "*2*3", "1*0*", "*3*2"]);
+        let gems = game.board.ap_gems();
+        assert_eq!(gems.len(), 8, "the board was meant to be half Archipelago gems");
+
+        for _ in 0..200 {
+            game.mint_one();
+        }
+        assert_eq!(game.board.ap_gems(), gems, "the flourish took an Archipelago gem");
+
+        // And it was minting all along, so this is not passing because the
+        // flourish had nothing to do.
+        let made = game
+            .board
+            .positions()
+            .filter(|p| game.board.gem(*p).map_or(false, |gem| gem.special.is_special()))
+            .count();
+        assert!(made > 0, "the flourish never placed anything, so nothing here is tested");
+
+        // With nothing but checks on the board there is nothing to spend a
+        // move on, and it spends it on nothing rather than on one of those.
+        let mut all = Game::new(spec(2, 2, 6, 10), 5);
+        all.spec.rules.refill = RefillMode::None;
+        all.board = Board::from_layout(&["**", "**"]);
+        let every = all.board.ap_gems();
+        assert_eq!(every.len(), 4);
+        for _ in 0..50 {
+            all.mint_one();
+        }
+        assert_eq!(all.board.ap_gems(), every, "a board of nothing but checks lost one");
     }
 
     #[test]
