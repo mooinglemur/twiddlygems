@@ -269,11 +269,31 @@ html, body {
 
 /* ---- board ---- */
 
+/* The board is a square on a page that is not, and the room it cannot use is
+   split with the feed: half of it above the board as feed, half of it below as
+   air. The board stays where it was, near the middle of the space between the
+   goals and the bottom bar, and the feed grows into the half that was doing
+   nothing.
+
+   `aspect-ratio` is what the half is measured from: it gives the stage a base
+   height of exactly the board, so the free space the column has to share is
+   the room the board does not want. The ratio is the level's own, written here
+   by the renderer when it lays the board out, because a level's shape comes
+   from its layout rather than from a constant. Square is only the fallback,
+   for the moment before a level loads.
+
+   Growing by the same 1 as the feed is what makes the two halves halves, and
+   `start` is what keeps the board's half underneath it rather than split again
+   around it. Shrinking is not shared: the feed's basis is zero, so when the
+   column is short of room the stage is the one that gives and the feed falls
+   back to its floor. */
 #stage {
   flex: 1 1 auto;
+  width: 100%;
+  aspect-ratio: 1;
   min-height: 0;
   display: grid;
-  place-items: center;
+  place-items: start center;
 }
 
 #board {
@@ -315,24 +335,32 @@ button[disabled] { opacity: 0.4; cursor: default; }
 /* ---- item feed ---- */
 
 /* The log of what the run has been given, and where the Archipelago feed will
-   go. It holds its height whether or not there is anything in it, so the board
-   does not jump down the page the first time an item arrives.
+   go. It takes half of what the board leaves, the stage holding the other half
+   below the board so that the board stays about where it was: see `#stage`. A
+   log is the one thing on this page that is simply better for having more
+   room. It holds that height whether or not there is anything in it, so the
+   board does not jump down the page the first time an item arrives.
 
-   Two lines on a phone and four on a wider screen: enough to see an item
-   arrive without taking room the board wants. */
+   `--feed-lines` is now the floor rather than the size: what it falls back to
+   when the board wants the whole column, on a landscape phone or a short
+   window. Two lines on a phone and four on a wider screen, which is what the
+   feed was fixed at before. */
 #feed {
   --feed-lines: 2;
-  flex: 0 0 auto;
-  /* An exact number of lines tall, with the breathing room as a transparent
+  flex: 1 1 0;
+  /* An exact number of lines, with the breathing room as a transparent
      border rather than padding. Padding sits inside the scrolled content and
      offsets it by its own height, so scrolling to the newest line would always
      leave a sliver of the one above it sliced off along the top edge. A border
      is outside it, and the lines land where the viewport does. */
-  /* Against the sheet-wide border-box, so this height counts the lines and
+  /* Against the sheet-wide border-box, so this floor counts the lines and
      nothing else: with border-box the transparent border would eat into it
      and the last line would be cut in half. */
   box-sizing: content-box;
-  height: calc(var(--feed-lines) * 1.6em);
+  min-height: calc(var(--feed-lines) * 1.6em);
+  /* A column, so the lines can be held against the bottom of it. */
+  display: flex;
+  flex-direction: column;
   margin: 0;
   padding: 0 12px;
   border: 8px solid transparent;
@@ -347,7 +375,19 @@ button[disabled] { opacity: 0.4; cursor: default; }
   color: var(--ink-dim);
 }
 #feed::-webkit-scrollbar { display: none; }
-#feed li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The lines sit against the bottom of the box, so the newest one is always
+   just above the board whether the log holds three lines or thirty. Filled
+   from the top instead, a feed this tall spends most of a run as a few words
+   with a hand's width of empty panel under them.
+
+   An auto margin on the first line rather than `justify-content: flex-end`:
+   content that outgrows a scroll box it is aligned to the end of hangs off the
+   top, where it cannot be scrolled back to, while an auto margin resolves to
+   nothing as soon as there is no room to give. */
+#feed li:first-child { margin-top: auto; }
+/* Each line is its own height. Flex items give way by default, which here
+   would squeeze the whole log into the box rather than let it scroll. */
+#feed li { flex: 0 0 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* What the item was, picked out of the sentence around it, and where it came
    from, kept quieter: the item is the news and the location is the footnote. */
 #feed .what { color: var(--accent); font-weight: 650; }
@@ -514,6 +554,10 @@ button[disabled] { opacity: 0.4; cursor: default; }
 #title {
   position: fixed;
   inset: 0;
+  /* The same dynamic viewport the setup screen wants, and for the same
+     reason: centered in the taller box a fixed element is given, the card
+     sits half a toolbar too low. */
+  height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -545,18 +589,44 @@ button[disabled] { opacity: 0.4; cursor: default; }
 
 /* Setting a run up, which happens once, before it starts. Phone first: every
    control is a tap target, there is nothing to drag, and no native picker to
-   fight with. */
+   fight with.
+
+   `100dvh` rather than what `inset: 0` gives a fixed element: a phone's
+   address bar overlays that box rather than shortening it, and what it covered
+   here was the Start button. The safe-area insets are the notch end of the
+   same problem. */
 #setup {
   position: fixed;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 24px 16px;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding:
+    calc(24px + env(safe-area-inset-top, 0px))
+    calc(16px + env(safe-area-inset-right, 0px))
+    calc(24px + env(safe-area-inset-bottom, 0px))
+    calc(16px + env(safe-area-inset-left, 0px));
   z-index: 21;
   background: radial-gradient(120% 80% at 50% 0%, #2c2552 0%, var(--bg-deep) 70%);
-  overflow-y: auto;
 }
-#setup-card { width: min(420px, 100%); }
+/* Centered while it fits, and no taller than the screen once it does not: the
+   settings scroll inside it and the heading and the buttons stay put. Whole
+   pages that scroll put Start below the fold, which on a phone is somewhere a
+   player has to go looking for it, and this list only gets longer.
+
+   `margin: auto 0` rather than centering from the flex container, because a
+   centered item that outgrows its container is clipped at both ends and the
+   top one cannot be scrolled back to. Held to `max-height` it never outgrows
+   it, and the auto margins simply go to nothing. */
+#setup-card {
+  width: min(420px, 100%);
+  max-height: 100%;
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 #setup-heading { margin: 0; font-size: 1.4rem; text-align: center; }
 #setup-note {
   margin: 6px 0 20px;
@@ -564,7 +634,17 @@ button[disabled] { opacity: 0.4; cursor: default; }
   font-size: 0.78rem;
   text-align: center;
 }
-#setup-options { display: flex; flex-direction: column; gap: 14px; }
+/* The part that scrolls. A hair of padding down the right so a card's rounded
+   edge is not shaved by the scroll box on a browser that reserves room there. */
+#setup-options {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  padding-right: 2px;
+}
 /* The name, then the control across the full width, then the sentence. Stacked
    rather than side by side because a choice's label can be a short phrase: in
    a column the value has room to be read and the two buttons stay in the same
@@ -600,6 +680,7 @@ button[disabled] { opacity: 0.4; cursor: default; }
   border-radius: 12px;
 }
 #setup-buttons {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;

@@ -837,11 +837,18 @@ export class Renderer {
   layout() {
     this.layoutFx();
     const stage = this.canvas.parentElement;
-    const available = stage.getBoundingClientRect();
     const { rows, cols } = this.engine;
     if (rows === 0 || cols === 0) {
       return;
     }
+
+    // The stage is shaped to the board rather than the other way around, so
+    // that the height a square board cannot use goes to the feed instead of
+    // becoming a margin above and below. The sheet cannot know a level's
+    // shape, so it is said here, and said before the box is measured: asking
+    // for the rect is what settles the layout this has just changed.
+    stage.style.aspectRatio = `${cols} / ${rows}`;
+    const available = stage.getBoundingClientRect();
 
     // Reserve a hair of padding so falling gems and selection rings have room.
     const cell = Math.max(

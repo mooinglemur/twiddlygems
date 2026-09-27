@@ -367,6 +367,15 @@ assert.equal(
   'the canvas backing store does not match its CSS size at 2x',
 );
 
+// The stage is shaped to the level rather than taking whatever is left over,
+// which is what lets the feed have the rest of the column. The sheet cannot
+// know a level's shape, so the renderer writes it on.
+assert.equal(
+  elements.get('stage').style.aspectRatio,
+  `${window.twiddlygems.engine.cols} / ${window.twiddlygems.engine.rows}`,
+  'the stage was not shaped to the board it is holding',
+);
+
 const objectives = elements.get('objectives');
 assert.ok(objectives.children.length > 0, 'the objective chips were never built');
 
