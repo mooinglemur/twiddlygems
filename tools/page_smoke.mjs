@@ -720,7 +720,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
     phases.add(engine.phase);
     if (renderer.toast) {
       toasts.add(renderer.toast.text);
-      if (renderer.toast.text === 'Level cleared' && toastFrame === null) {
+      if (renderer.toast.text === 'Objective met' && toastFrame === null) {
         toastFrame = frame;
       }
     }
@@ -773,7 +773,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
     `the score was never colored during the run down: ${[...scoreClassesWhileSpending]}`,
   );
   assert.ok(
-    toasts.has('Level cleared'),
+    toasts.has('Objective met'),
     `the level never said it was cleared, only ${JSON.stringify([...toasts])}`,
   );
   // And the fanfare sounded with it, on the same frame. Nothing here has an

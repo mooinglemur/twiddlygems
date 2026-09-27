@@ -62,9 +62,13 @@ smoke: wasm
 	node tools/page_smoke.mjs $(OUT)
 
 ## Serve the game. A wasm module cannot be loaded from a file:// page.
+##
+## Through tools/serve.py rather than `python3 -m http.server`, which sends no
+## Cache-Control and leaves a browser guessing a lifetime for every file. That
+## guess is what makes an edit fail to turn up on a phone: see the script.
 serve: wasm
 	@echo "http://localhost:$(PORT)/"
-	$(PYTHON) -m http.server $(PORT) --directory web
+	$(PYTHON) tools/serve.py --port $(PORT) --directory web
 
 ## Play the game in a headless browser and write screenshots to shots/.
 shots: wasm

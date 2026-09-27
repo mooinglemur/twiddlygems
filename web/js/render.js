@@ -248,7 +248,7 @@ export class Renderer {
         const left = event.value;
         this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };
       } else if (event.kind === EventKind.CLEARED) {
-        this.toast = { text: 'Level cleared', at: now };
+        this.toast = { text: 'Objective met', at: now };
       } else if (event.kind === EventKind.SPECIAL_MADE || event.kind === EventKind.CASH_IN) {
         // A gem gaining something rather than losing it, so motes rather than
         // debris. A spend that placed nothing gets the same motes: the point
