@@ -20,14 +20,14 @@
 pub struct Options {
     /// What finishing the game means.
     pub goal: Goal,
-    /// The fewest Archipelago gems a level carries.
+    /// The fewest AP gems a level carries.
     ///
     /// A floor rather than a count: a run whose items will not fit in the
     /// locations it has gets more of these until they do. See
     /// [`crate::progression::ap_gems_per_level`].
     pub ap_gems: u32,
-    /// One refilled gem in this many is an Archipelago gem, while the level
-    /// still has checks waiting in them.
+    /// One refilled gem in this many is an AP gem, while the level still has
+    /// checks waiting in them.
     pub ap_gem_odds: u32,
     /// How many bonus items the run has to find, over all four kinds.
     ///
@@ -218,7 +218,7 @@ pub static SETTINGS: &[Setting] = &[
     },
     Setting {
         key: AP_GEMS,
-        label: "Archipelago gems per level",
+        label: "AP gems per level",
         about: "The fewest checks hidden in the gems that fall on each level. \
                 A run needing more room for its items gets more of them.",
         // A floor, not a count, which is why zero is allowed: somebody who
@@ -231,8 +231,8 @@ pub static SETTINGS: &[Setting] = &[
     Setting {
         key: AP_GEM_ODDS,
         label: "How often a gem falls",
-        about: "One refilled gem in this many is an Archipelago gem, while \
-                the level still has checks waiting in them.",
+        about: "One refilled gem in this many is an AP gem, while the level \
+                still has checks waiting in them.",
         // A list rather than a range, because the useful values span three
         // orders of magnitude and a pair of step buttons walking one at a time
         // from 64 to 16384 is not a control anybody can use. Doubling each

@@ -530,6 +530,18 @@ button[disabled] { opacity: 0.4; cursor: default; }
 .level-row.tier-gold { --tier: var(--tier-gold); }
 .level-row.tier-silver .t, .level-row.tier-gold .t { color: var(--tier); }
 
+/* What the level still has waiting in it: its Archipelago gems, and its moves
+   upgrades. Each mark fills from the bottom as they are found and takes a
+   check when they all are, which is drawn into the canvas rather than done
+   here, since a fraction is not something a stylesheet can know. */
+.level-status {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.status-art { display: block; }
+
 /* One pip per mark: cleared, silver, gold. Each is somewhere an item is
    found, so three hollow pips say there are three things still to take here,
    which the best-of-three wash on its own cannot. */

@@ -2,7 +2,14 @@
 // the overlay used for results and level selection.
 
 import { Consumable, NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
-import { PALETTE, paintConsumableIcon, paintGoalIcon, paintSpecialIcon } from './render.js';
+import {
+  PALETTE,
+  paintConsumableIcon,
+  paintGemsIcon,
+  paintGoalIcon,
+  paintMovesIcon,
+  paintSpecialIcon,
+} from './render.js';
 
 /// How many lines the feed keeps. Well past what fits, so scrolling back a
 /// little works, and far short of a session's worth.
@@ -41,6 +48,11 @@ const GOAL_ICON_SIZE = 26;
 /// because this one is a thing to be looked at and chosen, and four of them
 /// plus two buttons still have to fit across a phone.
 const CONSUMABLE_ICON_SIZE = 30;
+
+/// How big the two status marks on a level's row are. Small: they sit between
+/// a name and three pips on a row that has to stay one line tall, and each is
+/// a yes or no rather than something to study.
+const STATUS_ICON_SIZE = 22;
 
 /// What each thing the run can spend is called and what spending it does. The
 /// second half is written for someone who has just been handed one: what it
@@ -681,6 +693,36 @@ export class Hud {
       title.className = 't';
       title.textContent = name;
 
+      // What the level still has in it, between its name and how well it has
+      // been beaten. This is what makes the picker a tracker rather than a
+      // menu: a run comes here to decide where to go next, and "that one still
+      // has a gem in it" is the reason to go back to a level that is already
+      // gold.
+      const status = document.createElement('span');
+      status.className = 'level-status';
+      // Drawn, not read, like the pips. The row's own label says it in words.
+      status.setAttribute('aria-hidden', 'true');
+      const standing = [];
+      for (const mark of [
+        // "AP gems" rather than the whole word: it is what they are called
+        // out loud, and it has to fit on a row beside a level's name.
+        { ...engine.levelGems(i), paint: paintGemsIcon, of: 'AP gems' },
+        { ...engine.levelMoves(i), paint: paintMovesIcon, of: 'moves upgrades' },
+      ]) {
+        // A run set up without any of something has nothing to track there,
+        // and a mark that can never fill is worse than no mark.
+        if (mark.total === 0) {
+          continue;
+        }
+        const words = `${mark.found} of ${mark.total} ${mark.of}`;
+        const art = document.createElement('canvas');
+        art.className = 'status-art';
+        art.title = words;
+        mark.paint(art, STATUS_ICON_SIZE, mark.found, mark.total);
+        status.append(art);
+        standing.push(words);
+      }
+
       const marks = document.createElement('span');
       marks.className = 'marks';
       // Drawn, not read: a screen reader gets the row's own label instead,
@@ -698,10 +740,10 @@ export class Hud {
       const taken = MARKS.filter((mark) => best >= mark.tier).map((mark) => mark.name);
       row.setAttribute(
         'aria-label',
-        `Level ${i + 1}, ${name}${taken.length > 0 ? `, ${taken.join(', ')}` : ''}`,
+        [`Level ${i + 1}`, name, ...taken, ...standing].join(', '),
       );
 
-      row.append(number, title, marks);
+      row.append(number, title, status, marks);
       row.addEventListener('click', () => actions.onPick(i));
       rows.push(row);
     }
@@ -710,7 +752,7 @@ export class Hud {
     dom.tracker.classList.remove('hidden');
     dom.overlayButtons.replaceChildren(
       button('Close', actions.onClose, true),
-      button('Title screen', actions.onQuit, false),
+      button('Quit game', actions.onQuit, false),
     );
     dom.overlay.classList.remove('hidden');
     // The level being played is somewhere down a list that scrolls, and on a

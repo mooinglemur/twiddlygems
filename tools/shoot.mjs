@@ -184,15 +184,20 @@ for (const [name, metrics] of [
     //
     // Deliberately not on the level being photographed, so the marks popover
     // is shot with something still to reach rather than with both behind it.
-    // The Archipelago gems are claimed too (4000 up, one to a level at the
-    // default setting). An unlock can land in one, because collecting one
-    // asks only for being able to play its level, so a run claiming every
-    // clear and chain but not these can come up short of the five.
+    // The AP gems are claimed too (4000 up, one to a level at the default
+    // setting). An unlock can land in one, because collecting one asks only
+    // for being able to play its level, so a run claiming every clear and
+    // chain but not these can come up short of the five.
+    //
+    // All but the last three levels', which are left in the ground on
+    // purpose: the picker carries a mark for them now, and a ladder with
+    // every gem taken photographs that mark in one state only. Those three
+    // are deep enough that nothing else in these shots waits on them.
     // And a few of each thing there is to spend, because an empty bottom bar
     // is the one state of it these shots would otherwise always be of. Keyed
     // by the engine's own code for each kind, the same as the save writes it,
     // and ten of them altogether, which is what a run is dealt by default.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, consumables: { 0: 3, 1: 1, 2: 2, 3: 4 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090, 4100, 4110, 4120] }))`,
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, consumables: { 0: 3, 1: 1, 2: 2, 3: 4 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only

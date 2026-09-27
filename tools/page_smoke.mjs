@@ -36,7 +36,7 @@ function stubContext(into = calls) {
   const ctx = {};
   const methods = [
     'setTransform', 'clearRect', 'save', 'restore', 'beginPath', 'closePath', 'moveTo',
-    'lineTo', 'arc', 'arcTo', 'ellipse', 'quadraticCurveTo', 'fill', 'stroke', 'clip',
+    'lineTo', 'arc', 'arcTo', 'ellipse', 'quadraticCurveTo', 'rect', 'fill', 'stroke', 'clip',
     'fillRect', 'strokeRect', 'translate', 'scale', 'rotate', 'drawImage', 'fillText',
   ];
   for (const name of methods) {
@@ -661,6 +661,46 @@ for (const row of list.children) {
   assert.equal(row.children.at(-1).children.length, 3, 'a level row is missing its marks');
 }
 
+// And, between the name and those marks, what the level still has in it: one
+// mark for its AP gems and one for its moves upgrades. They are what makes the
+// picker a tracker, so a row without them is a menu again.
+{
+  const { engine } = window.twiddlygems;
+  const { paintGemsIcon } = await import(path.resolve('web/js/render.js'));
+  const gems = engine.levelGems(0);
+  assert.ok(gems.total > 0, 'this run hides no gems, so the mark would have nothing to say');
+  assert.equal(engine.levelMoves(0).total, 1, 'a level carries some other number of upgrades now');
+
+  const status = list.children[0].children.find((c) => c.className === 'level-status');
+  assert.ok(status, 'a level row says nothing about what is still in it');
+  assert.equal(status.children.length, 2, 'a level row is missing one of its status marks');
+  assert.match(
+    status.children[0].title ?? '',
+    /of \d+ AP gems/,
+    'the gem mark does not say what it is a fraction of',
+  );
+
+  // Found and not found have to be two different pictures, or the mark is
+  // decoration: the same fill runs whatever the run has taken.
+  const drawn = () => {
+    const art = document.createElement('canvas');
+    let clips = 0;
+    const ctx = stubContext({});
+    const real = ctx.clip;
+    ctx.clip = (...args) => { clips += 1; return real(...args); };
+    art.getContext = () => ctx;
+    return { art, clips: () => clips, ctx };
+  };
+  const empty = drawn();
+  paintGemsIcon(empty.art, 22, 0, gems.total);
+  const some = drawn();
+  paintGemsIcon(some.art, 22, gems.total, gems.total);
+  assert.ok(
+    some.clips() > empty.clips(),
+    'a mark with everything found is painted exactly like an empty one',
+  );
+}
+
 // The tracker above shows all five unlocks from the start, grayed until they
 // turn up, so what a run is still waiting on is as readable as what it holds.
 const found = () => items.children.filter((slot) => slot.classList.contains('found'));
@@ -967,13 +1007,13 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
   // The retry closed the panel, so the menu is opened afresh.
   dispatch('levels-button', 'click', {});
-  click(overlayButton('Title screen'), 'the level menu offers no way back to the title');
+  click(overlayButton('Quit game'), 'the level menu offers no way back to the title');
   click(overlayButton('Keep playing'), 'ending a run is not confirmed first');
   assert.ok(elements.get('title').classList.contains('hidden'), 'backing out still quit the run');
   assert.equal(engine.unlocked, 5, 'backing out still threw the progress away');
 
   // Backing out returns to the level list, so the way in is open again.
-  click(overlayButton('Title screen'), 'backing out closed the menu instead of reopening it');
+  click(overlayButton('Quit game'), 'backing out closed the menu instead of reopening it');
   click(overlayButton('End the run'), 'the confirmation has no way to go through with it');
   assert.ok(!elements.get('title').classList.contains('hidden'), 'ending a run left the board up');
   assert.ok(elements.get('overlay').classList.contains('hidden'), 'the menu is still over the title');

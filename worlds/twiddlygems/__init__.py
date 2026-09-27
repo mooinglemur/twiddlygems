@@ -144,7 +144,7 @@ class TwiddlyGemsWorld(World):
     _shares_drawn: dict[str, int] | None = None
 
     def _ap_gems_per_level(self) -> int:
-        """How many of each level's ten Archipelago gems this run plays over.
+        """How many of each level's ten AP gems this run plays over.
 
         The setting is a floor, not a count: every item has to have somewhere
         to go, and the options deciding how many items there are do not know

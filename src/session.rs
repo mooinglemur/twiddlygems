@@ -9,10 +9,9 @@ use crate::game::{Event, Game, Status, EV_AP_CLEAR, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::options::{Kind, Options, SETTINGS};
 use crate::progression::{
-    ap_gems_per_level, fill_seed, item_index, item_name, items, location_index, location_name,
-    locations, solo_placement, Consumable, Inventory, Item, Location, Tier, LONGEST_CHAIN,
-    LONGEST_MATCH,
-    NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
+    ap_gems_per_level, fill_seed, item_index, item_name, item_pool, items, location_index,
+    location_name, locations, solo_placement, Consumable, Inventory, Item, Location, Tier,
+    LONGEST_CHAIN, LONGEST_MATCH, NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
 };
 use crate::rng::Rng;
 
@@ -480,6 +479,45 @@ impl Session {
         if let Some(best) = self.best_scores.get_mut(index) {
             *best = (*best).max(score);
         }
+    }
+
+    /// How many of the Archipelago gems on the level at `index` this run has
+    /// already taken.
+    ///
+    /// Read off the checked locations the way [`Session::best_tier`] is, so
+    /// what a tracker shows and what the run has found cannot drift apart.
+    pub fn gems_found(&self, index: usize) -> u32 {
+        self.checked
+            .iter()
+            .filter_map(|id| Location::from_id(*id))
+            .filter(|at| matches!(at, Location::ApGem { level, .. } if *level == index))
+            .count() as u32
+    }
+
+    /// How many Archipelago gems every level of this run carries.
+    ///
+    /// One number for the whole ladder, because that is how a run is set up:
+    /// see [`ap_gems_per_level`]. Zero is a real answer, for a run whose pool
+    /// is small enough not to need any.
+    pub fn gems_per_level(&self) -> u32 {
+        ap_gems_per_level(self.levels.len(), &self.options)
+    }
+
+    /// How many of the level's moves upgrades this run is holding.
+    pub fn moves_found(&self, index: usize) -> u32 {
+        self.inventory.moves_found(index)
+    }
+
+    /// How many there are to find for that level.
+    ///
+    /// Counted out of the pool rather than answered with one, because the pool
+    /// is where it is decided, and it is what changes when the upgrade becomes
+    /// progressive.
+    pub fn moves_total(&self, index: usize) -> u32 {
+        item_pool(self.levels.len(), self.seed, &self.options)
+            .iter()
+            .filter(|item| matches!(item, Item::Moves { level } if *level == index))
+            .count() as u32
     }
 
     pub fn best_tier(&self, index: usize) -> Tier {
@@ -1377,6 +1415,39 @@ mod tests {
         session.restore(at.id());
         assert_eq!(session.inventory().moves_found(level), 1, "restoring twice paid twice");
         assert_eq!(session.checked(), [at.id()], "and it was written down twice");
+    }
+
+    /// What the level select's two status marks are read from.
+    #[test]
+    fn a_level_says_how_many_of_its_gems_have_been_taken() {
+        let mut session = Session::new(7);
+        let wanted = session.gems_per_level();
+        assert!(wanted > 0, "a run with no gems in it proves nothing here");
+        assert_eq!(session.gems_found(2), 0, "a fresh run has taken one");
+
+        session.restore(Location::ApGem { level: 2, index: 0 }.id());
+        assert_eq!(session.gems_found(2), 1);
+        assert_eq!(session.gems_found(3), 0, "a gem was counted against the wrong level");
+
+        for index in 0..wanted {
+            session.restore(Location::ApGem { level: 2, index }.id());
+        }
+        assert_eq!(session.gems_found(2), wanted, "the level never reads as finished");
+    }
+
+    #[test]
+    fn a_level_says_whether_its_moves_upgrade_has_turned_up() {
+        let mut session = Session::new(7);
+        // One per level today, which is why the mark is found or not found
+        // rather than a fraction. It fills by thirds the day the pool carries
+        // three of them, which is what reading the total out of the pool is
+        // for.
+        assert_eq!(session.moves_total(3), 1, "a level carries some other number of upgrades now");
+        assert_eq!(session.moves_found(3), 0);
+
+        assert!(session.receive(Item::Moves { level: 3 }));
+        assert_eq!(session.moves_found(3), 1, "the upgrade did not read as found");
+        assert_eq!(session.moves_found(4), 0, "it was counted against the wrong level");
     }
 
     #[test]

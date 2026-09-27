@@ -311,6 +311,26 @@ export class Engine {
     return this.wasm.tg_level_best(this.handle, index);
   }
 
+  /**
+   * What a level still has waiting in it, for the tracker: how many of its
+   * Archipelago gems have been taken, and how many of its moves upgrades have
+   * turned up. Each is a pair, because a mark that fills partway has to know
+   * what it is a fraction of.
+   */
+  levelGems(index) {
+    return {
+      found: this.wasm.tg_level_gems(this.handle, index),
+      total: this.wasm.tg_gems_per_level(this.handle),
+    };
+  }
+
+  levelMoves(index) {
+    return {
+      found: this.wasm.tg_level_moves(this.handle, index),
+      total: this.wasm.tg_level_moves_total(this.handle, index),
+    };
+  }
+
   /** The best score this run has beaten a level with, or 0 if it never has. */
   levelBestScore(index) {
     return this.wasm.tg_level_best_score(this.handle, index);

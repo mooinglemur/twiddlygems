@@ -464,6 +464,45 @@ pub unsafe extern "C" fn tg_level_best(handle: *const Handle, index: u32) -> u32
     session!(handle, 0).session.best_tier(index as usize).code()
 }
 
+/// How many of the Archipelago gems on the level at `index` this run has
+/// taken. Against [`tg_gems_per_level`], which is how many there are.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_gems(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.gems_found(index as usize)
+}
+
+/// How many Archipelago gems each level of this run carries, which is the same
+/// number for every level. 0 for a run that was set up without any.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_gems_per_level(handle: *const Handle) -> u32 {
+    session!(handle, 0).session.gems_per_level()
+}
+
+/// How many of the moves upgrades for the level at `index` this run holds.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_moves(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.moves_found(index as usize)
+}
+
+/// How many moves upgrades that level has to find. One today; asked for rather
+/// than assumed, because the upgrade is going to become progressive.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_moves_total(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.moves_total(index as usize)
+}
+
 /// How long a beaten level holds still before spending its leftover moves, so
 /// the goals can be seen reaching their totals. Milliseconds; 0 for no hold,
 /// which is what a board with no page in front of it does.
@@ -733,6 +772,7 @@ mod tests {
     use super::*;
     use crate::game::EV_SWAP;
     use crate::options::SETTINGS;
+    use crate::progression::Location;
 
     /// Drives the ABI the way the front end does, to catch a mismatch between
     /// what the engine knows and what it is willing to say.
@@ -857,6 +897,25 @@ mod tests {
             assert_eq!(tg_unlocked(handle), 5);
             assert_eq!(tg_load_level(handle, 3), 1);
             assert_eq!(tg_level_index(handle), 3);
+            tg_destroy(handle);
+        }
+    }
+
+    /// The two status marks on a level's row in the picker, across the
+    /// boundary: a fraction each, and both of them start empty.
+    #[test]
+    fn the_level_picker_can_read_what_is_still_out_there() {
+        unsafe {
+            let handle = tg_create(5, 0);
+            let wanted = tg_gems_per_level(handle);
+            assert!(wanted > 0, "this run hides no gems, so the mark would say nothing");
+            assert_eq!(tg_level_gems(handle, 2), 0);
+            assert_eq!(tg_level_moves(handle, 2), 0);
+            assert!(tg_level_moves_total(handle, 2) > 0);
+
+            tg_restore(handle, Location::ApGem { level: 2, index: 0 }.id());
+            assert_eq!(tg_level_gems(handle, 2), 1);
+            assert_eq!(tg_level_gems(handle, 1), 0, "it counted against every level");
             tg_destroy(handle);
         }
     }

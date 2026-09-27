@@ -133,7 +133,7 @@ fn main() {
 /// level before one turns up. A level is played to its end, win or lose, and
 /// the gem is counted if it fell at all.
 fn gem_rate(seeds: u64) {
-    println!("how long an Archipelago gem takes to turn up ({seeds} playthroughs per level)");
+    println!("how long an AP gem takes to turn up ({seeds} playthroughs per level)");
     println!(
         "{:<18}{:>10}{:>10}{:>10}{:>10}{:>12}",
         "one in", "L2 gems", "L2 runs", "L8 gems", "L8 runs", "runs per gem",

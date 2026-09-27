@@ -1425,6 +1425,137 @@ export function paintGoalIcon(canvas, goal, size) {
   }
 }
 
+/// The check that says a level has none of this kind left in it, and the
+/// strength the art is drawn at where it is not filled in yet.
+///
+/// The green is `--ok` from the sheet, written out because a canvas cannot
+/// read a custom property. The faint pass is still recognizable art rather
+/// than a silhouette: what is not found yet is a thing you are looking for,
+/// and it has to be nameable to be worth looking for.
+const CHECK_GREEN = '#4ade80';
+const UNFILLED_ALPHA = 0.26;
+
+/**
+ * Paints a mark that fills up as a run takes what it stands for.
+ *
+ * The art is drawn twice: faint over the whole icon, then again at full
+ * strength clipped to the bottom `found / total` of it, so a level half way
+ * through its gems is a gem half filled in. Full, it takes a check over the
+ * corner as well, because at this size a mark filled to the brim and a mark
+ * nearly filled are the same glance, and "all of them" is the one thing here
+ * worth being sure about.
+ */
+function paintProgressIcon(canvas, size, found, total, draw) {
+  const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+  canvas.width = Math.round(size * dpr);
+  canvas.height = Math.round(size * dpr);
+  canvas.style.width = `${size}px`;
+  canvas.style.height = `${size}px`;
+  const ctx = canvas.getContext('2d');
+  const side = size * dpr;
+  const filled = total > 0 ? Math.min(1, found / total) : 0;
+
+  ctx.globalAlpha = UNFILLED_ALPHA;
+  draw(ctx, side);
+  ctx.globalAlpha = 1;
+
+  if (filled > 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, side * (1 - filled), side, side * filled);
+    ctx.clip();
+    draw(ctx, side);
+    ctx.restore();
+  }
+
+  if (filled >= 1) {
+    drawCheck(ctx, side * 0.71, side * 0.74, side * 0.26);
+  }
+}
+
+/** How many of a level's AP gems have been taken out of it. */
+export function paintGemsIcon(canvas, size, found, total) {
+  // Held still, and face on. Its turn is the board's way of saying that a gem
+  // is there to be taken; a mark of what a level has left is not that.
+  paintProgressIcon(canvas, size, found, total, (ctx, side) =>
+    drawApGemBody(ctx, side / 2, side / 2, side * 0.48, 0));
+}
+
+/** Whether a level's moves upgrades have turned up. */
+export function paintMovesIcon(canvas, size, found, total) {
+  paintProgressIcon(canvas, size, found, total, drawSwap);
+}
+
+/**
+ * Two gems and an arrow that points at both of them, which is the one thing
+ * the player does.
+ *
+ * What an upgrade buys is moves, and a move is a swap, so the mark for it is a
+ * swap rather than a number or a plus sign. The gems sit low and the arrow
+ * arches over them, which leaves the shape bottom heavy: this fills from the
+ * bottom, and a mark whose weight is all along its top edge reads as empty
+ * until it is nearly full.
+ */
+function drawSwap(ctx, side) {
+  paintGem(ctx, side * 0.28, side * 0.71, side * 0.21, 0, Special.NONE);
+  paintGem(ctx, side * 0.72, side * 0.71, side * 0.21, 1, Special.NONE);
+
+  // The arc stops short of the gems rather than landing on them: its heads
+  // point at them, and a head touching the top of a gem is read as the end of
+  // a line rather than as an arrow.
+  const from = { x: side * 0.16, y: side * 0.38 };
+  const over = { x: side * 0.5, y: side * -0.04 };
+  const to = { x: side * 0.84, y: side * 0.38 };
+  ctx.save();
+  ctx.strokeStyle = 'rgba(242,238,252,0.92)';
+  ctx.lineWidth = Math.max(1.5, side * 0.09);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.quadraticCurveTo(over.x, over.y, to.x, to.y);
+  ctx.stroke();
+  // A head at each end, pointing down at the gem under it: the arrow says the
+  // two trade places rather than that one becomes the other.
+  ctx.fillStyle = 'rgba(242,238,252,0.92)';
+  for (const end of [from, to]) {
+    drawArrowHead(ctx, end.x, end.y, Math.atan2(end.y - over.y, end.x - over.x), side * 0.26);
+  }
+  ctx.restore();
+}
+
+/// A filled triangle at `angle`, with its point on the spot given.
+function drawArrowHead(ctx, x, y, angle, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(size * 0.5, 0);
+  ctx.lineTo(-size * 0.4, size * 0.42);
+  ctx.lineTo(-size * 0.4, -size * 0.42);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+/// The tick a finished mark wears. Backed by a dark stroke of its own, so it
+/// reads over art of any color without needing a plate behind it.
+function drawCheck(ctx, x, y, r) {
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x - r, y - r * 0.05);
+  ctx.lineTo(x - r * 0.25, y + r * 0.62);
+  ctx.lineTo(x + r, y - r * 0.72);
+  ctx.strokeStyle = 'rgba(8,6,16,0.92)';
+  ctx.lineWidth = Math.max(3, r * 0.9);
+  ctx.stroke();
+  ctx.strokeStyle = CHECK_GREEN;
+  ctx.lineWidth = Math.max(1.5, r * 0.44);
+  ctx.stroke();
+  ctx.restore();
+}
+
 /**
  * Paints one gem into a sprite: body, highlight, then its special marking.
  *
