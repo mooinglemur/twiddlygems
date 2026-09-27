@@ -89,10 +89,20 @@ const WORTH_CLASS = {
 /// The marks a level can be beaten to, in order, which is also the order the
 /// three pips on a level row sit in. Each is a location an item is found at,
 /// so a row of them is a row of checks.
+///
+/// `taken` and `missing` are what a pip says when you rest on it. A pip is a
+/// nine pixel circle, which is enough to count and not enough to name, and the
+/// difference between a hollow silver and a hollow gold is a color nobody
+/// should have to learn from the picture alone.
 const MARKS = [
-  { tier: Tier.CLEAR, name: 'clear' },
-  { tier: Tier.SILVER, name: 'silver' },
-  { tier: Tier.GOLD, name: 'gold' },
+  { tier: Tier.CLEAR, name: 'clear', taken: 'Cleared', missing: 'Uncleared' },
+  {
+    tier: Tier.SILVER,
+    name: 'silver',
+    taken: 'Cleared at Silver',
+    missing: 'Silver not reached',
+  },
+  { tier: Tier.GOLD, name: 'gold', taken: 'Cleared at Gold', missing: 'Gold not reached' },
 ];
 
 export class Hud {
@@ -750,9 +760,11 @@ export class Hud {
       for (const mark of MARKS) {
         const pip = document.createElement('span');
         pip.className = `pip ${TIER_CLASS[mark.tier]}`;
-        if (best >= mark.tier) {
+        const done = best >= mark.tier;
+        if (done) {
           pip.classList.add('taken');
         }
+        pip.title = done ? mark.taken : mark.missing;
         marks.append(pip);
       }
 
