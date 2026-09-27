@@ -324,6 +324,11 @@ async function boot() {
         // it has reached. Not the same as the level being over: the flourish
         // is still adding, and the color climbs with it.
         hud.cleared = true;
+        // And the fanfare, alongside the toast that says the level is cleared.
+        // The renderer raises that off this same event a moment earlier in the
+        // frame, so the two land together without either having to know about
+        // the other.
+        audio.play('fanfare');
       } else if (event.kind === EventKind.REVERT) {
         audio.play('clack', { pan: ((event.c / spread) * 2 - 1) * 0.4 });
       } else if (event.kind === EventKind.ROCKET_HIT) {

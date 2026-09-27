@@ -68,6 +68,20 @@ export const RIFFLE = [
   [0.408, 1450, 0.24],
 ];
 
+/// The figure the fanfare plays, as (note, start in seconds, level, how long
+/// it rings). A major triad walked up and landing on the octave.
+///
+/// A table for the same reason the riffle is one: these numbers are the whole
+/// design, and the figure can be rewritten by moving them down a column rather
+/// than by editing five near-identical layers.
+export const FANFARE = [
+  ['G4', 0.0, 0.5, 0.26],
+  ['C5', 0.09, 0.55, 0.26],
+  ['E5', 0.18, 0.6, 0.26],
+  ['G5', 0.27, 0.66, 0.34],
+  ['C6', 0.42, 0.8, 0.95],
+];
+
 export const SOUNDS = {
   /// A gem going away: a soft "tff", like a hi-hat brushed rather than struck.
   /// Deliberately quiet and very short so a cascade reads as a texture.
@@ -557,6 +571,42 @@ export const SOUNDS = {
         gain: 0.14,
         jitter: { frequency: 0.12 },
       },
+    ],
+  },
+
+  /// A level cleared, sounded with the toast that says so.
+  ///
+  /// **A placeholder.** Deliberately the plainest thing that reads as a
+  /// fanfare: a triad walked up and landing on the octave, a bright source
+  /// with the top taken off it as it rings, and a low note under the whole
+  /// figure so the notes sit on something instead of arriving as five separate
+  /// beeps. The figure is [`FANFARE`], which is where to rewrite it.
+  fanfare: {
+    gain: 0.45,
+    // One at a time. A level is cleared once, and two of these over each other
+    // would be a fault somewhere rather than something to hear.
+    voiceCap: 1,
+    layers: [
+      {
+        // The body under the figure. It holds through the run up and fades
+        // with the last note rather than under it.
+        source: 'sine',
+        note: 'C4',
+        env: { attack: 0.02, hold: 0.42, decay: 0.8 },
+        gain: 0.2,
+        jitter: { gain: 0.08 },
+      },
+      ...FANFARE.map(([note, delay, gain, decay]) => ({
+        // Bright to start with and darkening as it goes, which is most of what
+        // separates a horn from a beep.
+        source: 'sawtooth',
+        note,
+        filters: [{ type: 'lowpass', frequency: 3000, q: 0.9, sweep: { to: 1100, time: decay } }],
+        env: { attack: 0.012, hold: 0.03, decay },
+        delay,
+        gain,
+        jitter: { frequency: 0.008, gain: 0.06 },
+      })),
     ],
   },
 };

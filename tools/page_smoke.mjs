@@ -671,12 +671,26 @@ click(overlayButton('Close'), 'the level picker has no way out');
 // way to reach the panel that appears when a level ends.
 {
   const { EventKind, Phase, Special, Status, Tier } = await import(path.resolve('web/js/engine.js'));
-  const { engine, renderer } = window.twiddlygems;
+  const { audio, engine, renderer } = window.twiddlygems;
   // Watched as it goes, because both are gone by the time the level ends: the
   // pop-over fades long before a long run down finishes, and the phases are
   // only passed through.
   const phases = new Set();
   const toasts = new Set();
+  // Which frame the level said it was cleared on, in words and in sound. They
+  // come off the same event and have to stay on it: the two are meant to land
+  // together, and nothing about either one would look wrong on its own if one
+  // of them moved to some other moment.
+  let toastFrame = null;
+  let fanfareFrame = null;
+  let frame = 0;
+  const realPlay = audio.play.bind(audio);
+  audio.play = (name, options) => {
+    if (name === 'fanfare' && fanfareFrame === null) {
+      fanfareFrame = frame;
+    }
+    return realPlay(name, options);
+  };
   const counterWhileSpending = new Set();
   const scoreClassesWhileSpending = new Set();
   // Counted at the source rather than by looking at the particle list, which
@@ -698,10 +712,17 @@ click(overlayButton('Close'), 'the level picker has no way out');
         engine.swap(...move);
       }
     }
+    // Counted before the frame is run, not after: the fanfare is played from
+    // inside it and would otherwise be stamped with the number of the frame
+    // before its own.
+    frame += 1;
     pump(1);
     phases.add(engine.phase);
     if (renderer.toast) {
       toasts.add(renderer.toast.text);
+      if (renderer.toast.text === 'Level cleared' && toastFrame === null) {
+        toastFrame = frame;
+      }
     }
     if (engine.phase === Phase.CASHING_IN) {
       counterWhileSpending.add(engine.movesLeft);
@@ -754,6 +775,16 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.ok(
     toasts.has('Level cleared'),
     `the level never said it was cleared, only ${JSON.stringify([...toasts])}`,
+  );
+  // And the fanfare sounded with it, on the same frame. Nothing here has an
+  // opinion about what it sounds like, which is Troy's to settle by ear; what
+  // is checked is only that the two are still one moment.
+  audio.play = realPlay;
+  assert.notEqual(fanfareFrame, null, 'the level was cleared in silence');
+  assert.equal(
+    fanfareFrame,
+    toastFrame,
+    `the toast came on frame ${toastFrame} and the fanfare on frame ${fanfareFrame}`,
   );
   assert.ok(
     phases.has(Phase.FINISHING),

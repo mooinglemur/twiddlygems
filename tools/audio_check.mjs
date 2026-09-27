@@ -393,6 +393,10 @@ const { result } = await send('Runtime.evaluate', {
       // Past the end of the progression it should hold, not wrap round.
       chimePastEnd: await render('chime', 1, 0.8, false, { stage: 40 }),
       chimeStages: SOUNDS.chime.chords.length,
+      // Measured but not judged. This one is a placeholder for Troy's ear;
+      // what the number is for is so he can see what it costs while he tunes
+      // it, not so a check can have an opinion about how it should sound.
+      fanfare: await render('fanfare', 1, 2.6),
       // Read from the limiter itself, so this check cannot drift out of step
       // with the thing it is checking against.
       limiterDb: (() => {
@@ -448,6 +452,7 @@ for (const [label, key] of [
   ['bell x4', 'bellFour'],
   ['chime 1/12', 'chimeFirst'],
   ['chime 12/12', 'chimeLast'],
+  ['fanfare', 'fanfare'],
   ['glide plain', 'steadyTone'],
   ['glide waver', 'waveryTone'],
   ['glide wild', 'wildTone'],
