@@ -91,6 +91,10 @@ export const Tier = { NONE: 0, CLEAR: 1, SILVER: 2, GOLD: 3 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
+/// How much the world cares about an item, which is what its name is colored
+/// by in the feed. Archipelago's own four; see `Class` in the engine.
+export const ItemClass = { FILLER: 0, USEFUL: 1, PROGRESSION: 2, TRAP: 3 };
+
 /**
  * The things a run can be handed to spend, by the code the engine numbers them
  * with.
@@ -309,6 +313,14 @@ export class Engine {
   /** How well a level has been beaten, at best, as a `Tier`. */
   levelBest(index) {
     return this.wasm.tg_level_best(this.handle, index);
+  }
+
+  /**
+   * What the world makes of the item at `index` in `itemNames`, as an
+   * `ItemClass`. What the feed colors a name by.
+   */
+  itemClass(index) {
+    return this.wasm.tg_item_class(this.handle, index);
   }
 
   /**

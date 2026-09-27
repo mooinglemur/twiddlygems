@@ -280,12 +280,16 @@ for (const [name, metrics] of [
   // The item feed holds its height empty, so the shot above is the case that
   // matters most. This one is what it looks like with something in it, which
   // an ordinary run only reaches by clearing a level.
+  //
+  // Each line carries a `worth`, which is what colors the item's name: one
+  // logged without it wears the plain accent, and these stand in for lines the
+  // game raised itself. 2 is progression and 1 is useful; see `ItemClass`.
   await evaluate(`
     (() => {
       const { hud } = window.twiddlygems;
-      hud.logItem({ said: 'Found ', what: 'Horizontal Line Clear', where: 'Level 2 Clear' });
-      hud.logItem({ said: 'Found ', what: 'Level 3 Moves Upgrade', where: 'Level 2 Gold' });
-      hud.logItem({ said: 'Received ', what: 'Level 4 Moves Upgrade', where: null });
+      hud.logItem({ said: 'Found ', what: 'Horizontal Line Clear', where: 'Level 2 Clear', worth: 2 });
+      hud.logItem({ said: 'Found ', what: 'Level 3 Moves Upgrade', where: 'Level 2 Gold', worth: 2 });
+      hud.logItem({ said: 'Received ', what: 'Inventory Item: Rocket', where: null, worth: 1 });
     })()
   `);
   await sleep(200);

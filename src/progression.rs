@@ -129,6 +129,22 @@ impl Item {
         }
     }
 
+    /// How much a world should care about this one going missing.
+    ///
+    /// Everything that gates something is progression: the unlocks gate every
+    /// score mark, and a level's moves gate its gold. Filler says so in its
+    /// name. The things a run spends are worth having and needed by nothing,
+    /// which is what "useful" means: no location asks for one, so a seed is
+    /// finishable whether or not any are found and the fill may put them
+    /// anywhere.
+    pub fn class(self) -> Class {
+        match self {
+            Item::Unlock(_) | Item::Moves { .. } => Class::Progression,
+            Item::Filler => Class::Filler,
+            Item::Consumable(_) => Class::Useful,
+        }
+    }
+
     /// Which sort of item this is, for the event that announces it. See
     /// [`crate::game::EV_ITEM`].
     pub fn kind(self) -> u8 {
@@ -217,6 +233,50 @@ impl Tier {
             Tier::Clear => 1,
             Tier::Silver => 2,
             Tier::Gold => 3,
+        }
+    }
+}
+
+/// How much a world should care about one of these going missing.
+///
+/// Archipelago's own four, in Archipelago's own words, because this is written
+/// into the world's data as the classification of every item and read back by
+/// the page to color what it says in the feed. Two answers to what a Rocket
+/// counts as would eventually be two different answers.
+///
+/// The order is the order a player learns them in, which is also how much each
+/// one matters: nothing, something, everything, and the one you did not want.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Class {
+    /// Nothing waits on it. Worth announcing all the same: a check was made
+    /// and something came of it.
+    Filler,
+    /// Worth having and needed by nothing, so the fill may put one anywhere.
+    Useful,
+    /// Something is gated behind it, so a fill has to place it reachably.
+    Progression,
+    /// Something the run would rather not have been sent.
+    Trap,
+}
+
+impl Class {
+    /// The number that crosses the ABI. See `ItemClass` in `engine.js`.
+    pub fn code(self) -> u32 {
+        match self {
+            Class::Filler => 0,
+            Class::Useful => 1,
+            Class::Progression => 2,
+            Class::Trap => 3,
+        }
+    }
+
+    /// What Archipelago calls it, which is what the world's data says.
+    pub fn name(self) -> &'static str {
+        match self {
+            Class::Filler => "filler",
+            Class::Useful => "useful",
+            Class::Progression => "progression",
+            Class::Trap => "trap",
         }
     }
 }

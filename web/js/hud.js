@@ -1,7 +1,15 @@
 // The DOM around the board: level heading, score, moves, objective chips, and
 // the overlay used for results and level selection.
 
-import { Consumable, NO_LOCATION, ObjectiveKind, Special, Status, Tier } from './engine.js';
+import {
+  Consumable,
+  ItemClass,
+  NO_LOCATION,
+  ObjectiveKind,
+  Special,
+  Status,
+  Tier,
+} from './engine.js';
 import {
   PALETTE,
   paintConsumableIcon,
@@ -65,6 +73,17 @@ const SPENDABLE = {
     name: 'Rocket Cluster',
     does: 'a handful of rockets, each picking its own target',
   },
+};
+
+/// The class an item's name wears in the feed, by what the world makes of it.
+/// The colors are Archipelago's own and live in the stylesheet: a player who
+/// has seen a plum item name in any other game of theirs already knows this
+/// one is worth having.
+const WORTH_CLASS = {
+  [ItemClass.FILLER]: 'filler',
+  [ItemClass.USEFUL]: 'useful',
+  [ItemClass.PROGRESSION]: 'progression',
+  [ItemClass.TRAP]: 'trap',
 };
 
 /// The marks a level can be beaten to, in order, which is also the order the
@@ -787,11 +806,15 @@ export class Hud {
    * rather than the sentence. Old lines are dropped rather than kept forever:
    * this is a feed, and only the recent end of it is ever read.
    */
-  logItem({ said, what, where }) {
+  logItem({ said, what, where, worth }) {
     const { dom } = this;
     const line = document.createElement('li');
     const name = document.createElement('span');
-    name.className = 'what';
+    // Colored by what the world makes of it, which is the one thing about an
+    // item a player wants to know before they have finished reading its name.
+    // An item that says nothing about itself keeps the plain color rather than
+    // borrowing one of the four.
+    name.className = WORTH_CLASS[worth] ? `what ${WORTH_CLASS[worth]}` : 'what';
     name.textContent = what;
     line.append(said, name);
     if (where) {
@@ -836,7 +859,12 @@ export class Hud {
     const where = at === NO_LOCATION ? null : (engine.locationNames[at] ?? null);
     // "Found" for something this run turned up itself, the way Archipelago
     // distinguishes it from an item another world sent over.
-    return { said: where ? 'Found ' : 'Received ', what: name, where };
+    return {
+      said: where ? 'Found ' : 'Received ',
+      what: name,
+      where,
+      worth: engine.itemClass(event.value),
+    };
   }
 
   /** A load failure has to be visible; the board never appears otherwise. */

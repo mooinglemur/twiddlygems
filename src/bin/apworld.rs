@@ -187,7 +187,7 @@ fn item_table(levels: usize) -> Json {
                 Json::Obj(vec![
                     ("name", Json::Str(item_name(item))),
                     ("id", Json::Num(AP_ID_BASE + item.id())),
-                    ("classification", Json::Str(classification(item).to_string())),
+                    ("classification", Json::Str(item.class().name().to_string())),
                     ("count", count_json(copies(item))),
                     ("top_up", Json::Bool(tops_up(item))),
                 ])
@@ -274,24 +274,6 @@ enum Copies {
     Fixed(Count),
     /// One of the kinds sharing the total that setting names.
     Share { of: &'static str },
-}
-
-/// How much Archipelago should care about an item going missing.
-///
-/// Everything that is placed is progression: the unlocks gate every score
-/// mark, and a level's moves gate its gold. Filler is the exception and says
-/// so in its name. The traps and the usable items, when they exist, are where
-/// this stops being two answers.
-fn classification(item: Item) -> &'static str {
-    match item {
-        Item::Unlock(_) => "progression",
-        Item::Moves { .. } => "progression",
-        Item::Filler => "filler",
-        // Worth having and needed by nothing: no location asks for one, so a
-        // seed is finishable whether or not any are found, and the fill is
-        // free to put them anywhere. That is what "useful" means.
-        Item::Consumable(_) => "useful",
-    }
 }
 
 /// Whether more of this item may be made up to fill the world's empty

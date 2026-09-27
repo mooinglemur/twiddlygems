@@ -893,6 +893,29 @@ click(overlayButton('Close'), 'the level picker has no way out');
     `lining up three never paid anything: ${JSON.stringify(lines)}`,
   );
 
+  // Each name is colored by what the world makes of that item, the way an
+  // Archipelago client colors one. Read off the class rather than the color,
+  // since the four colors live in the stylesheet.
+  {
+    const named = feed.children
+      .map((line) => line.children.find((part) => part.className?.startsWith?.('what')))
+      .filter(Boolean);
+    assert.ok(named.length > 0, 'no line in the feed picks its item out at all');
+    const worths = new Set(named.map((part) => part.className));
+    assert.ok(
+      [...worths].every((className) => /^what (filler|useful|progression|trap)$/.test(className)),
+      `the feed named an item without saying what it is worth: ${[...worths].join(', ')}`,
+    );
+    // The unlocks a level clear pays are progression and the bonus items are
+    // useful, so a level played out has found at least two sorts. One sort
+    // everywhere would pass every check above and still be a feed that had
+    // stopped asking the engine.
+    assert.ok(
+      worths.size > 1,
+      `every item in the feed came out the same color: ${[...worths].join(', ')}`,
+    );
+  }
+
   // What the run has found goes in the save. Without it a reload keeps the
   // levels a player unlocked and quietly takes back everything they earned on
   // the way, which is worse than losing both.

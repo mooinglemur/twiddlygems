@@ -389,8 +389,22 @@ button[disabled] { opacity: 0.4; cursor: default; }
    would squeeze the whole log into the box rather than let it scroll. */
 #feed li { flex: 0 0 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* What the item was, picked out of the sentence around it, and where it came
-   from, kept quieter: the item is the news and the location is the footnote. */
+   from, kept quieter: the item is the news and the location is the footnote.
+
+   Colored by what the world makes of the item, in Archipelago's own four
+   colors, taken from its clients: plum for progression, slateblue for useful,
+   cyan for filler and salmon for a trap. Not invented here on purpose. A
+   player who has seen a plum item name in any other game of theirs already
+   knows what this one is, and a game that picked its own palette would be
+   teaching them a second one for no reason.
+
+   The accent is what a line wears when it says nothing about itself, which is
+   every line the game logged before it knew how to say. */
 #feed .what { color: var(--accent); font-weight: 650; }
+#feed .what.progression { color: #af99ef; }
+#feed .what.useful { color: #6d8be8; }
+#feed .what.filler { color: #00eeee; }
+#feed .what.trap { color: #fa8072; }
 #feed .where { opacity: 0.7; }
 
 @media (min-width: 640px) {

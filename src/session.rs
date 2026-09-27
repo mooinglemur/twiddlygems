@@ -10,7 +10,7 @@ use crate::level::{levels, LevelSpec};
 use crate::options::{Kind, Options, SETTINGS};
 use crate::progression::{
     ap_gems_per_level, fill_seed, item_index, item_name, item_pool, items, location_index,
-    location_name, locations, solo_placement, Consumable, Inventory, Item, Location, Tier,
+    location_name, locations, solo_placement, Class, Consumable, Inventory, Item, Location, Tier,
     LONGEST_CHAIN, LONGEST_MATCH, NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
 };
 use crate::rng::Rng;
@@ -253,6 +253,15 @@ impl Session {
     /// player's feed disagreeing with their tracker.
     pub fn item_names(&self) -> &[u8] {
         &self.item_names_blob
+    }
+
+    /// What the item at `index` in that same list counts as, which is what
+    /// colors its name in the feed.
+    ///
+    /// Filler for an index off the end, because that is the answer that claims
+    /// the least about an item this engine does not have.
+    pub fn item_class(&self, index: usize) -> Class {
+        items(self.levels.len()).get(index).map_or(Class::Filler, |item| item.class())
     }
 
     /// Every location's name, in the order [`locations`] gives them.

@@ -242,6 +242,21 @@ pub unsafe extern "C" fn tg_item_names_len(handle: *const Handle) -> u32 {
     session!(handle, 0).session.item_names().len() as u32
 }
 
+/// How much the world cares about the item at `index` in that same list: 0
+/// filler, 1 useful, 2 progression, 3 trap. See `Class`.
+///
+/// The page colors an item's name in the feed by this, the way an Archipelago
+/// client does, and it is the same answer that goes into the world's data as
+/// the item's classification. An index past the end reads as filler, which is
+/// the answer that claims the least.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_item_class(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.item_class(index as usize).code()
+}
+
 /// Every location's name, the same way. See [`tg_item_names_ptr`].
 ///
 /// # Safety
@@ -772,7 +787,7 @@ mod tests {
     use super::*;
     use crate::game::EV_SWAP;
     use crate::options::SETTINGS;
-    use crate::progression::Location;
+    use crate::progression::{Class, Location};
 
     /// Drives the ABI the way the front end does, to catch a mismatch between
     /// what the engine knows and what it is willing to say.
@@ -931,6 +946,39 @@ mod tests {
             let names: Vec<&str> = std::str::from_utf8(bytes).unwrap().split('\n').collect();
             assert_eq!(names.len(), tg_level_count(handle) as usize);
             assert_eq!(names[0], "First Light");
+            tg_destroy(handle);
+        }
+    }
+
+    /// The feed colors an item's name by what the world makes of it, and it
+    /// takes both off the same index. If those two lists ever drifted apart,
+    /// every line would be colored by some other item's worth and nothing
+    /// would look broken.
+    #[test]
+    fn a_name_and_what_it_is_worth_come_off_the_same_index() {
+        unsafe {
+            let handle = tg_create(5, 0);
+            let bytes = std::slice::from_raw_parts(
+                tg_item_names_ptr(handle),
+                tg_item_names_len(handle) as usize,
+            );
+            let names: Vec<&str> = std::str::from_utf8(bytes).unwrap().split('\n').collect();
+            let at = |wanted: &str| {
+                names.iter().position(|name| *name == wanted).unwrap_or_else(|| {
+                    panic!("the item list has no {wanted}, so this proves nothing")
+                }) as u32
+            };
+
+            assert_eq!(tg_item_class(handle, at("Rocket")), Class::Progression.code());
+            assert_eq!(tg_item_class(handle, at("Level 3 Moves Upgrade")), Class::Progression.code());
+            assert_eq!(tg_item_class(handle, at("Filler")), Class::Filler.code());
+            assert_eq!(
+                tg_item_class(handle, at("Inventory Item: Rocket Cluster")),
+                Class::Useful.code(),
+            );
+            // A page is free to ask about an item this engine does not have,
+            // and the answer is the one that claims the least.
+            assert_eq!(tg_item_class(handle, 9_999), Class::Filler.code());
             tg_destroy(handle);
         }
     }

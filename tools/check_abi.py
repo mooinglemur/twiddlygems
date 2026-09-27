@@ -178,6 +178,18 @@ compare(
 )
 
 compare(
+    "item classes",
+    rust_arms(read(ROOT / "src" / "progression.rs"), "code", "Class"),
+    js_object(engine_source, "ItemClass"),
+    [
+        ("Filler", "FILLER"),
+        ("Useful", "USEFUL"),
+        ("Progression", "PROGRESSION"),
+        ("Trap", "TRAP"),
+    ],
+)
+
+compare(
     "specials",
     rust_arms(read(ROOT / "src" / "board.rs"), "code", "Special"),
     js_object(engine_source, "Special"),
