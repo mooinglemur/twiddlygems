@@ -908,10 +908,6 @@ async function boot() {
       go();
     };
     hud.showVictory({
-      // The only thing the panel says differently for a multiworld, and worth
-      // saying: someone who has just finished their slot wants to know the
-      // room knows. The client sent it on the same clear.
-      remote: mode === 'multiworld',
       onLevels: leaving(openLevels),
       onClose: leaving(() => hud.hideOverlay()),
     });

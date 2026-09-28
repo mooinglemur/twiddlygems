@@ -1202,7 +1202,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // The victory panel, which replaces the clear panel on the one clear that
   // meets the run's goal.
   const quiet = { onLevels() {}, onClose() {} };
-  hud.showVictory({ remote: false, ...quiet });
+  hud.showVictory(quiet);
   assert.equal(
     elements.get('overlay-title').textContent,
     'You win!',
@@ -1218,16 +1218,15 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // Replaying the level the goal fell on is not a thing anybody wants offered
   // at the end of a run, and the panel has no business suggesting it.
   assert.ok(!overlayButton('Replay'), 'the victory panel offers to replay the level');
-  assert.doesNotMatch(
-    elements.get('overlay-body').textContent,
-    /room/,
-    'a solo victory claims a room was told about it',
-  );
-  hud.showVictory({ remote: true, ...quiet });
+  // What it says is Troy's to word. What it must do is name the level and the
+  // score, because that is the only thing on the panel a player cannot read
+  // off the board behind it. Matched loosely on purpose: this pinned the exact
+  // sentence once and failed the moment the wording was improved, which is a
+  // test complaining about being right.
   assert.match(
     elements.get('overlay-body').textContent,
-    /room has been told/,
-    'a multiworld victory does not say the room knows',
+    /[\d,]+ points/,
+    'the victory panel does not say what the run was won with',
   );
 
   // And the dress comes off again. The panels replace one another in place

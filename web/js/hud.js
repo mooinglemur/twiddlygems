@@ -565,11 +565,14 @@ export class Hud {
    * normally, because a run whose goal is met is still playable and a victory
    * screen every time would be a nag rather than a moment.
    *
-   * The same panel for solo and for a multiworld. What the two do differ about
-   * is a line rather than a screen: a multiworld has been told, and a player
-   * who has just finished their slot wants to know the room knows.
+   * The same panel for solo and for a multiworld, saying nothing about which.
+   * It used to add a line under a multiworld saying the room had been told,
+   * which was two faults at once: a player in a room knows they are in one,
+   * and this panel has no way of knowing whether the status update actually
+   * reached the server, so on a dropped socket it was a reassurance about
+   * something that had not happened.
    */
-  showVictory({ remote, ...actions }) {
+  showVictory(actions) {
     const { engine, dom } = this;
     dom.overlayTitle.textContent = 'You win!';
 
