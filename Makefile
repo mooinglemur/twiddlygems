@@ -2,6 +2,11 @@
 #
 # The engine has no dependencies, so a wasm build is a plain cargo build with
 # no bindgen step and nothing to fetch.
+#
+# The tooling around it wants node 22.4 or newer, which is where node grew a
+# global WebSocket: the two targets that drive a headless browser talk to it
+# over one, and so does the one that plays a real multiworld. They say so
+# themselves rather than failing obscurely, but this is the shorter answer.
 
 CARGO  ?= cargo
 PYTHON ?= python3

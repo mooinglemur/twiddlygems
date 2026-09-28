@@ -19,6 +19,13 @@
 import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 
+// See the same guard in `shoot.mjs`: this drives the browser over a WebSocket,
+// which Node only grew in 22.4.
+if (typeof WebSocket === 'undefined') {
+  console.error(`this needs Node 22.4 or newer for its WebSocket; this is ${process.version}.`);
+  process.exit(1);
+}
+
 const SERVER = process.env.SITE_BIN ?? 'target/release/twiddlygems-serve';
 const PORT = Number(process.env.SITE_PORT ?? 8097);
 const DEBUG_PORT = Number(process.env.SITE_DEBUG_PORT ?? 9335);

@@ -27,6 +27,15 @@ import path from 'node:path';
 import { loadEngine } from '../web/js/engine.js';
 import { ArchipelagoClient, MemoryCache, State } from '../web/js/archipelago.js';
 
+// The client opens a real socket to a real server, through the same global the
+// browser provides, which Node only grew in 22.4. Without this the failure is
+// a timeout reaching the server, with the real reason buried in the state
+// trail: it reads like the server never came up.
+if (typeof WebSocket === 'undefined') {
+  console.error(`this needs Node 22.4 or newer for its WebSocket; this is ${process.version}.`);
+  process.exit(1);
+}
+
 const multidata = process.argv[2];
 const WASM = process.argv[3] ?? 'web/twiddlygems.wasm';
 const PORT = Number(process.env.AP_PORT ?? 38281);

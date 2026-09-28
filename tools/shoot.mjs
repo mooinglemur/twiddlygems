@@ -15,6 +15,15 @@
 import { writeFile, mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 
+// Said here rather than found out three frames deep. Node gained a global
+// `WebSocket` in 22.4, and this talks to the browser over one; on an older
+// one the failure is a bare ReferenceError from inside the CDP setup, which
+// reads like the browser refusing to start.
+if (typeof WebSocket === 'undefined') {
+  console.error(`this needs Node 22.4 or newer for its WebSocket; this is ${process.version}.`);
+  process.exit(1);
+}
+
 const OUT = process.argv[2] ?? 'shots';
 const BROWSER = process.env.BROWSER ?? 'google-chrome-stable';
 const PORT = Number(process.env.SHOT_PORT ?? 8099);

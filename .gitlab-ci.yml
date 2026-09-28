@@ -24,6 +24,22 @@ workflow:
 default:
   interruptible: true
 
+variables:
+  # Node, pinned and fetched rather than taken from the distribution.
+  #
+  # Debian trixie ships Node 20, which has no global `WebSocket`: it arrived
+  # behind a flag in 21 and became standard in 22.4. Three of the tools here
+  # need one, the two that drive a headless browser over the Chrome DevTools
+  # Protocol and the one that plays a real multiworld against a real server, so
+  # on the distribution's Node all three die with `WebSocket is not defined`
+  # and two of them look like a network problem while doing it.
+  #
+  # Pinned to a version rather than to a moving "latest LTS", for the same
+  # reason the Archipelago checkout is pinned to a tag: a build that changes
+  # because somebody else released something is a build that cannot be
+  # repeated.
+  NODE_VERSION: "24.21.0"
+
 stages:
   - test
   - image
@@ -71,6 +87,17 @@ stages:
     - if: '$CI_COMMIT_BRANCH'
       changes: *everything
     - if: '$CI_PIPELINE_SOURCE == "web"'
+  # One setup for all three test jobs. What differs between them is a list of
+  # extra packages, which is a variable, rather than a second copy of this.
+  before_script:
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq --no-install-recommends
+      ca-certificates curl xz-utils python3 $EXTRA_PACKAGES
+    - curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" | tar -xJ -C /opt
+    - export PATH="/opt/node-v$NODE_VERSION-linux-x64/bin:$PATH"
+    - node --version
+    - rustup target add wasm32-unknown-unknown
 
 # ---- test stage ----
 
@@ -84,9 +111,6 @@ stages:
 test:
   <<: *rust
   stage: test
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs python3
-    - rustup target add wasm32-unknown-unknown
   script:
     # No `cargo fmt --check` and no `clippy -D warnings` here yet, and that is
     # a decision rather than an oversight. The tree has never been formatted by
@@ -116,14 +140,14 @@ test-browser:
   stage: test
   variables:
     CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    EXTRA_PACKAGES: chromium
+    # Both tools default to Chrome's own binary name, which Debian's package is
+    # not. One setting covers them both.
     BROWSER: chromium
     KUBERNETES_CPU_REQUEST: "4"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_REQUEST: "4Gi"
     KUBERNETES_MEMORY_LIMIT: "6Gi"
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs python3 chromium
-    - rustup target add wasm32-unknown-unknown
   script:
     - make shots
     - make site-smoke
@@ -163,11 +187,18 @@ test-archipelago:
       paths:
         - vendor/
         - .venv/
-  before_script:
-    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs python3 python3-venv git
-    - rustup target add wasm32-unknown-unknown
-    - make ap-setup
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    EXTRA_PACKAGES: python3-venv git
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "2Gi"
+    KUBERNETES_MEMORY_LIMIT: "4Gi"
   script:
+    # Clones Archipelago and builds the virtualenv, or finds both in the cache.
+    # Part of the script rather than the shared setup because it is the one
+    # piece of preparation that is this job's alone.
+    - make ap-setup
     - make apworld-test
     # Generates from the zip a player would install rather than from the
     # checkout, which is the check only the zip can fail: a module inside an
