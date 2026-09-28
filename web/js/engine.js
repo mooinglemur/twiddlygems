@@ -367,6 +367,74 @@ export class Engine {
     this.wasm.tg_restore(this.handle, id);
   }
 
+  /**
+   * How many locations the run has checked.
+   *
+   * Cheap, unlike `checked`, which builds an array every time it is asked. A
+   * client watching for new checks asks this every frame and only reads the
+   * list when the number has moved.
+   */
+  get checkedCount() {
+    return this.wasm.tg_checked_len(this.handle);
+  }
+
+  // ---- under a multiworld ----
+
+  /**
+   * Hands what the locations hold over to a multiworld.
+   *
+   * From here on checking one records the check and pays out nothing: what
+   * was in it is the server's to send, and it comes back through `receive`.
+   * Everything read off the checked locations, the level marks among them,
+   * carries on working.
+   */
+  setRemote(on) {
+    this.wasm.tg_set_remote(this.handle, on ? 1 : 0);
+  }
+
+  /**
+   * Hands the run an item the multiworld sent, by the engine's own id.
+   *
+   * Answers whether the run is better off for it. False for an id no item
+   * has and for an unlock that had already arrived, both of which are
+   * ordinary rather than a fault: a server resends its whole list every time
+   * it says hello.
+   */
+  receive(id) {
+    return this.wasm.tg_receive(this.handle, id) === 1;
+  }
+
+  /**
+   * Empties what the run is holding, leaving what it has checked alone.
+   *
+   * For the one thing a multiworld says that nothing else does: this is your
+   * whole inventory, forget what you had. Everything but the unlocks stacks,
+   * so a resent list added to what was already held would double it.
+   */
+  forgetItems() {
+    this.wasm.tg_forget_items(this.handle);
+  }
+
+  /** Whether the run has finished the game, by whatever its goal asks. */
+  get goalMet() {
+    return this.wasm.tg_goal_met(this.handle) === 1;
+  }
+
+  /**
+   * What Archipelago's own item and location numbers are offset by.
+   *
+   * Read out of the engine rather than written down here, so the two cannot
+   * drift. A number of ours plus this is a number the server knows.
+   */
+  get apIdBase() {
+    return this.wasm.tg_ap_id_base() >>> 0;
+  }
+
+  /** How many AP gems every level of this run carries. */
+  get gemsPerLevel() {
+    return this.wasm.tg_gems_per_level(this.handle);
+  }
+
   get levelCount() { return this.wasm.tg_level_count(this.handle); }
   get unlocked() { return this.wasm.tg_unlocked(this.handle); }
 

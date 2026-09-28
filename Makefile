@@ -60,6 +60,7 @@ wasm: target-check
 smoke: wasm
 	node tools/abi_smoke.mjs $(OUT)
 	node tools/page_smoke.mjs $(OUT)
+	node tools/ap_smoke.mjs $(OUT)
 
 ## Serve the game. A wasm module cannot be loaded from a file:// page.
 ##
