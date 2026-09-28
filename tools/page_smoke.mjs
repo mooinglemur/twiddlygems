@@ -1034,6 +1034,22 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // a different layout and hand back items that were never found. That is what
   // the save's own seed is for, and what the page reloads with.
   const restored = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, SEED);
+  // The settings first, exactly as the page does on boot, and before anything
+  // is restored: they decide what the fill put where, so a location id looked
+  // up in a run dealt under different settings comes back as somebody else's
+  // item. Setting one deals the run again, which is why nothing may be handed
+  // back before this.
+  //
+  // This used to be left out, and passed for as long as the two fills happened
+  // to agree about the handful of places these ids name. They stopped agreeing
+  // the moment the pool was reordered, and the failure read as the save being
+  // broken rather than the test asking the wrong run.
+  for (const option of restored.options) {
+    const value = saved.options?.[option.key];
+    if (Number.isInteger(value)) {
+      restored.setOption(option.index, value);
+    }
+  }
   let announced = 0;
   for (const id of saved.checked) {
     restored.restore(id);

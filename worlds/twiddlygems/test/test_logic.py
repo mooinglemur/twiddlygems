@@ -314,6 +314,27 @@ class TestDefault(TwiddlyGemsTestBase):
         self.assertBeatable(True)
 
 
+class TestTheFloorWinsWhenItIsHigher(TwiddlyGemsTestBase):
+    """A floor above what the pool actually needs.
+
+    The setting and the derived number are both inputs to one `max`, and the
+    game runs that same `max` on its own side and refuses to play a seed whose
+    answer differs from its own. So the case where the floor is the larger of
+    the two has to come out the same on both sides, or asking for more gems
+    than a run needs would be a seed nobody could connect to.
+    """
+
+    options = {"ap_gems": 9, "inventory_items": 0}
+
+    def test_the_setting_wins_and_the_slot_data_says_so(self) -> None:
+        # Nothing to place, so the derived need is nothing, so the floor is the
+        # whole of the answer.
+        self.assertEqual(self.world._ap_gems_per_level(), 9)
+        self.assertEqual(self.world.fill_slot_data()["ap_gems_per_level"], 9)
+        in_play = [at for at in self.world._locations_in_play() if "gem_index" in at]
+        self.assertEqual(len(in_play), len(LEVELS) * 9)
+
+
 class TestGemsTurnedUp(TwiddlyGemsTestBase):
     """Asked for more gems than the default, which is a bigger world."""
 

@@ -181,10 +181,12 @@ class TwiddlyGemsWorld(World):
         levels = len(GAME_DATA["levels"])
         pool = sum(self._count(item) for item in ITEMS)
         # Everywhere a fill will actually put something. `counts_as_room` is
-        # how the engine marks the places that do not qualify: a chain too deep
-        # to ask a player for is a real location and this world may put
-        # anything in it, but it cannot be counted on when working out whether
-        # the items fit, or the two sides size the world differently.
+        # how the engine marks a place that does not qualify, and it marks none
+        # today: the deep chains were the only ones, back when their rule said
+        # anybody could reach them and the solo fill refused to use them
+        # anyway. They ask for a rocket and an opener now, both fills use them,
+        # and both count them. The flag stays because the next location the
+        # engine decides not to count will want it.
         elsewhere = sum(
             1 for at in LOCATIONS if "gem_index" not in at and at.get("counts_as_room", True)
         )
