@@ -553,7 +553,42 @@ export class Hud {
     );
 
     dom.tracker.classList.add('hidden');
-    dom.overlay.classList.remove('hidden');
+    this.openOverlay();
+  }
+
+  /**
+   * The run's goal has been met: the end of the game rather than the end of a
+   * level.
+   *
+   * Shown in place of the clear panel on the one clear that meets the goal,
+   * and only that one. Afterwards levels go back to reporting themselves
+   * normally, because a run whose goal is met is still playable and a victory
+   * screen every time would be a nag rather than a moment.
+   *
+   * The same panel for solo and for a multiworld. What the two do differ about
+   * is a line rather than a screen: a multiworld has been told, and a player
+   * who has just finished their slot wants to know the room knows.
+   */
+  showVictory({ remote, ...actions }) {
+    const { engine, dom } = this;
+    dom.overlayTitle.textContent = 'You win!';
+
+    const score = Math.round(engine.score);
+    const lines = [
+      `${engine.levelName} cleared for ${score.toLocaleString()} points, and with it the run.`,
+    ];
+    lines.push(
+        'You have reached the goal.'
+    );
+    dom.overlayBody.textContent = lines.join(' ');
+
+    dom.overlayButtons.replaceChildren(
+      button('Levels', actions.onLevels, true),
+      button('Close', actions.onClose, false),
+    );
+
+    dom.tracker.classList.add('hidden');
+    this.openOverlay(true);
   }
 
   /**
@@ -790,7 +825,7 @@ export class Hud {
       button('Close', actions.onClose, true),
       button('Quit game', actions.onQuit, false),
     );
-    dom.overlay.classList.remove('hidden');
+    this.openOverlay();
     // The level being played is somewhere down a list that scrolls, and on a
     // long ladder it is usually off the bottom of it.
     const current = dom.levelList.children[focused];
@@ -813,7 +848,7 @@ export class Hud {
       button('Keep playing', actions.onCancel, true),
       button('End the run', actions.onConfirm, false),
     );
-    dom.overlay.classList.remove('hidden');
+    this.openOverlay();
   }
 
   /**
@@ -995,11 +1030,93 @@ export class Hud {
     dom.overlayBody.textContent = message;
     dom.overlayButtons.replaceChildren();
     dom.tracker.classList.add('hidden');
-    dom.overlay.classList.remove('hidden');
+    this.openOverlay();
+  }
+
+  /**
+   * The testing menu, reached by tapping an objective twenty times over.
+   *
+   * Switches rather than buttons that fire as they are pressed, because a
+   * tester usually wants two or three of these together and one of them ends
+   * the level: applied as they were tapped, choosing "unlock all levels" after
+   * "set objectives as met" would do nothing, and the menu would be quietly
+   * order-dependent in a way nothing on screen explains. Everything selected
+   * is handed to `onClose` at once and the page decides what order to do it in.
+   *
+   * `choices` is `[{ key, label, hint }]` and is the page's list, not this
+   * one's: the HUD has no business knowing what any of them do.
+   */
+  showDebug(choices, { remote, onClose }) {
+    const { dom } = this;
+    const chosen = new Set();
+
+    dom.overlayTitle.textContent = 'Testing';
+    dom.overlayBody.textContent = remote
+      ? 'This is a real multiworld. Anything checked here is checked for everyone.'
+      : 'Pick any of these. They are applied when you close this.';
+
+    dom.debugOptions.replaceChildren(
+      ...choices.map((choice) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'debug-option';
+        // A switch, so a screen reader says whether it is on rather than
+        // simply naming it, and says so again each time it is pressed.
+        row.setAttribute('role', 'switch');
+        row.setAttribute('aria-checked', 'false');
+
+        const label = document.createElement('span');
+        label.className = 'debug-label';
+        label.textContent = choice.label;
+        const hint = document.createElement('span');
+        hint.className = 'debug-hint';
+        hint.textContent = choice.hint;
+        row.append(label, hint);
+
+        row.addEventListener('click', () => {
+          const on = !chosen.has(choice.key);
+          if (on) {
+            chosen.add(choice.key);
+          } else {
+            chosen.delete(choice.key);
+          }
+          row.classList.toggle('on', on);
+          row.setAttribute('aria-checked', String(on));
+        });
+        return row;
+      }),
+    );
+    // One way out, and it is the one that does the work.
+    dom.overlayButtons.replaceChildren(
+      button('Close', () => onClose([...chosen]), true),
+    );
+
+    dom.tracker.classList.add('hidden');
+    this.openOverlay();
+    // After `openOverlay`, which takes these away again: it is the one way in
+    // for every panel, so it is where the dress of the last one comes off.
+    dom.debugOptions.classList.remove('hidden');
+  }
+
+  /**
+   * Puts the overlay up, in its plain dress unless this is the victory screen.
+   *
+   * One way in for all of it, because the panels replace one another in place
+   * without the overlay being hidden in between: the Levels button on the
+   * victory screen goes straight to the level select. Anything that dressed
+   * the card and relied on being hidden to undo it would leave the next panel
+   * wearing it.
+   */
+  openOverlay(victory = false) {
+    this.dom.overlayCard.classList.toggle('victory', victory);
+    this.dom.debugOptions.classList.add('hidden');
+    this.dom.overlay.classList.remove('hidden');
   }
 
   hideOverlay() {
     this.dom.overlay.classList.add('hidden');
+    this.dom.overlayCard.classList.remove('victory');
+    this.dom.debugOptions.classList.add('hidden');
   }
 
   get overlayVisible() {

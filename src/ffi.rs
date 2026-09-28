@@ -18,7 +18,7 @@
 
 use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
-use crate::progression::{plays_generator, Consumable, AP_ID_BASE, GENERATOR};
+use crate::progression::{plays_generator, Consumable, Item, AP_ID_BASE, GENERATOR, UNLOCKS};
 use crate::session::Session;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
@@ -835,8 +835,67 @@ pub unsafe extern "C" fn tg_objective_need(handle: *const Handle, index: u32) ->
 /// `handle` must come from [`tg_create`].
 #[no_mangle]
 pub unsafe extern "C" fn tg_objective_have(handle: *const Handle, index: u32) -> u32 {
-    let game = session!(handle, 0).session.game();
-    game.objectives().get(index as usize).map_or(0, |o| o.reached(&game.progress))
+    session!(handle, 0).session.game().objective_have(index as usize)
+}
+
+// ---- the debug menu ------------------------------------------------------
+//
+// Reached by tapping an objective chip twenty times over. Everything here
+// grants what the run would have found rather than writing a result over the
+// top of it: a level is opened by handing the run the unlock that opens it, so
+// a forced run holds what an ordinary one would and every rule downstream
+// still reads true. Filling the bonus inventory is the exception only because
+// `tg_restore_consumables` already does exactly that.
+
+/// Debug: open every level on the ladder.
+///
+/// Both ways a ladder can open, because the menu has no business knowing which
+/// is in play: the counter covers a ladder that opens by clearing, and the
+/// unlocks cover one that opens by item, where the counter is ignored and how
+/// far a run may play is read off what it holds.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_unlock_all_levels(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    let levels = handle.session.level_count();
+    handle.session.set_unlocked(levels);
+    for _ in 1..levels {
+        handle.session.receive(Item::LevelUnlock);
+    }
+}
+
+/// Debug: give the run every special.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_unlock_all_specials(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    for special in UNLOCKS {
+        handle.session.receive(Item::Unlock(special));
+    }
+}
+
+/// Debug: declare the current level won, wherever the board is.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_force_clear(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    handle.session.game_mut().force_clear();
+}
+
+/// Debug: give the current level a different number of moves.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_set_moves(handle: *mut Handle, moves: u32) {
+    let handle = session_mut!(handle, ());
+    handle.session.game_mut().set_moves(moves);
 }
 
 // ---- events --------------------------------------------------------------

@@ -1199,8 +1199,143 @@ click(overlayButton('Close'), 'the level picker has no way out');
   click(overlayButton('Close'), 'the panel cannot be closed');
   assert.equal(closed, 1, 'closing the panel did nothing');
 
+  // The victory panel, which replaces the clear panel on the one clear that
+  // meets the run's goal.
+  const quiet = { onLevels() {}, onClose() {} };
+  hud.showVictory({ remote: false, ...quiet });
+  assert.equal(
+    elements.get('overlay-title').textContent,
+    'You win!',
+    'the victory panel does not announce the win',
+  );
+  assert.ok(
+    elements.get('overlay-card').classList.contains('victory'),
+    'the victory panel is dressed exactly like an ordinary level result',
+  );
+  for (const label of ['Levels', 'Close']) {
+    assert.ok(overlayButton(label), `the victory panel has no ${label} button`);
+  }
+  // Replaying the level the goal fell on is not a thing anybody wants offered
+  // at the end of a run, and the panel has no business suggesting it.
+  assert.ok(!overlayButton('Replay'), 'the victory panel offers to replay the level');
+  assert.doesNotMatch(
+    elements.get('overlay-body').textContent,
+    /room/,
+    'a solo victory claims a room was told about it',
+  );
+  hud.showVictory({ remote: true, ...quiet });
+  assert.match(
+    elements.get('overlay-body').textContent,
+    /room has been told/,
+    'a multiworld victory does not say the room knows',
+  );
+
+  // And the dress comes off again. The panels replace one another in place
+  // without the overlay being hidden in between, so a card left wearing it
+  // would turn the next level select gold and call it a win.
+  hud.showResult(Status.WON, actions);
+  assert.ok(
+    !elements.get('overlay-card').classList.contains('victory'),
+    'the victory dress outlived the victory panel',
+  );
+
   hud.engine = real;
   hud.hideOverlay();
+}
+
+// The testing menu, and the gesture that reaches it.
+//
+// Reachable in the shipped game, so it is worth knowing both that twenty taps
+// open it and that nineteen do not: a gesture that fires early would put a
+// cheat menu in front of somebody poking at the goals.
+{
+  const { engine } = window.twiddlygems;
+  const objectives = elements.get('objectives');
+  const overlay = elements.get('overlay');
+  const options = elements.get('debug-options');
+  // The chips themselves, since the listener asks whether the tap landed
+  // inside the list rather than on the list itself.
+  const chip = objectives.children[0];
+  assert.ok(chip, 'the level in play has no objective to tap on');
+
+  const tap = (target) => gesture('pointerdown', { target });
+  for (let i = 0; i < 19; i += 1) {
+    tap(chip);
+  }
+  assert.ok(
+    overlay.classList.contains('hidden'),
+    'nineteen taps already opened the testing menu',
+  );
+
+  // And the count is consecutive taps, not taps ever made: one anywhere else
+  // puts it back to nothing, which is what stops a session accumulating its
+  // way in.
+  tap(elements.get('score-box'));
+  for (let i = 0; i < 19; i += 1) {
+    tap(chip);
+  }
+  assert.ok(
+    overlay.classList.contains('hidden'),
+    'a tap somewhere else did not reset the count toward the testing menu',
+  );
+
+  tap(chip);
+  assert.ok(!overlay.classList.contains('hidden'), 'twenty taps did not open the testing menu');
+  assert.ok(!options.classList.contains('hidden'), 'the testing menu has no switches');
+  assert.equal(
+    options.children.length,
+    5,
+    'the testing menu does not offer the five shortcuts it is meant to',
+  );
+
+  // Nothing is applied until it is closed, so a tester can change their mind.
+  const before = engine.unlocked;
+  const unlockAll = options.children.find((row) =>
+    row.children.some((part) => part.textContent === 'Unlock all levels'),
+  );
+  assert.ok(unlockAll, 'the testing menu cannot unlock the ladder');
+  click(unlockAll, 'the switch does not respond');
+  assert.equal(engine.unlocked, before, 'the testing menu applied a switch before it was closed');
+
+  click(overlayButton('Close'), 'the testing menu has no way out');
+  assert.equal(
+    engine.unlocked,
+    engine.levelCount,
+    'closing the testing menu did not open the ladder',
+  );
+  assert.ok(overlay.classList.contains('hidden'), 'the testing menu stayed up after closing');
+  assert.ok(options.classList.contains('hidden'), 'the switches outlived the menu');
+}
+
+// The seam the victory screen hangs on: the engine deciding the run is over.
+//
+// The panel is checked above and the trigger reads `goalMet` each frame, so
+// between them the one thing neither proves is that the flag ever turns over.
+// A screen watching a flag stuck at false never appears, and nothing else in
+// the game asks the question, so nothing else would notice.
+//
+// On a run of its own, because this hands a run its whole ladder and the run
+// being played still has assertions of its own to come.
+{
+  const { engine } = window.twiddlygems;
+  const fresh = new (Object.getPrototypeOf(engine).constructor)(engine.wasm, SEED);
+  assert.ok(!fresh.goalMet, 'a run that has done nothing already counts as finished');
+
+  // `Location::LevelClear(index)` is numbered by its own index, which is the
+  // engine's stable id scheme rather than an accident: the ids go into saves,
+  // so they cannot be renumbered. Everything but the last, first, because the
+  // goal this asks about is every level and a run one level short of it has
+  // not finished.
+  for (let index = 0; index < fresh.levelCount - 1; index += 1) {
+    fresh.restore(index);
+  }
+  assert.ok(
+    !fresh.goalMet,
+    'a run one level short of the whole ladder already counts as finished',
+  );
+
+  fresh.restore(fresh.levelCount - 1);
+  assert.ok(fresh.goalMet, 'clearing every level does not finish the run');
 }
 
 // Ending a run from that same menu asks first, then throws the progress away

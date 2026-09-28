@@ -449,6 +449,58 @@ button[disabled] { opacity: 0.4; cursor: default; }
 #overlay-body { margin: 0 0 18px; color: var(--ink-dim); }
 #overlay-buttons { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
+/* The run's goal met, which happens once. Gold rather than the panel's own
+   purple, and lit from behind, so that the one panel that is not a report on a
+   level does not look like one. */
+#overlay-card.victory {
+  background: linear-gradient(170deg, #35275a, var(--panel) 62%);
+  border: 1px solid rgba(255, 209, 102, 0.45);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 40px rgba(255, 194, 51, 0.18);
+}
+#overlay-card.victory #overlay-title {
+  font-size: 1.9rem;
+  color: var(--tier-gold);
+  /* Not a text-shadow on a solid color: this is the glow the gold sits in. */
+  text-shadow: 0 0 18px rgba(255, 194, 51, 0.5);
+}
+#overlay-card.victory #overlay-body { color: var(--ink); }
+
+/* ---- the testing menu ---- */
+
+#debug-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 18px;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* Rows rather than a grid: each one is a sentence and a note under it, and a
+   tester reads down the list once and then aims. */
+.debug-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--socket);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.debug-option.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--socket));
+}
+.debug-label { font-weight: 600; }
+.debug-hint { font-size: 0.8rem; color: var(--ink-dim); }
+/* A mark as well as the color, so which rows are armed does not rest on a
+   tint that a phone in sunlight may not show at all. */
+.debug-option.on .debug-label::after { content: ' [on]'; color: var(--accent); }
+
 /* ---- tracker ---- */
 
 #tracker {

@@ -447,6 +447,15 @@ pub struct Game {
     /// The board settles several times during the flourish that follows, and
     /// only the first of those is news.
     announced_clear: bool,
+    /// Whether the level has been declared won from outside, regardless of
+    /// what its objectives actually say; see [`Game::force_clear`].
+    ///
+    /// A flag rather than filling in the progress each objective reads,
+    /// because not every objective is counted the same way: the jelly counter
+    /// is recomputed from the board on every settle, so a number written into
+    /// it is gone again before anything looks at it. What every objective does
+    /// go through is [`Game::objectives_met`], so that is where to say so.
+    forced_clear: bool,
     /// How many gems the player's last swap matched, or 0 for a swap that
     /// matched nothing.
     ///
@@ -513,6 +522,7 @@ impl Game {
             selected: None,
             warned_low_moves: false,
             announced_clear: false,
+            forced_clear: false,
             swap_match: 0,
             tallied: false,
             goal_hold_ms: 0.0,
@@ -557,6 +567,9 @@ impl Game {
         self.selected = None;
         self.warned_low_moves = false;
         self.announced_clear = false;
+        // Deliberately cleared with the rest: a level handed a win from the
+        // debug menu and then replayed is an ordinary level again.
+        self.forced_clear = false;
         self.swap_match = 0;
         self.tallied = false;
         self.events.clear();
@@ -817,6 +830,18 @@ impl Game {
     /// covers. Events from this step are readable afterwards via [`Game::events`].
     pub fn update(&mut self, dt_ms: f32) {
         self.events.clear();
+        // A win handed to the level from outside is taken here rather than
+        // where it was asked for, and for the same reason the warning below is
+        // taken here: an idle board runs none of the phase loop, so a settle
+        // has to be run at it. The clear cannot be settled where
+        // [`Game::force_clear`] is called either, because this line has
+        // already thrown that frame's events away by the time anybody drains
+        // them, and the clear would be announced to nobody. Once, guarded on
+        // the announcement rather than on the flag, which stays set so the
+        // objectives keep reading met through the flourish that follows.
+        if self.forced_clear && !self.announced_clear {
+            self.settle();
+        }
         // Before the phase loop, because an idle board runs none of it and a
         // level that opens on its last few moves has to say so anyway.
         self.announce_low_moves();
@@ -1916,7 +1941,58 @@ impl Game {
     }
 
     pub fn objectives_met(&self) -> bool {
-        self.spec.objectives.iter().all(|o| o.is_met(&self.progress))
+        self.forced_clear || self.spec.objectives.iter().all(|o| o.is_met(&self.progress))
+    }
+
+    /// What one objective should show as having, which is all of it once the
+    /// level has been handed a win.
+    ///
+    /// The chips read this rather than [`Objective::reached`] directly, so a
+    /// forced clear does not leave the board announcing a win over a row of
+    /// goals still saying they are short. The progress itself is left alone:
+    /// it is what the score marks and `moves_spare` are read from, and writing
+    /// a win into it would make a debug clear indistinguishable from a real
+    /// one afterwards.
+    pub fn objective_have(&self, index: usize) -> u32 {
+        let Some(objective) = self.spec.objectives.get(index) else {
+            return 0;
+        };
+        if self.forced_clear {
+            return objective.needed(&self.progress);
+        }
+        objective.reached(&self.progress)
+    }
+
+    /// Debug: declare this level won wherever the board happens to be.
+    ///
+    /// For the testing menu, which needs a way to reach the end of a level
+    /// without playing it. Everything after this is the ordinary path: the
+    /// settle notices the level is over, announces it once, takes the beat for
+    /// the goals, cashes the leftover moves in and runs the flourish, exactly
+    /// as it would after a real winning move. Nothing here reaches past
+    /// [`Game::objectives_met`], which is the point: a shortcut that skipped
+    /// the settle would be testing something the game never does.
+    /// Arms it only. The settle it needs is run by the next [`Game::update`],
+    /// for the reason given there.
+    pub fn force_clear(&mut self) {
+        if self.status != Status::Playing {
+            return;
+        }
+        self.forced_clear = true;
+    }
+
+    /// Debug: hand the level a different number of moves.
+    ///
+    /// The total moves as well as the moves left, because the two are read
+    /// against each other: the low-moves warning and the HUD both ask how far
+    /// through its budget a level is, and a level showing 99 of 8 is a worse
+    /// lie than the one being told already.
+    pub fn set_moves(&mut self, moves: u32) {
+        self.spec.moves = moves;
+        self.moves_left = moves;
+        // Otherwise a level topped back up stays silent about running low,
+        // having already warned once on the way down.
+        self.warned_low_moves = false;
     }
 
     pub fn objectives(&self) -> &[Objective] {
@@ -4898,6 +4974,86 @@ mod tests {
         let _ = settle(&mut game);
         assert_eq!(game.status(), Status::Won);
         assert!(game.events().iter().any(|e| e.kind == EV_WON));
+    }
+
+    #[test]
+    fn a_forced_clear_wins_the_level_the_ordinary_way() {
+        // What the testing menu does. The point is not that the status turns
+        // over but that it turns over through the usual path: the level is
+        // announced cleared and the leftover moves are cashed in, because a
+        // shortcut that skipped the settle would be testing something the
+        // game never does.
+        let mut level = spec(9, 9, 6, 30);
+        // Out of reach, so nothing but the force can have won this.
+        level.objectives = vec![Objective::Score(u32::MAX)];
+        let mut game = Game::new(level, 604);
+        assert!(!game.objectives_met(), "the level was already over before it began");
+
+        game.force_clear();
+        assert_eq!(game.phase(), Phase::Idle, "the clear was settled before an update ran");
+        // The first update is what settles it, and its events are the ones
+        // carrying the announcement: `settle` below starts by reading the
+        // phase, so anything already in the buffer has to be taken first.
+        game.update(16.0);
+        let mut events = game.events().to_vec();
+        events.extend(settle(&mut game));
+
+        assert_eq!(game.status(), Status::Won);
+        assert!(events.iter().any(|e| e.kind == EV_CLEARED), "the clear was never announced");
+        assert_eq!(game.moves_left, 0, "the moves left over were never spent");
+        assert!(
+            events.iter().any(|e| e.kind == EV_CASH_IN),
+            "the flourish never ran, so there was nothing to watch",
+        );
+    }
+
+    #[test]
+    fn a_forced_clear_fills_the_goals_in_without_rewriting_the_progress() {
+        // The chips have to agree with the board: a win announced over a row
+        // of goals still saying they are short reads as a bug. The progress
+        // itself is left alone, because the score marks are read from it and a
+        // forced clear must not look like a real one afterwards.
+        let mut level = spec(6, 6, 6, 30);
+        level.objectives = vec![Objective::Score(50_000)];
+        let mut game = Game::new(level, 605);
+        assert_eq!(game.objective_have(0), 0);
+
+        game.force_clear();
+        assert_eq!(game.objective_have(0), 50_000, "the goal still reads short of its target");
+        assert!(game.progress.score < 50_000, "the forced clear wrote a score nobody scored");
+    }
+
+    #[test]
+    fn a_replayed_level_forgets_it_was_handed_a_win() {
+        let mut level = spec(6, 6, 6, 30);
+        level.objectives = vec![Objective::Score(u32::MAX)];
+        let mut game = Game::new(level, 606);
+        game.force_clear();
+        game.update(16.0);
+        let _ = settle(&mut game);
+        assert_eq!(game.status(), Status::Won);
+
+        game.restart();
+        assert!(!game.objectives_met(), "the level is still holding the win it was handed");
+        assert_eq!(game.status(), Status::Playing);
+    }
+
+    #[test]
+    fn setting_the_moves_moves_the_total_as_well() {
+        // The two are read against each other: the HUD and the low-moves
+        // warning both ask how far through its budget a level is, so a level
+        // left showing 99 of 8 would be a worse lie than the one being told.
+        let mut level = spec(6, 6, 6, 8);
+        level.objectives = vec![Objective::Score(u32::MAX)];
+        let mut game = Game::new(level, 607);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+        let _ = settle(&mut game);
+        assert!(game.moves_left < 8, "the swap cost nothing, so this proves nothing");
+
+        game.set_moves(99);
+        assert_eq!(game.moves_left, 99);
+        assert_eq!(game.spec.moves, 99, "the level still says it is an eight move level");
     }
 
     #[test]

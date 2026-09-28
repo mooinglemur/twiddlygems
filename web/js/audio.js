@@ -171,7 +171,7 @@ export class Audio {
     let longest = 0;
     const nodes = [];
     for (const layer of layersFor(sound, stage)) {
-      const { span, tail } = this.playLayer(layer, at, level, pan, detune, note, stretch);
+      const { span, tail } = this.playLayer(layer, at, { level, pan, detune, note, stretch });
       longest = Math.max(longest, span);
       nodes.push(tail);
     }
@@ -181,6 +181,124 @@ export class Audio {
     live.push({ endsAt: at + longest + 0.05, nodes });
     this.voices.set(name, live);
     return true;
+  }
+
+  /**
+   * Plays a written figure: several parts at once, each a list of notes placed
+   * in beats rather than in seconds.
+   *
+   * Beats and not seconds because a tune is edited by ear. Written in seconds,
+   * lengthening one note means retyping the start of every note after it, and
+   * the table stops being something that can be read down a column. Here a note
+   * says where it falls and how long it is held, and `tempo` moves all of it
+   * at once.
+   *
+   * Not built on `play`, though it plays the same sounds out of the same bank.
+   * Every note of a figure is scheduled in one go, so by the time the last is
+   * asked for the first is still counted as sounding, and the voice cap, which
+   * is there to stop a cascade piling up twenty copies of one burst, would
+   * quietly drop the tune after its tenth note. A figure is one event however
+   * many notes are in it, so it is booked as a single voice under `name`, and
+   * the cap then means the thing worth capping: how many of this tune may run
+   * at once.
+   *
+   * Everything goes through a gain node of its own rather than straight to the
+   * master bus, so [`hush`] can take the figure away when whatever started it
+   * is dismissed. A tune outlasts the screen it belongs to, which no other
+   * sound here does.
+   *
+   * Hands back how long it runs, in seconds, so a caller can hold a screen
+   * open for exactly as long as it sounds. Zero means nothing was played.
+   */
+  sequence(parts, { tempo = 120, delay = 0, gain = 1, name = 'tune', cap = 1 } = {}) {
+    if (!this.enabled || !this.ready) {
+      return 0;
+    }
+    this.sweep();
+    const live = this.voices.get(name) ?? [];
+    if (live.length >= cap) {
+      return 0;
+    }
+
+    const perBeat = 60 / Math.max(1, tempo);
+    const at = this.ctx.currentTime + Math.max(0, delay);
+    const submix = this.ctx.createGain();
+    submix.gain.value = 1;
+    submix.connect(this.master);
+
+    let longest = 0;
+    let sounded = false;
+    for (const part of parts) {
+      const sound = this.sounds[part.sound];
+      if (!sound) {
+        continue;
+      }
+      const layers = layersFor(sound, 0);
+      for (const [note, beat, beats, level = 1] of part.notes) {
+        const offset = Math.max(0, beat) * perBeat;
+        // The note's written length is what the voice is stretched to fill, so
+        // a half note rings twice as long as a quarter without the sound
+        // needing a second definition. Same arithmetic as `play`'s `duration`.
+        const held = Math.max(0.05, Math.max(0, beats) * perBeat);
+        const stretch = sound.duration ? held / sound.duration : 1;
+        const loud = (sound.gain ?? 1) * gain * (part.gain ?? 1) * level;
+        for (const layer of layers) {
+          const { span } = this.playLayer(layer, at + offset, {
+            level: loud,
+            pan: part.pan ?? 0,
+            detune: part.detune ?? 0,
+            note,
+            stretch,
+            into: submix,
+          });
+          longest = Math.max(longest, offset + span);
+          sounded = true;
+        }
+      }
+    }
+    if (!sounded) {
+      submix.disconnect();
+      return 0;
+    }
+
+    this.started += 1;
+    // One node to unplug rather than one per note. `sweep` does it on the next
+    // sound the game plays, which on a screen that has stopped the game may be
+    // a while; that is a few hundred finished oscillators sitting idle behind
+    // one gain node, which costs nothing but is why `hush` exists for the case
+    // where it is still sounding.
+    live.push({ endsAt: at + longest + 0.05, nodes: [submix] });
+    this.voices.set(name, live);
+    return longest;
+  }
+
+  /**
+   * Takes a named figure away, fading rather than cutting.
+   *
+   * For a tune that outlives its screen: closing the panel that started it
+   * should stop it, and a sequence is long enough that letting it play on over
+   * whatever comes next would be worse than not playing it at all. The fade is
+   * short but not instant, because switching a gain to zero under a sounding
+   * oscillator is a click.
+   */
+  hush(name, over = 0.25) {
+    const live = this.voices.get(name);
+    if (!this.ctx || !live) {
+      return;
+    }
+    const now = this.ctx.currentTime;
+    for (const voice of live) {
+      for (const node of voice.nodes) {
+        if (node.gain) {
+          node.gain.cancelScheduledValues(now);
+          node.gain.setValueAtTime(Math.max(0.0001, node.gain.value), now);
+          node.gain.exponentialRampToValueAtTime(0.0001, now + Math.max(0.01, over));
+        }
+      }
+      // Left connected until the fade has run, and swept away after it the
+      // same way everything else is: by the clock, never by a timer.
+      voice.endsAt = now + Math.max(0.01, over) + 0.05;
+    }
   }
 
   /// Forgets the voices that have finished and unplugs what they were built
@@ -223,8 +341,13 @@ export class Audio {
   /// Builds one layer's little graph and schedules it.
   ///
   /// Hands back how long it runs and the node on the end of it, which is what
-  /// `sweep` unplugs from the master bus once it has.
-  playLayer(layer, at, level, pan, detune, noteOverride, stretch = 1) {
+  /// `sweep` unplugs from the master bus once it has. `into` is where that end
+  /// is plugged, so a figure can run through a submix of its own.
+  playLayer(
+    layer,
+    at,
+    { level = 1, pan = 0, detune = 0, note: noteOverride = null, stretch = 1, into = null } = {},
+  ) {
     const ctx = this.ctx;
     const jitter = layer.jitter ?? {};
     const wobble = (amount) => (amount ? 1 + (Math.random() * 2 - 1) * amount : 1);
@@ -295,7 +418,14 @@ export class Audio {
       } else if (to !== null) {
         source.frequency.exponentialRampToValueAtTime(Math.max(1, to), start + glide);
       }
-      source.detune.value = detune + (jitter.detune ? (Math.random() * 2 - 1) * 1200 * jitter.detune : 0);
+      // A layer's own `detune` is in cents and rides on top of the caller's,
+      // which is how one voice holds more than one pitch when the note is
+      // handed to it from outside: 1200 is the octave above, and a handful is
+      // the shimmer that makes two oscillators read as one wide one.
+      source.detune.value =
+        detune +
+        (layer.detune ?? 0) +
+        (jitter.detune ? (Math.random() * 2 - 1) * 1200 * jitter.detune : 0);
     }
 
     let node = source;
@@ -340,7 +470,7 @@ export class Audio {
       amp.connect(panner);
       tail = panner;
     }
-    tail.connect(this.master);
+    tail.connect(into ?? this.master);
 
     source.start(start, layer.source === 'noise' ? Math.random() * 1.5 : undefined);
     source.stop(start + duration + 0.01);

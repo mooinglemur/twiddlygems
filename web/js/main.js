@@ -5,6 +5,7 @@
 import { AIMED, Consumable, EventKind, Special, loadEngine, Phase, Status } from './engine.js';
 import { ArchipelagoClient, State as Link } from './archipelago.js';
 import { Audio } from './audio.js';
+import { STEAMBOAT, VICTORY_PARTS } from './sounds.js';
 import { GOAL_EFFECT_MS, Renderer } from './render.js';
 import { attachInput } from './input.js';
 import { Hud } from './hud.js';
@@ -61,6 +62,47 @@ const WORTH_SAYING = new Set([
 const HINT_DELAY_MS = 6000;
 /** A backgrounded tab hands back one enormous frame; cap what we feed in. */
 const MAX_FRAME_MS = 100;
+/**
+ * The voice the victory tune is booked under, so it can be taken away again.
+ *
+ * A name rather than a handle because a figure is one voice however many notes
+ * it has: see `Audio.sequence`.
+ */
+const VICTORY_TUNE = 'victory';
+/**
+ * How long the screen is up before the tune starts.
+ *
+ * The panel should land first. Starting them together reads as the tune being
+ * something the board did, rather than as the screen having its own music.
+ */
+const VICTORY_LEAD_IN = 0.35;
+/**
+ * How many taps on an objective open the testing menu.
+ *
+ * High enough that nobody reaches it by fidgeting, and on something that is
+ * already on screen in every run, so a phone can get there without a keyboard
+ * or a query string. The count resets on a tap anywhere else, which is what
+ * makes it a deliberate act rather than a total accumulated over a session.
+ */
+const DEBUG_TAPS = 20;
+/**
+ * What the testing menu offers, and the order it is applied in.
+ *
+ * The order is this list's, not the order they were tapped: `clear` ends the
+ * level, so anything that has to happen to a level being played has to happen
+ * before it, and `moves` has to come after anything that deals a fresh board.
+ */
+const DEBUG_CHOICES = [
+  { key: 'levels', label: 'Unlock all levels', hint: 'Opens the whole ladder' },
+  { key: 'specials', label: 'Unlock all specials', hint: 'All five, on the next board' },
+  { key: 'moves', label: 'Set moves to 99', hint: 'This level only' },
+  { key: 'inventory', label: 'Fill inventory', hint: '99 of every bonus item' },
+  { key: 'clear', label: 'Set objectives as met', hint: 'Wins this level now' },
+];
+/** What "fill the inventory" fills it to. */
+const DEBUG_CONSUMABLES = 99;
+/** What "set moves to 99" sets them to. */
+const DEBUG_MOVES = 99;
 
 const dom = {
   app: document.getElementById('app'),
@@ -85,9 +127,11 @@ const dom = {
   inventory: document.getElementById('inventory'),
   feed: document.getElementById('feed'),
   overlay: document.getElementById('overlay'),
+  overlayCard: document.getElementById('overlay-card'),
   overlayTitle: document.getElementById('overlay-title'),
   overlayBody: document.getElementById('overlay-body'),
   overlayButtons: document.getElementById('overlay-buttons'),
+  debugOptions: document.getElementById('debug-options'),
   tracker: document.getElementById('tracker'),
   trackerItems: document.getElementById('tracker-items'),
   levelList: document.getElementById('level-list'),
@@ -488,6 +532,22 @@ async function boot() {
   let hintAt = performance.now() + HINT_DELAY_MS;
   let resultShown = false;
   /**
+   * Whether the run's goal was already met when this frame began, and whether
+   * the clear that met it still owes the player a victory screen.
+   *
+   * An edge rather than a flag anybody writes down. The victory screen belongs
+   * to the one clear that meets the goal, so what has to be recognized is the
+   * moment it becomes true, and a run whose goal was already met when the page
+   * loaded has had its moment. Reading it off the engine each frame means no
+   * new state in the save and nothing to keep in step with a reconnection: the
+   * engine is asked, rather than the page remembering.
+   *
+   * `goalOwed` is separate from the edge because the goal is met during the
+   * flourish, while the screen is not shown until the level is over.
+   */
+  let goalWasMet = false;
+  let goalOwed = false;
+  /**
    * Where the page is: 'title' or 'setup' or 'connect' while a menu is up,
    * 'solo' or 'multiworld' once a run is being played.
    *
@@ -520,6 +580,20 @@ async function boot() {
     if (mode !== 'multiworld') {
       writeSave(engine, seed);
     }
+  };
+
+  /**
+   * Takes the goal as read where the run stands now.
+   *
+   * Called as a run begins, so that a solo save loaded with its goal long
+   * since met, or a multiworld slot rejoined after finishing, does not open on
+   * a victory screen for something that happened days ago. The screen is for
+   * the moment the goal falls, and that moment has to be watched for rather
+   * than inferred from the goal being true.
+   */
+  const armGoalWatch = () => {
+    goalWasMet = engine.goalMet;
+    goalOwed = false;
   };
 
   const onLevelChanged = () => {
@@ -568,6 +642,7 @@ async function boot() {
     dom.app.removeAttribute('aria-hidden');
     renderer.layout();
     hintAt = performance.now() + HINT_DELAY_MS;
+    armGoalWatch();
     // Pin the seed now rather than at the first level change, so reloading
     // part way through the opening level deals the same board again.
     saveRun();
@@ -626,6 +701,7 @@ async function boot() {
     hud.disarm();
     resultShown = false;
     hintAt = performance.now() + HINT_DELAY_MS;
+    armGoalWatch();
   };
 
   /**
@@ -812,6 +888,108 @@ async function boot() {
     });
   };
 
+  /**
+   * The run is over and won: the victory panel, and the tune that goes with it.
+   *
+   * The tune is started here rather than from the panel, because the HUD draws
+   * what it is told to and has never made a sound. It is also the one sound in
+   * the game that outlasts what started it, so every way off this screen takes
+   * it away again: twenty seconds of music playing on over the level select
+   * would be worse than not playing it at all.
+   */
+  const showVictory = () => {
+    audio.sequence(VICTORY_PARTS, {
+      tempo: STEAMBOAT.tempo,
+      name: VICTORY_TUNE,
+      delay: VICTORY_LEAD_IN,
+    });
+    const leaving = (go) => () => {
+      audio.hush(VICTORY_TUNE);
+      go();
+    };
+    hud.showVictory({
+      // The only thing the panel says differently for a multiworld, and worth
+      // saying: someone who has just finished their slot wants to know the
+      // room knows. The client sent it on the same clear.
+      remote: mode === 'multiworld',
+      onLevels: leaving(openLevels),
+      onClose: leaving(() => hud.hideOverlay()),
+    });
+  };
+
+  /**
+   * The testing menu, and what its switches do on the way out.
+   *
+   * Applied in `DEBUG_CHOICES` order rather than the order they were tapped,
+   * because two of these interact: a forced clear ends the level, so it has to
+   * be last, and the moves have to be set after anything that deals a board,
+   * since dealing one takes its move count from the level rather than from
+   * whatever the last one was left holding.
+   *
+   * Unlocking the specials re-deals the level, because a special the run did
+   * not hold when the board was built cannot appear on it: the rules a board
+   * is dealt under are fixed when it is dealt. Not when the level is also
+   * being cleared, where a fresh board would throw away the thing being asked
+   * for.
+   */
+  const applyDebug = (chosen) => {
+    const picked = new Set(chosen);
+    hud.hideOverlay();
+    if (picked.has('levels')) {
+      engine.unlockAllLevels();
+    }
+    if (picked.has('specials')) {
+      engine.unlockAllSpecials();
+      if (!picked.has('clear')) {
+        engine.retry();
+        onLevelChanged();
+      }
+    }
+    if (picked.has('moves')) {
+      engine.setMoves(DEBUG_MOVES);
+    }
+    if (picked.has('inventory')) {
+      for (const kind of Object.values(Consumable)) {
+        engine.restoreConsumables(kind, DEBUG_CONSUMABLES);
+      }
+    }
+    // Last, and on its own frame's terms: this hands the level to the ordinary
+    // settle, which announces the clear and starts the flourish.
+    if (picked.has('clear')) {
+      engine.forceClear();
+    }
+    rebuildHud();
+    saveRun();
+  };
+
+  /**
+   * Tapping an objective twenty times over opens the testing menu.
+   *
+   * Counted on the list rather than on a chip, because the chips are rebuilt
+   * every level and a listener on one would go with it. Any objective counts:
+   * a level may have three of them and insisting on the same one would make
+   * the gesture harder on a phone without making it harder to reach by
+   * accident, which twenty taps already handles.
+   */
+  let objectiveTaps = 0;
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (!dom.objectives.contains?.(event.target)) {
+        // Anywhere else at all, which is what "in a row" means.
+        objectiveTaps = 0;
+        return;
+      }
+      objectiveTaps += 1;
+      if (objectiveTaps < DEBUG_TAPS) {
+        return;
+      }
+      objectiveTaps = 0;
+      hud.showDebug(DEBUG_CHOICES, { remote: mode === 'multiworld', onClose: applyDebug });
+    },
+    { capture: true },
+  );
+
   dom.levelsButton.addEventListener('click', openLevels);
 
   // Tapping the score shows what the level can be beaten to; tapping anywhere
@@ -893,6 +1071,15 @@ async function boot() {
       client.poll();
     }
 
+    // The goal falling is watched for here rather than read at the end of the
+    // level, because by then it is only "the goal is met", which is equally
+    // true of every level cleared afterwards. The clear that meets it is the
+    // one frame where it changes.
+    if (!goalWasMet && engine.goalMet) {
+      goalWasMet = true;
+      goalOwed = true;
+    }
+
     if (engine.phase !== Phase.IDLE) {
       hintAt = now + HINT_DELAY_MS;
       if (renderer.hint) {
@@ -910,18 +1097,27 @@ async function boot() {
     if (engine.status !== Status.PLAYING && !resultShown && !hud.overlayVisible) {
       resultShown = true;
       saveRun();
-      hud.showResult(engine.status, {
-        onRetry: () => {
-          engine.retry();
-          onLevelChanged();
-        },
-        onLevels: openLevels,
-        // Leaves the finished board on screen, which is the one thing the
-        // panel is in the way of. It does not come back on its own: the panel
-        // is shown once per attempt, and the way on from here is the level
-        // select or the restart button.
-        onClose: () => hud.hideOverlay(),
-      });
+      if (goalOwed && engine.status === Status.WON) {
+        goalOwed = false;
+        showVictory();
+      } else {
+        // A goal met on a level that was then lost is not a thing that can
+        // happen, but if it ever became one the clear panel is the honest
+        // answer and the victory screen is simply not owed any more.
+        goalOwed = false;
+        hud.showResult(engine.status, {
+          onRetry: () => {
+            engine.retry();
+            onLevelChanged();
+          },
+          onLevels: openLevels,
+          // Leaves the finished board on screen, which is the one thing the
+          // panel is in the way of. It does not come back on its own: the
+          // panel is shown once per attempt, and the way on from here is the
+          // level select or the restart button.
+          onClose: () => hud.hideOverlay(),
+        });
+      }
     }
 
     requestAnimationFrame(frame);

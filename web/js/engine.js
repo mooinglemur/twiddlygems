@@ -635,6 +635,34 @@ export class Engine {
     this.wasm.tg_set_unlocked(this.handle, count);
   }
 
+  // ---- the debug menu ----
+  //
+  // Reachable in the shipped game, by tapping an objective chip twenty times
+  // over. Each of these grants what a run would otherwise have found rather
+  // than writing an answer over the top of it, so a forced run holds what an
+  // ordinary one would and everything downstream still reads true.
+
+  /// Opens every level, whichever way this run's ladder opens.
+  unlockAllLevels() {
+    this.wasm.tg_unlock_all_levels(this.handle);
+  }
+
+  /// Gives the run all five specials.
+  unlockAllSpecials() {
+    this.wasm.tg_unlock_all_specials(this.handle);
+  }
+
+  /// Hands the level in play a different number of moves, total and left.
+  setMoves(moves) {
+    this.wasm.tg_set_moves(this.handle, moves);
+  }
+
+  /// Declares the level in play won, wherever the board is. What follows is
+  /// the ordinary end of a level: the clear, the beat, the flourish.
+  forceClear() {
+    this.wasm.tg_force_clear(this.handle);
+  }
+
   /**
    * Throws the whole run away and opens a fresh session on the same module:
    * a new seed, back to the first level, everything else locked again.

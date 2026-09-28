@@ -14,6 +14,10 @@
 //             sound gets darker as it fades instead of just getting quieter
 //   env       { attack, hold, decay }    seconds; decay falls away exponentially
 //   gain      layer level, 0..1
+//   detune    cents, added to whatever the caller asks for. How one voice
+//             holds more than one pitch when the note is handed to it from
+//             outside: 1200 is the octave above, and a few cents is the
+//             shimmer that makes two oscillators read as one wide one
 //   delay     seconds to wait before this layer starts
 //   pan       -1 left to 1 right, added to whatever the caller asks for
 //   jitter    { frequency, gain, detune } fractional wobble applied per play,
@@ -39,6 +43,11 @@
 // A sound may instead declare `chords` and a `voice`: a list of note lists, and
 // the single layer each note is played through. Playing it with a `stage` picks
 // a chord, so one definition covers a whole progression.
+//
+// A sound meant to be played as a note in a written figure declares `duration`
+// and leaves its own `note` off every layer, because the pitch arrives per note
+// from the tune rather than being part of the sound. `keys`, `glass` and `bass`
+// are the three of those, and `Audio.sequence` is what plays them.
 //
 // Keep levels low. These stack: a rainbow clear can fire twenty at once, and
 // the limiter should be a safety net rather than something the game leans on.
@@ -80,6 +89,121 @@ export const FANFARE = [
   ['E5', 0.18, 0.6, 0.26],
   ['G5', 0.27, 0.66, 0.34],
   ['C6', 0.42, 0.8, 0.95],
+];
+
+// Steamboat Willie
+export const STEAMBOAT = {
+  tempo: 168,
+  melody: [
+    // lead-in
+    ['C4', 0, 1],
+    // bar 1
+    ['G#4', 1, 0.5],
+    ['A4', 1.5, 1],
+    ['F4', 2.5, 1],
+    ['G4', 3.5, 1],
+    ['G#4', 4.5, 0.5],
+    // bar 2
+    ['A4', 5, 0.5],
+    ['G#4', 5.5, 0.5],
+    ['A4', 6, 0.5],
+    ['G#4', 6.5, 0.5],
+    ['A4', 7, 0.5],
+    ['C5', 7.5, 1],
+    // bar 3
+    ['G#4', 9, 0.5],
+    ['A4', 9.5, 1],
+    ['F4', 10.5, 1.5],
+    ['A4', 12.5, 0.5],
+    // bar 4
+    ['C5', 13, 0.5],
+    ['D5', 13.5, 0.5],
+    ['C5', 14, 0.5],
+    ['A4', 14.5, 0.5],
+    ['G4', 15, 1],
+    ['B4', 15.88, 0.25],
+    ['C4', 16, 1],
+    // bar 5
+    ['G#4', 17, 0.5],
+    ['A4', 17.5, 1],
+    ['F4', 18.5, 1],
+    ['G4', 19.5, 1],
+    ['G#4', 20.5, 0.5],
+    // bar 6
+    ['A4', 21, 0.5],
+    ['G#4', 21.5, 0.5],
+    ['A4', 22, 0.5],
+    ['G#4', 22.5, 0.5],
+    ['A4', 23, 0.5],
+    ['C5', 23.5, 1],
+    // bar 7
+    ['D5', 25, 0.5],
+    ['D5', 25.5, 0.5],
+    ['D5', 26, 0.5],
+    ['D5', 26.5, 0.5],
+    ['C5', 27, 0.5],
+    ['A4', 27.5, 0.5],
+    ['F4', 28, 0.5],
+    ['G4', 28.5, 0.5],
+    // bar 8
+    ['A4', 29, 0.5],
+    ['F4', 29.5, 0.5],
+    ['G4', 30, 0.5],
+    ['F4', 30.5, 1],
+  ],
+
+  harmony: [
+    ['F4', 2, 1],
+    ['F4', 4, 1],
+    ['F4', 6, 1],
+    ['F4', 8, 1],
+    ['F4', 10, 1],
+    ['F4', 12, 1],
+    ['F4', 14, 1],
+    ['E4', 16, 1],
+    ['F4', 18, 1],
+    ['F4', 20, 1],
+    ['F4', 22, 1],
+    ['F4', 24, 1],
+    ['F4', 25, 0.5],
+    ['F4', 25.5, 0.5],
+    ['F4', 26, 0.5],
+    ['F4', 26.5, 0.5],
+    ['F4', 28, 1],
+    ['C5', 29, 1],
+    ['Bb4', 30, 1],
+    ['A4', 31, 1],
+  ],
+
+  bass: [
+    ['F3', 1, 1],
+    ['C3', 3, 1],
+    ['F3', 5, 1],
+    ['C3', 7, 1],
+    ['F3', 9, 1],
+    ['C3', 11, 1],
+    ['F3', 13, 1],
+    ['C3', 15, 1],
+    ['F3', 17, 1],
+    ['C3', 19, 1],
+    ['F3', 21, 1],
+    ['C3', 23, 1],
+    ['Bb3', 25, 1],
+    ['C4', 27, 1],
+    ['C4', 29, 1],
+    ['C3', 30, 1],
+    ['F3', 31, 1],
+  ],
+};
+
+/// The parts of [`STEAMBOAT`], ready to hand to `Audio.sequence`.
+///
+/// The two melodic voices are spread a little apart rather than both up the
+/// middle, which is most of what stops three parts reading as one thick one.
+export const VICTORY_PARTS = [
+  { sound: 'keys', notes: STEAMBOAT.melody, pan: -0.12 },
+  { sound: 'glass', notes: STEAMBOAT.harmony, pan: 0.2, gain: 0.85 },
+  { sound: 'bass', notes: STEAMBOAT.bass },
 ];
 
 export const SOUNDS = {
@@ -607,6 +731,109 @@ export const SOUNDS = {
         gain,
         jitter: { frequency: 0.008, gain: 0.06 },
       })),
+    ],
+  },
+
+  // ---- the three voices a written figure is played through ----
+  //
+  // None of these carries a note. A voice is an instrument rather than a
+  // sound: the pitch arrives per note from the tune, and `duration` is what
+  // one note is worth at its natural length, so holding it longer stretches
+  // the ring rather than needing a second definition. See [`STEAMBOAT`].
+  //
+  // Cheerful on purpose, and nearer a slot machine than a piano: fast attacks,
+  // a bright top that darkens as each note rings, and no noise anywhere. The
+  // percussion a fanfare would use is deliberately absent, because three clean
+  // voices carry a tune and a drum only covers it up.
+
+  /// The melody. Two triangles a few cents apart for width, with a square an
+  /// octave over them, short enough to be the strike rather than a note of its
+  /// own.
+  keys: {
+    gain: 0.42,
+    duration: 0.36,
+    layers: [
+      {
+        source: 'triangle',
+        filters: [{ type: 'lowpass', frequency: 4200, q: 0.8, sweep: { to: 900, time: 0.3 } }],
+        env: { attack: 0.004, hold: 0.02, decay: 0.33 },
+        gain: 0.85,
+      },
+      {
+        source: 'triangle',
+        // Seven cents, which is a fifteenth of a semitone: not a chord and not
+        // an out of tune note, just enough beating to give the pair a body a
+        // single oscillator does not have.
+        detune: 7,
+        filters: [{ type: 'lowpass', frequency: 4200, q: 0.8, sweep: { to: 900, time: 0.3 } }],
+        env: { attack: 0.004, hold: 0.02, decay: 0.33 },
+        // Well under the layer above rather than matched with it, which is a
+        // level decision and not a taste one. Seven cents apart is a beat of
+        // about two hertz, so a note shorter than half that beat is either
+        // reinforced or cancelled for its whole length depending on the phase
+        // it happened to start on, and every oscillator here starts on a
+        // random one. Two matched layers made the melody's level a coin flip
+        // per note: measured across the tune it moved by a quarter between
+        // renders and twice came out under the bassline. Carrying the note on
+        // one oscillator and using the second only for shimmer keeps the width
+        // and takes the swing out.
+        gain: 0.3,
+      },
+      {
+        source: 'square',
+        detune: 1200,
+        filters: [{ type: 'lowpass', frequency: 5200, q: 0.7, sweep: { to: 1600, time: 0.12 } }],
+        env: { attack: 0.002, decay: 0.11 },
+        gain: 0.2,
+        // A transient that stretches stops being one, so a held note gets a
+        // longer ring and the same strike.
+        stretch: false,
+      },
+    ],
+  },
+
+  /// The second voice, under the melody's held notes. Rounder and softer, so
+  /// it fills in behind rather than competing for the tune.
+  glass: {
+    gain: 0.22,
+    duration: 0.36,
+    layers: [
+      {
+        source: 'sine',
+        env: { attack: 0.006, hold: 0.03, decay: 0.4 },
+        gain: 0.9,
+      },
+      {
+        source: 'triangle',
+        detune: 1200,
+        filters: [{ type: 'lowpass', frequency: 3200, q: 0.7, sweep: { to: 1200, time: 0.3 } }],
+        env: { attack: 0.004, decay: 0.26 },
+        gain: 0.3,
+      },
+    ],
+  },
+
+  /// The bassline. Dark, and cut off well below the melody so the two never
+  /// argue about the middle of the mix.
+  bass: {
+    gain: 0.26,
+    duration: 0.36,
+    layers: [
+      {
+        source: 'triangle',
+        filters: [{ type: 'lowpass', frequency: 700, q: 0.9, sweep: { to: 180, time: 0.3 } }],
+        env: { attack: 0.005, hold: 0.04, decay: 0.3 },
+        gain: 0.95,
+      },
+      {
+        // The edge on the front of the note, which is what makes a bass
+        // audible on a phone that cannot reproduce its fundamental at all.
+        source: 'square',
+        filters: [{ type: 'lowpass', frequency: 620, q: 0.8, sweep: { to: 260, time: 0.14 } }],
+        env: { attack: 0.003, decay: 0.12 },
+        gain: 0.16,
+        stretch: false,
+      },
     ],
   },
 };

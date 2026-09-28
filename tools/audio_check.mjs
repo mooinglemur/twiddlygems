@@ -91,7 +91,7 @@ const { result } = await send('Runtime.evaluate', {
   expression: `
   (async () => {
     const { Audio } = await import('./js/audio.js');
-    const { SOUNDS, RIFFLE } = await import('./js/sounds.js');
+    const { SOUNDS, RIFFLE, STEAMBOAT, VICTORY_PARTS } = await import('./js/sounds.js');
     const RATE = 48000;
 
     // Renders \`count\` copies of a sound fired at once, through the real chain.
@@ -123,8 +123,16 @@ const { result } = await send('Runtime.evaluate', {
         audio.master.connect(cut);
         cut.connect(ctx.destination);
       }
-      for (let i = 0; i < count; i += 1) {
-        audio.play(name, { pan: (i / Math.max(1, count - 1)) * 1.1 - 0.55, ...opts });
+      // A written figure rather than a single sound: \`name\` may instead be a
+      // list of parts, which is what \`Audio.sequence\` takes. Everything
+      // measured below is the same either way, which is the point of putting
+      // it through the same function.
+      if (Array.isArray(name)) {
+        audio.sequence(name, { tempo: STEAMBOAT.tempo, ...opts });
+      } else {
+        for (let i = 0; i < count; i += 1) {
+          audio.play(name, { pan: (i / Math.max(1, count - 1)) * 1.1 - 0.55, ...opts });
+        }
       }
       const buffer = await ctx.startRendering();
       const left = buffer.getChannelData(0);
@@ -397,6 +405,73 @@ const { result } = await send('Runtime.evaluate', {
       // what the number is for is so he can see what it costs while he tunes
       // it, not so a check can have an opinion about how it should sound.
       fanfare: await render('fanfare', 1, 2.6),
+      // The victory tune. Measured but, like the fanfare, not judged on how it
+      // sounds: that is Troy's ear. What is judged is what a measurement can
+      // actually settle, which is whether three voices playing at once for
+      // twenty seconds stay under the limiter, and whether \`hush\` works.
+      tune: await render(VICTORY_PARTS, 1, 26),
+      // Each voice alone, over the whole tune rather than as one note.
+      //
+      // One note would be quicker and would measure nothing: a voice's peak is
+      // a random variable for the same reason a stack's is, since the two
+      // detuned oscillators in \`keys\` are phase-scattered per note and how
+      // squarely they line up decides it. Read as one note the melody came out
+      // at less than half the level of its own accompaniment, which was the
+      // measurement talking. Across eighty-nine notes the \`rmsBuffer\` figure is
+      // steady, and it is what the parts are balanced against.
+      keys: await render([VICTORY_PARTS[0]], 1, 26),
+      glass: await render([VICTORY_PARTS[1]], 1, 26),
+      bass: await render([VICTORY_PARTS[2]], 1, 26),
+      tuneNotes: VICTORY_PARTS.reduce((n, part) => n + part.notes.length, 0),
+      tuneSeconds: Number(
+        (
+          (Math.max(
+            ...VICTORY_PARTS.flatMap((part) => part.notes.map(([, beat, held]) => beat + held)),
+          ) *
+            60) /
+          STEAMBOAT.tempo
+        ).toFixed(1),
+      ),
+      /**
+       * What is left of the tune a second after it was hushed.
+       *
+       * The one thing about a figure that a measurement can be certain of and
+       * a person cannot check by listening carefully: \`hush\` is what stops
+       * the tune playing on over whatever the player went to next, and a
+       * sequence is scheduled all at once, so nothing else in the graph will
+       * stop it. Against a control that was not hushed, so the number is a
+       * ratio and not a level that moves whenever a gain does.
+       */
+      hushed: await (async () => {
+        const window = (buffer, from) => {
+          const left = buffer.getChannelData(0);
+          const right = buffer.getChannelData(1);
+          let sum = 0;
+          for (let i = Math.floor(from * RATE); i < left.length; i += 1) {
+            sum += left[i] * left[i] + right[i] * right[i];
+          }
+          return Math.sqrt(sum / Math.max(1, left.length - Math.floor(from * RATE)));
+        };
+        const run = async (stop) => {
+          const ctx = new OfflineAudioContext(2, RATE * 6, RATE);
+          const audio = new Audio(SOUNDS);
+          audio.attach(ctx);
+          audio.master.disconnect();
+          audio.master.connect(ctx.destination);
+          audio.sequence(VICTORY_PARTS, { tempo: STEAMBOAT.tempo, name: 'victory' });
+          if (stop) {
+            audio.hush('victory', 0.25);
+          }
+          return window(await ctx.startRendering(), 1);
+        };
+        const playing = await run(false);
+        const stopped = await run(true);
+        return {
+          playing: Number(playing.toFixed(6)),
+          stopped: Number(stopped.toFixed(6)),
+          ratio: Number((stopped / Math.max(1e-9, playing)).toFixed(5)),
+        };
+      })(),
       // Read from the limiter itself, so this check cannot drift out of step
       // with the thing it is checking against.
       limiterDb: (() => {
@@ -453,6 +528,10 @@ for (const [label, key] of [
   ['chime 1/12', 'chimeFirst'],
   ['chime 12/12', 'chimeLast'],
   ['fanfare', 'fanfare'],
+  ['keys', 'keys'],
+  ['glass', 'glass'],
+  ['bass', 'bass'],
+  ['tune', 'tune'],
   ['glide plain', 'steadyTone'],
   ['glide waver', 'waveryTone'],
   ['glide wild', 'wildTone'],
@@ -727,13 +806,85 @@ if (stats.boomThroughPhone < 0.25) {
   stop();
   process.exit(1);
 }
+// Three voices playing at once for twenty seconds is the one thing in the game
+// that sustains, so unlike a cascade it is not the limiter's to catch: it would
+// be pumping the whole tune rather than meeting one transient.
+if (stats.tune.peak > LIMITER_THRESHOLD) {
+  console.error(
+    `\nFAIL: the victory tune peaks ${stats.tune.peak}, over the limiter at ` +
+      `${LIMITER_THRESHOLD}. A sustained figure should not be leaning on it. ` +
+      `Voices alone: keys ${stats.keys.peak}, glass ${stats.glass.peak}, bass ${stats.bass.peak}.`,
+  );
+  stop();
+  process.exit(1);
+}
+// And it must be audible, because a tune mixed into nothing is the same bug as
+// one that never played and is much harder to notice.
+if (stats.tune.peak < 0.08) {
+  console.error(`\nFAIL: the victory tune peaks ${stats.tune.peak}, which is barely there.`);
+  stop();
+  process.exit(1);
+}
+// The figure has to actually last: a sequencer that scheduled every note at
+// beat zero would still play, still measure loud, and be over in a second.
+if (stats.tune.ms < stats.tuneSeconds * 900) {
+  console.error(
+    `\nFAIL: the tune is written to run ${stats.tuneSeconds}s but sounded for ` +
+      `${(stats.tune.ms / 1000).toFixed(1)}s. The beats are not being spread out.`,
+  );
+  stop();
+  process.exit(1);
+}
+// The melody has to be the loudest thing in the arrangement. Obvious, easy to
+// lose while tuning a gain somewhere, and inaudible as a fault until someone
+// notices the tune sounds oddly bottom-heavy without being able to say why.
+//
+// By a margin rather than by any amount. A voice's level still varies a little
+// between renders, because each note's oscillators start on a random phase, so
+// "ahead by a hair on this run" is not a property of the arrangement. The
+// margin is what makes the check about the mix instead of about the render.
+const MELODY_MARGIN = 1.15;
+const accompaniment = Math.max(stats.glass.rmsBuffer, stats.bass.rmsBuffer);
+if (stats.keys.rmsBuffer < accompaniment * MELODY_MARGIN) {
+  console.error(
+    `\nFAIL: the melody does not lead the victory tune by the ${MELODY_MARGIN}x asked for. ` +
+      `keys ${stats.keys.rmsBuffer}, glass ${stats.glass.rmsBuffer}, bass ${stats.bass.rmsBuffer}.`,
+  );
+  stop();
+  process.exit(1);
+}
+// `hush` is what stops it playing on over whatever the player went to next.
+//
+// The control first. The check below is a ratio, so two silent renders would
+// divide to zero and pass it while proving nothing at all: what makes the
+// ratio mean something is that the tune really was sounding a second in when
+// it was left alone.
+if (stats.hushed.playing < 0.005) {
+  console.error(
+    `\nFAIL: the un-hushed control is silent a second in (${stats.hushed.playing}), so the ` +
+      `hush check below would pass whatever hush did.`,
+  );
+  stop();
+  process.exit(1);
+}
+if (stats.hushed.ratio > 0.02) {
+  console.error(
+    `\nFAIL: a second after being hushed the tune is still at ` +
+      `${(stats.hushed.ratio * 100).toFixed(1)}% of its level. It has to stop.`,
+  );
+  stop();
+  process.exit(1);
+}
 console.log(
   `\naudio ok: loudest stack peaks ${loudest.toFixed(3)} (limiter at ${LIMITER_THRESHOLD}); ` +
     `the pop darkens ${stats.one.early} -> ${stats.one.late}; ` +
     `${(stats.boomThroughPhone * 100).toFixed(0)}% of the boom and ` +
     `${(stats.thudThroughPhone * 100).toFixed(0)}% of the thud survive a phone speaker; ` +
     `the waver works (${stats.steadyTone.wobble} plain, ${stats.wildTone.wobble} at 40% depth) ` +
-    `and is not a vibrato (${stats.waveryTone.wobble} as shipped)`,
+    `and is not a vibrato (${stats.waveryTone.wobble} as shipped); ` +
+    `the victory tune runs ${stats.tuneSeconds}s of ${stats.tuneNotes} notes across three ` +
+    `voices, peaking ${stats.tune.peak}, and hushes to ` +
+    `${(stats.hushed.ratio * 100).toFixed(2)}%`,
 );
 
 socket.close();
