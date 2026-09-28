@@ -455,3 +455,88 @@ class TestGoldEverywhereIsTheGoal(TwiddlyGemsTestBase):
         self.assertBeatable(False)
         self.collect_all_but([])
         self.assertBeatable(True)
+
+
+class TestWhatTheGameIsTold(TwiddlyGemsTestBase):
+    """The slot data, which is everything a client needs and nothing it keeps.
+
+    A browser has no memory of a seed it has never seen, and should need none
+    for a seed it has. Whatever is missing here is something the player would
+    have to be asked for or something a client would have to write down, and
+    both of those are ways to be wrong later.
+    """
+
+    options: dict = {}
+
+    def test_every_setting_crosses_the_wire(self) -> None:
+        # By the engine's keys, one per line of its own settings table, so a
+        # client can walk that table and set each one without knowing what any
+        # of them mean. A setting the engine grows later has to arrive here on
+        # its own or that stops being true.
+        sent = self.world.fill_slot_data()["options"]
+        expected = set()
+        for setting in SETTINGS:
+            if setting["kind"] == "weights":
+                expected.update(weight["key"] for weight in setting["weights"])
+            else:
+                expected.add(setting["key"])
+        self.assertEqual(set(sent), expected)
+        self.assertTrue(all(isinstance(value, int) for value in sent.values()))
+
+    def test_the_settings_sent_are_the_ones_the_world_was_built_with(self) -> None:
+        sent = self.world.fill_slot_data()["options"]
+        self.assertEqual(sent["goal"], self.world.options.goal.value)
+        self.assertEqual(sent["progressive_levels"], 1, "the default is an item ladder")
+        # And the weights, which are one option here and four settings there.
+        self.assertEqual(sent["rocket"], 50)
+        self.assertEqual(sent["rocket_cluster"], 50)
+
+    def test_the_gems_a_level_carries_are_sent_as_well_as_derivable(self) -> None:
+        # Sent on purpose although both sides can work it out, because the two
+        # working it out differently is a silent failure: the board would spawn
+        # gems for locations this seed does not have.
+        data = self.world.fill_slot_data()
+        self.assertEqual(data["ap_gems_per_level"], self.world._ap_gems_per_level())
+
+    def test_the_ladder_is_named(self) -> None:
+        self.assertEqual(self.world.fill_slot_data()["levels"], LEVELS)
+
+
+class TestWhatAnUnusualSlotIsTold(TwiddlyGemsTestBase):
+    """The same, for a run that asked for something other than the defaults.
+
+    The pair matters more than either alone: a slot data built out of the
+    defaults rather than out of this run's settings would pass every check
+    above and none of these.
+    """
+
+    options = {
+        "goal": "gold_on_every_level",
+        "ap_gems": 4,
+        "ap_gem_odds": 70,
+        "progressive_levels": False,
+        "inventory_items": 12,
+        "inventory_item_chance": {"rocket": 200, "rainbow": 0},
+    }
+
+    def test_it_is_told_what_this_run_asked_for(self) -> None:
+        sent = self.world.fill_slot_data()["options"]
+        self.assertEqual(sent["goal"], 3)
+        self.assertEqual(sent["ap_gems"], 4)
+        self.assertEqual(sent["ap_gem_odds"], 70)
+        self.assertEqual(sent["progressive_levels"], 0)
+        self.assertEqual(sent["inventory_items"], 12)
+
+    def test_a_weight_left_out_of_the_file_is_sent_as_nothing(self) -> None:
+        # Naming some of the lines is how a file asks for only those kinds, so
+        # the two that were left out are zero rather than the default. The run
+        # was built that way; what it is told has to say the same.
+        sent = self.world.fill_slot_data()["options"]
+        self.assertEqual(sent["rocket"], 200)
+        self.assertEqual(sent["rainbow"], 0)
+        self.assertEqual(sent["cross_clear"], 0, "a line nobody wrote came back as the default")
+        self.assertEqual(sent["rocket_cluster"], 0)
+
+    def test_the_gem_count_sent_is_this_run_s_own(self) -> None:
+        data = self.world.fill_slot_data()
+        self.assertEqual(data["ap_gems_per_level"], 4)

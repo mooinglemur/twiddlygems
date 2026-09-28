@@ -354,12 +354,59 @@ class TwiddlyGemsWorld(World):
             self.set_rule(self.get_location(at["name"]), self.rule_from_dict(at["rule"]))
         self.set_completion_rule(self.rule_from_dict(GAME_DATA["goal"]))
 
+    def _settings_sent(self) -> dict[str, int]:
+        """Every setting this run was rolled with, keyed the way the engine keys it.
+
+        The engine is set up by walking its own settings table and handing each
+        line a number, which is what the solo screen does. A client can do the
+        same thing with this: one key here for one line there, so a setting
+        added to the engine later crosses the wire with nothing on either side
+        edited to let it through.
+
+        Which means the keys have to be the engine's, and for one setting they
+        are not the same as ours. A set of relative weights is a single option
+        in a yaml, spelled as a mapping with a line per kind, and four separate
+        settings in the engine, one per kind. So it is expanded back out here.
+
+        Read through `_weight` rather than off the mapping directly, because a
+        missing line means nothing rather than the default: writing one line is
+        how a file asks for only that kind. Two readings of that would be one
+        reading too many, and the run this is describing was built with that
+        one.
+        """
+        sent: dict[str, int] = {}
+        for setting in SETTINGS:
+            if setting["kind"] == "weights":
+                for weight in setting["weights"]:
+                    sent[weight["key"]] = self._weight(
+                        {"option": setting["ap_class"], "key": weight["key"]}
+                    )
+                continue
+            sent[setting["key"]] = int(getattr(self.options, setting["key"]).value)
+        return sent
+
     def fill_slot_data(self) -> dict[str, Any]:
         """What the game itself is told when it connects.
 
-        The ladder, so the client can show the level picker without a second
-        copy of the level list, and nothing else yet: what the run holds comes
-        from the server as items, the same way the solo run gets it from its
-        own placement.
+        Enough to put the run into the shape this seed was generated for,
+        holding nothing else back. A browser that has never seen this seed and
+        a browser coming back to it get the same thing, because none of this is
+        remembered anywhere: the settings decide how many items there are, what
+        the rules ask for and how the ladder opens, and a client that had to
+        keep its own copy of them would be a copy that could go stale.
+
+        `ap_gems_per_level` is the odd one out: it is worked out from the
+        settings rather than set by anybody, so sending it is sending the same
+        fact twice. That is deliberate, and it is a check rather than a source.
+        Both sides derive it, by counting the pool against the places to put
+        it, and if they ever land on different numbers the failure is silent
+        and nasty: the board spawns gems for locations this seed does not have,
+        and the checks behind them go nowhere. Better for a client to compare
+        the two and refuse than to play a game that is subtly not the one that
+        was generated.
         """
-        return {"levels": GAME_DATA["levels"]}
+        return {
+            "levels": GAME_DATA["levels"],
+            "options": self._settings_sent(),
+            "ap_gems_per_level": self._ap_gems_per_level(),
+        }
