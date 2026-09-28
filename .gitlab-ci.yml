@@ -279,9 +279,27 @@ image-twiddlygems:
         fi
       }
   script:
-    # The project's own registry path rather than a sub-image: this produces
-    # exactly one image, so `$CI_REGISTRY_IMAGE` already reads as
-    # `.../twiddlygems`.
-    - IMAGE="$CI_REGISTRY_IMAGE"
+    # A sub-image rather than the project's own path, which reads as stutter
+    # (`.../twiddlygems/twiddlygems`) and is right anyway, for two reasons that
+    # both outlive the stutter.
+    #
+    # It leaves room. If this repository ever ships anything beside the game (a
+    # room server, a tracker, a native build) the bare project path is already
+    # taken, so the second image either goes somewhere inconsistent or the game
+    # moves and every pin referencing it breaks. A sub-image has room for the
+    # second one without anybody revisiting the first.
+    #
+    # And it is what everything else in the cluster this deploys to looks like.
+    # There is a pin script per application over there, the same twelve
+    # functions differing in two constants, and the registry path is one of
+    # them; this being shaped differently is a copy-paste that fails as
+    # `UNAUTHORIZED / authentication required` rather than as a 404, which
+    # reads like a private project and sends whoever hits it somewhere else
+    # entirely.
+    #
+    # Changing this moves where images land. Existing tags do not follow, so
+    # the new path starts empty and whatever pins `:latest` or a `sha-` tag has
+    # to be repointed *after* a pipeline has pushed here at least once.
+    - IMAGE="$CI_REGISTRY_IMAGE/twiddlygems"
     - buildah build -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
     - push_image "$IMAGE"

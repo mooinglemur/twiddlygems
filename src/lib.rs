@@ -7,6 +7,9 @@
 //! to be replaced.
 
 pub mod board;
+/// Compression for the server that ships the built game. Nothing the engine
+/// itself does needs it, and nothing in the wasm module reaches it.
+pub mod deflate;
 pub mod ffi;
 pub mod game;
 pub mod level;

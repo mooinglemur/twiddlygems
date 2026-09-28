@@ -1312,6 +1312,24 @@ const ICON_COLOR = 1;
  * pixels; the backing store is sized for the display the same way the board's
  * sprites are.
  */
+/**
+ * One plain gem, filling a square canvas. What the favicon is made of.
+ *
+ * Exported so the icon is the game's own art rather than a drawing of it: the
+ * ruby in the browser tab comes off exactly the same painter as the ruby on
+ * the board, and stays that way if the palette or the shape ever moves. See
+ * `tools/favicon.mjs`.
+ */
+export function paintGemIcon(canvas, size, colorIndex) {
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, size, size);
+  // A shade under half, so the widest shapes in the palette still have their
+  // points inside the square at sixteen pixels.
+  paintGem(ctx, size / 2, size / 2, size * 0.46, colorIndex, Special.NONE);
+}
+
 export function paintSpecialIcon(canvas, special, size) {
   const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
   canvas.width = Math.round(size * dpr);

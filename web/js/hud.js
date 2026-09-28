@@ -540,12 +540,16 @@ export class Hud {
 
     // Three ways out, and none of them is "onward": where to go next is the
     // level select's business, and with the ladder opening by item there is
-    // not always an onward to offer. Close is the quiet one, and leaves the
-    // board it was covering on screen.
+    // not always an onward to offer. So the level select is the one offered,
+    // because it is where a player who just cleared something is going anyway.
+    //
+    // On a loss the offer is to play it again instead, which is the thing
+    // somebody who ran out of moves actually wants. Close is the quiet way out
+    // either way, and leaves the finished board it was covering on screen.
     dom.overlayButtons.replaceChildren(
-      button('Levels', actions.onLevels, false),
+      button('Levels', actions.onLevels, won),
       button('Replay', actions.onRetry, !won),
-      button('Close', actions.onClose, won),
+      button('Close', actions.onClose, false),
     );
 
     dom.tracker.classList.add('hidden');

@@ -28,7 +28,7 @@ AP_TAG  ?= 0.6.7
 
 .PHONY: all wasm test abi check serve smoke shots audio balance clean target-check \
 	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link ap-live \
-	site site-smoke
+	site site-smoke favicon
 
 all: check wasm
 
@@ -93,6 +93,14 @@ site: wasm
 ## relative path inside the site still finding what it wants from under there.
 site-smoke: site
 	node tools/site_smoke.mjs
+
+## Redraw the browser-tab icon from the game's own gem painter.
+##
+## Its result is committed, unlike everything else a browser makes here: the
+## icon changes approximately never, and building it in the image would mean
+## the image build needed a browser in it.
+favicon:
+	node tools/favicon.mjs web/favicon.ico
 
 ## Play the game in a headless browser and write screenshots to shots/.
 shots: wasm

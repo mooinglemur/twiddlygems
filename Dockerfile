@@ -68,9 +68,23 @@ RUN set -eux; \
 
 FROM scratch
 COPY --from=verify /src/target/x86_64-unknown-linux-musl/release/twiddlygems-serve /twiddlygems-serve
-# Where it listens. There is a reverse proxy in front of this doing TLS and
-# compression, so this is plain HTTP on a high port and never runs as root.
-ENV PORT=8080 BIND=0.0.0.0
+
+# Plain HTTP on a high port: the gateway in front terminates TLS. It does not
+# compress, so the server does, once at startup.
+#
+# `::` takes both address families from one socket, because a pod's address may
+# be either and a server listening on only one of them is a connection refused
+# that reads as a crash. The binary parses this rather than pasting it onto the
+# port, so the unbracketed spelling works.
+ENV PORT=8080 BIND=:: DRAIN_SECONDS=5
 EXPOSE 8080
+
+# Numeric, and it has to stay numeric: `runAsNonRoot` cannot verify a user
+# given as a name, and there is no /etc/passwd in a scratch image to resolve
+# one from.
 USER 65534:65534
+
+# No shell here, so nothing can wrap this and no `preStop` hook can run
+# `sleep` before the signal. The binary handles SIGTERM itself: it fails
+# `/readyz` at once, keeps answering for DRAIN_SECONDS, and exits 0.
 ENTRYPOINT ["/twiddlygems-serve"]

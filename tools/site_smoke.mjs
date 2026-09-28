@@ -17,6 +17,7 @@
 //   make site-smoke
 
 import { spawn } from 'node:child_process';
+import { request as httpRequest } from 'node:http';
 import assert from 'node:assert/strict';
 
 // See the same guard in `shoot.mjs`: this drives the browser over a WebSocket,
@@ -196,14 +197,90 @@ for (const response of served) {
   assert.match(response.url, fingerprinted, `${path} is served without a fingerprint`);
 }
 assert.ok(
-  served.some((response) => response.url.endsWith('/favicon.ico') && response.status === 204),
-  'the icon nobody has was not answered, so every visit asks for it again',
+  served.some((response) => response.url.endsWith('/favicon.ico') && response.status === 200),
+  'the browser never got an icon',
 );
+
+// ---- compression ----
+//
+// There is no compressing proxy in front of this, so the server does it, with
+// an encoder written in this repository. That makes this the test that matters
+// most about it: the gzip stream has to be one that zlib and a real browser
+// both accept, and nothing inside the encoder can tell us whether it is.
+{
+  const url = wasm.url;
+  // Node's fetch offers gzip and inflates what comes back, so a body that
+  // matches the identity copy means the stream decoded correctly through
+  // somebody else's zlib rather than through anything of ours.
+  const squeezed = Buffer.from(await (await fetch(url)).arrayBuffer());
+  const plain = Buffer.from(
+    await (await fetch(url, { headers: { 'accept-encoding': 'identity' } })).arrayBuffer(),
+  );
+  assert.ok(plain.length > 0, 'the module came back empty');
+  assert.ok(squeezed.equals(plain), 'what came back compressed is not what came back plain');
+
+  // And that it really was compressed on the wire, which the check above
+  // cannot see: fetch hides the encoding by handling it.
+  const raw = await new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers: { 'accept-encoding': 'gzip' } }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => resolve({ headers: response.headers, body: Buffer.concat(chunks) }));
+    });
+    request.on('error', reject);
+    request.end();
+  });
+  assert.equal(raw.headers['content-encoding'], 'gzip', 'the module was sent uncompressed');
+  assert.equal(raw.headers.vary, 'Accept-Encoding', 'a cache would serve the wrong form to someone');
+  assert.equal(Number(raw.headers['content-length']), raw.body.length, 'the length was wrong');
+  assert.ok(
+    raw.body.length < plain.length * 0.8,
+    `the module only went from ${plain.length} to ${raw.body.length} bytes`,
+  );
+  assert.deepEqual([...raw.body.subarray(0, 3)], [0x1f, 0x8b, 8], 'that is not a gzip stream');
+
+  // A client that says it cannot take gzip must not be sent it. This is the
+  // one that breaks somebody rather than merely wasting bandwidth.
+  const refused = await new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers: { 'accept-encoding': 'gzip;q=0' } }, (response) => {
+      response.resume();
+      resolve(response.headers);
+    });
+    request.on('error', reject);
+    request.end();
+  });
+  assert.equal(refused['content-encoding'], undefined, 'gzip;q=0 was read as a yes');
+}
 
 // The page itself must never be cached, or a player keeps last week's
 // fingerprints and never sees a new build at all.
 const page = await fetch(`http://127.0.0.1:${PORT}/`);
 assert.match(page.headers.get('cache-control') ?? '', /no-cache/, 'the page is cacheable');
+
+// The policy the page carries. Checked here as well as in the engine's own
+// tests because this is the copy that went over a socket, and because the
+// browser above had to load the whole game under it: a policy that blocked the
+// module would have failed the boot check rather than this one.
+const policy = page.headers.get('content-security-policy') ?? '';
+assert.match(policy, /wasm-unsafe-eval/, 'the module could not be instantiated under this policy');
+assert.match(policy, /connect-src [^;]*wss:/, 'a multiworld would be blocked by this policy');
+
+// What the orchestrator asks. The two must differ: liveness follows the first
+// and readiness the second, and a shutdown moves only one of them.
+const healthz = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+const readyz = await fetch(`http://127.0.0.1:${PORT}/readyz`);
+assert.equal(healthz.status, 200, 'the process does not say it is alive');
+assert.equal(readyz.status, 200, 'the process does not say it is ready');
+
+// The monitoring contract. A probe on the cluster asserts exactly this and
+// pages somebody when it stops matching, so it is checked here rather than
+// discovered at three in the morning.
+const html = await page.text();
+assert.match(
+  html,
+  /src="\/a\/[0-9a-f]{16}\/js\/main\.js"/,
+  'the page no longer matches the string the uptime probe looks for',
+);
 const asset = await fetch(wasm.url);
 assert.match(
   asset.headers.get('cache-control') ?? '',
@@ -213,8 +290,8 @@ assert.match(
 assert.equal(asset.headers.get('content-type'), 'application/wasm');
 
 console.log(
-  `site ok: served by the shipping binary, ${served.length} requests, ` +
-    `all fingerprinted, ${booted.levels} levels on a ${booted.rows}x${booted.cols} board`,
+  `site ok: served by the shipping binary, ${served.length} requests, all fingerprinted, ` +
+    `gzip round-trips, ${booted.levels} levels on a ${booted.rows}x${booted.cols} board`,
 );
 // All three of these hold the event loop open, so without closing them the run
 // finishes its work and then sits there forever.
