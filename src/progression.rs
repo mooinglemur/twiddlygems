@@ -707,15 +707,11 @@ fn can_play(index: usize) -> Requirement {
 }
 
 pub fn requirement(location: Location, levels: usize) -> Requirement {
-    let each_tool = || {
-        UNLOCKABLE
-            .iter()
-            .map(|special| Requirement::Has {
-                item: Item::Unlock(*special),
-                count: Count::Exactly(1),
-            })
-            .collect::<Vec<_>>()
+    let has = |special: Special| Requirement::Has {
+        item: Item::Unlock(special),
+        count: Count::Exactly(1),
     };
+    let each_tool = || UNLOCKABLE.iter().map(|special| has(*special)).collect::<Vec<_>>();
     let tools = || Requirement::All(each_tool());
     // Any one of the five. What a level past the teaching run asks to be
     // cleared at all, and deliberately not a particular one: which special a
@@ -760,9 +756,29 @@ pub fn requirement(location: Location, levels: usize) -> Requirement {
                 count: Count::Exactly(1),
             },
         ]),
-        // A chain is made on whatever board is in front of you, and the
-        // opening one is in front of everybody.
-        Location::Chain(_) => Requirement::Always,
+        // A chain this deep is made on whatever board is in front of you, and
+        // the opening one is in front of everybody.
+        Location::Chain(length) if length <= RELIABLE_CHAIN => Requirement::Always,
+        // Past that it is not something to ask of a bare board. Measured, a
+        // playthrough holding nothing reaches twelve about one time in ten,
+        // which is reachable in the sense that logic uses the word and a grind
+        // in the sense a player would. These were `Always` and a multiworld
+        // took it at its word: a real seed put a Rocket behind an eleven and a
+        // level unlock behind a twelve, both in the opening sphere.
+        //
+        // What makes the difference is a rocket landing in a board that is
+        // still coming apart, which is what sets off the next step: the rocket
+        // for the strike, and then either a cross or both line clears so that
+        // what it lands in is wide enough to keep going. Naming the tools
+        // rather than a depth is what lets the rule say *why* a deep chain is
+        // reachable instead of asserting that it is.
+        Location::Chain(_) => Requirement::All(vec![
+            has(Special::Rocket),
+            Requirement::Any(vec![
+                has(Special::Cross),
+                Requirement::All(vec![has(Special::LineH), has(Special::LineV)]),
+            ]),
+        ]),
         // And so is a match: it is the one thing the game asks a player to do
         // and it asks for no item to do it with. Which sizes a solo run is
         // asked to line up for its own progression is [`worth_using`].
@@ -946,25 +962,14 @@ pub fn ap_gems_needed(levels: usize, pool: usize) -> u32 {
         return 0;
     }
     // Everywhere a fill will actually put something: not the gems, which are
-    // what this is topping up with, and not the chains too deep to ask anybody
-    // for, which the solo fill refuses to use.
+    // what this is topping up with, and everything else.
     //
-    // The deep ones were counted here once, on the grounds that they are real
-    // locations and a multiworld may fill them. They are, and it may, but
-    // counting them here says the pool has six more places than a solo run
-    // will find for it, and the day the pool grew past the rest that is
-    // exactly how many items ended up homeless. Progressive level unlock grew
-    // it past the rest. One count for both sides, and the conservative one, so
-    // a seed's locations and the game's still match: the cost is a gem or two
-    // more than a multiworld strictly needs, and a spare location is a place
-    // for somebody else's item.
-    //
-    // `worth_using` is the same judgement, made per run rather than per world.
-    let elsewhere = locations(levels)
-        .iter()
-        .filter(|at| !matches!(at, Location::ApGem { .. }))
-        .filter(|at| !matches!(at, Location::Chain(length) if *length > RELIABLE_CHAIN))
-        .count();
+    // The deep chains were left out of this for a while, because the solo fill
+    // refused to use them and counting them said the pool had six more places
+    // than a solo run would find for it. That refusal is gone: they have a
+    // rule of their own now, so both fills use them and both count them.
+    let elsewhere =
+        locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
     // Round up: half a location is no location.
     let short = pool.saturating_sub(elsewhere);
     (short.div_ceil(levels) as u32).min(AP_GEMS_PER_LEVEL)
@@ -1476,15 +1481,18 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
 /// Whether a solo run should be asked to check here for its own items, given
 /// that each level carries `gems` Archipelago gems.
 ///
-/// Every location is reachable in principle; the deep chains are just rare.
-/// `make balance` measures how often a run gets there, and past
-/// [`RELIABLE_CHAIN`] it falls away fast enough that keeping a level's own
-/// progression behind one would be asking a solo player to be lucky. They stay
-/// locations, and a multiworld will put somebody else's item in them.
+/// The deep chains used to be refused here, because they were rare and their
+/// rule said `Always`: putting a run's own progression behind one was asking a
+/// solo player to be lucky, and there was nothing in the rule to say so. Now
+/// there is. Past [`RELIABLE_CHAIN`] a chain asks for the rocket and for
+/// something to open the board up with, which is what actually makes one
+/// happen, so a run that holds those is not being asked for luck and a run
+/// that does not is not offered the location at all.
 ///
-/// A gem past what the run asked for is a different sort of unusable: it is in
-/// the table because the table is fixed, but nothing will ever spawn for it,
-/// so an item left there could never be found at all.
+/// So the only thing refused here is a gem past what the run asked for, which
+/// is unusable in a different way: it is in the table because the table is
+/// fixed, but nothing will ever spawn for it, so an item left there could
+/// never be found at all.
 ///
 /// The matches are all usable, and deliberately have no threshold of their own.
 /// `make balance` measures a three in 98% of playthroughs, a four in 70%, a
@@ -1496,7 +1504,6 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
 /// progression.
 fn worth_using(location: Location, gems: u32) -> bool {
     match location {
-        Location::Chain(length) => length <= RELIABLE_CHAIN,
         Location::ApGem { index, .. } => index < gems,
         _ => true,
     }
@@ -2320,16 +2327,21 @@ mod tests {
             other => requirement(other, levels),
         };
         let stuck = walk(levels, &placed, &options, circular);
-        // The chains are open to anyone, and so is the opening level's own run
-        // of gems, since playing it asks for nothing. The ladder and
+        // The shallow chains are open to anyone, and so is the opening level's
+        // own run of gems, since playing it asks for nothing. The ladder and
         // everything hanging off it is what should be lost.
         assert!(
             stuck.contains(&Location::LevelClear(0)),
             "a location asking for the item it holds was reached anyway",
         );
-        // Everything that asks for nothing at all: the chains, the matches,
-        // and the opening level's gems, since playing it asks for nothing.
-        let survivors = (LONGEST_CHAIN - SHORTEST_CHAIN + 1) as usize
+        // Everything that asks for nothing at all: the chains inside the
+        // reliable depth, the matches, and the opening level's gems, since
+        // playing it asks for nothing.
+        //
+        // The deeper chains are not in that company any more. They ask for the
+        // rocket and something to open the board with, and in a world whose
+        // opening clear is a circle there is nowhere to find either.
+        let survivors = (RELIABLE_CHAIN - SHORTEST_CHAIN + 1) as usize
             + (LONGEST_MATCH - SHORTEST_MATCH + 1) as usize
             + AP_GEMS_PER_LEVEL as usize;
         assert_eq!(
@@ -2448,25 +2460,67 @@ mod tests {
     }
 
     #[test]
-    fn no_item_is_kept_behind_a_chain_hardly_anyone_reaches() {
-        // A chain location exists for every length, but the deep ones are
-        // rare: `make balance` reports the share of runs that get there, and
-        // it falls off fast. Items live only on the short ones, and the rest
-        // wait for the traps and usable items, which nobody has to find.
-        for (levels, seed, options) in every_run() {
-            let placed = solo_placement(levels, seed, &options);
-            let deepest = (SHORTEST_CHAIN..=LONGEST_CHAIN)
-                .filter(|length| {
-                    placed[location_index(Location::Chain(*length), levels).unwrap()].is_some()
-                })
-                .max();
-            if let Some(deepest) = deepest {
-                assert!(
-                    deepest <= RELIABLE_CHAIN,
-                    "on a ladder of {levels} dealt from {seed:#x} as {options:?}, a \
-                     {deepest} chain is holding an item, which few runs would ever reach",
-                );
+    fn a_deep_chain_asks_for_what_actually_makes_one() {
+        // Up to the reliable depth a chain is made on whatever board is in
+        // front of you. Past it the rule names tools, rather than asserting
+        // that somebody will be lucky: a rocket to set the next step off, and
+        // either a cross or both line clears so that what it lands in is wide
+        // enough to keep going.
+        //
+        // Every length used to be `Always`, and a multiworld took it at its
+        // word: a real seed put a Rocket behind an eleven chain and a level
+        // unlock behind a twelve, both in the opening sphere, on a board a
+        // bare playthrough reaches one time in ten.
+        let levels = 16;
+        let options = Options::default();
+        let nowhere = Reached::none(levels);
+        let holding = |specials: &[Special]| {
+            let mut held = Inventory::empty();
+            for special in specials {
+                held.receive(Item::Unlock(*special));
             }
+            held
+        };
+
+        for length in SHORTEST_CHAIN..=RELIABLE_CHAIN {
+            assert!(
+                requirement(Location::Chain(length), levels).met(
+                    &Inventory::empty(),
+                    &nowhere,
+                    &options
+                ),
+                "a {length} chain asks for something, and it is inside the reliable depth",
+            );
+        }
+
+        for length in RELIABLE_CHAIN + 1..=LONGEST_CHAIN {
+            let asked = requirement(Location::Chain(length), levels);
+            let met = |specials: &[Special]| asked.met(&holding(specials), &nowhere, &options);
+            assert!(!met(&[]), "a {length} chain is offered to a run holding nothing");
+            // The rocket is not optional, whatever else is held.
+            assert!(!met(&[Special::Cross]), "a {length} chain came without a rocket");
+            assert!(
+                !met(&[Special::LineH, Special::LineV, Special::Rainbow]),
+                "a {length} chain came without a rocket",
+            );
+            // Nor is something to open the board with.
+            assert!(
+                !met(&[Special::Rocket, Special::Rainbow]),
+                "a {length} chain came with nothing to open the board up",
+            );
+            assert!(
+                !met(&[Special::Rocket, Special::LineH]),
+                "a {length} chain took one line clear where it asks for both",
+            );
+            // And either way of opening it is enough.
+            assert!(
+                met(&[Special::Rocket, Special::Cross]),
+                "a rocket and a cross do not open a {length} chain",
+            );
+            assert!(
+                met(&[Special::Rocket, Special::LineH, Special::LineV]),
+                "a rocket and both line clears do not open a {length} chain",
+            );
         }
     }
 
@@ -2518,14 +2572,11 @@ mod tests {
         // A pool too big for everywhere else has to be met with gems. Sized
         // off the real tables rather than a number written here, so this keeps
         // meaning the same thing as the ladder grows. Counted the way the
-        // function counts: every location that is not a gem and not a chain
-        // too deep to ask anybody for, because a place no fill will use is not
-        // room the pool has.
-        let elsewhere = locations(levels)
-            .iter()
-            .filter(|at| !matches!(at, Location::ApGem { .. }))
-            .filter(|at| !matches!(at, Location::Chain(length) if *length > RELIABLE_CHAIN))
-            .count();
+        // function counts: every location that is not a gem, the deep chains
+        // among them, since both fills use those now that they have a rule of
+        // their own.
+        let elsewhere =
+            locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
         let over = elsewhere + levels * 3 + 1;
         assert_eq!(
             ap_gems_needed(levels, over),

@@ -213,12 +213,57 @@ class TestDefault(TwiddlyGemsTestBase):
         # item would be in the table and never in anybody's game.
         self.assertGreater(len(SHARED), 1, "nothing is sharing a total, so this checks nothing")
 
-    def test_a_chain_is_open_to_anybody(self) -> None:
-        # A chain is made on whatever board is in front of you, and the
-        # opening one is in front of everybody. The deep ones are rare rather
-        # than gated, and nothing this world places is kept behind one.
-        for length in range(GAME_DATA["shortest_chain"], GAME_DATA["longest_chain"] + 1):
+    def test_a_shallow_chain_is_open_to_anybody_and_a_deep_one_is_not(self) -> None:
+        # A chain up to the reliable depth is made on whatever board is in
+        # front of you, and the opening one is in front of everybody.
+        reliable = GAME_DATA["reliable_chain"]
+        for length in range(GAME_DATA["shortest_chain"], reliable + 1):
             self.assertTrue(self.can_reach_location(f"{length} Chain"))
+
+        # Past that it asks for a rocket and for something to open the board
+        # up with. Every length used to be reachable from nothing, and this
+        # world believed it: a real seed put a Rocket behind an eleven chain
+        # and a level unlock behind a twelve, both in the opening sphere, on
+        # a board a bare playthrough reaches one time in ten.
+        deep = range(reliable + 1, GAME_DATA["longest_chain"] + 1)
+        for length in deep:
+            self.assertFalse(
+                self.can_reach_location(f"{length} Chain"),
+                f"a {length} chain is offered to a run holding nothing",
+            )
+
+        # A rocket on its own is not enough, and neither is an opener on its
+        # own: the rule wants both halves.
+        self.collect_by_name("Rocket")
+        for length in deep:
+            self.assertFalse(
+                self.can_reach_location(f"{length} Chain"),
+                f"a {length} chain came with a rocket and nothing to open the board",
+            )
+        self.collect_by_name("Cross Clear")
+        for length in deep:
+            self.assertTrue(
+                self.can_reach_location(f"{length} Chain"),
+                f"a {length} chain will not open to a rocket and a cross",
+            )
+
+    def test_both_line_clears_are_the_other_way_into_a_deep_chain(self) -> None:
+        # The rule takes a cross *or* both line clears, so the pair has to work
+        # on its own. A rule true of only one of its branches would be true on
+        # some seeds and false on others.
+        deep = range(GAME_DATA["reliable_chain"] + 1, GAME_DATA["longest_chain"] + 1)
+        self.collect_by_name(["Rocket", "Horizontal Line Clear"])
+        for length in deep:
+            self.assertFalse(
+                self.can_reach_location(f"{length} Chain"),
+                f"a {length} chain took one line clear where it asks for both",
+            )
+        self.collect_by_name("Vertical Line Clear")
+        for length in deep:
+            self.assertTrue(
+                self.can_reach_location(f"{length} Chain"),
+                f"a {length} chain will not open to a rocket and both line clears",
+            )
 
     def test_an_item_count_that_points_at_a_setting_resolves(self) -> None:
         # How many of an item the pool holds may be written as a pointer at

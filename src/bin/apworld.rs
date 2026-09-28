@@ -322,16 +322,13 @@ fn location_table(levels: usize) -> Json {
                 if let Location::ApGem { index, .. } = at {
                     fields.push(("gem_index", Json::Num(index)));
                 }
-                // Whether this place counts toward the room the pool needs.
-                // A chain too deep to ask anybody for is a real location and
-                // a multiworld may put anything it likes there; what it may
-                // not do is be counted on when working out whether the items
-                // fit, because the solo fill will not use it and the two
-                // sides have to size a world the same way. See
-                // `ap_gems_needed`.
-                if matches!(at, Location::Chain(length) if length > RELIABLE_CHAIN) {
-                    fields.push(("counts_as_room", Json::Bool(false)));
-                }
+                // Nothing is held back from the room count any more. The deep
+                // chains were, because the solo fill refused to use them while
+                // their rule still claimed anybody could reach one; now they
+                // ask for the rocket and for something to open the board with,
+                // both fills use them, and both count them. The world reads a
+                // missing `counts_as_room` as true, so there is nothing to
+                // write here. See `ap_gems_needed`.
                 Json::Obj(fields)
             })
             .collect(),
