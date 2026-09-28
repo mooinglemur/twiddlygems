@@ -601,10 +601,10 @@ export class Hud {
 
       const show = () => {
         const now = engine.optionValue(option.index);
+        // Whatever names its values says them in words: a choice, and a
+        // toggle, whose two are Off and On. A range is its own number.
         value.textContent =
-          option.kind === 'choice'
-            ? option.choices.find((choice) => choice.value === now)?.label ?? String(now)
-            : String(now);
+          option.choices?.find((choice) => choice.value === now)?.label ?? String(now);
       };
 
       const nudge = (by) => {

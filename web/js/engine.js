@@ -428,7 +428,13 @@ export class Engine {
         if (kind === 'range') {
           option.low = Number(rest[0]);
           option.high = Number(rest[1]);
+        } else if (kind === 'weight') {
+          // One of a set a yaml takes as a single option. Nothing draws it;
+          // what it carries is which set it belongs to.
+          option.group = rest[0];
         } else {
+          // A choice and a toggle both name their values. The toggle's two
+          // are Off and On, which is why it needs no control of its own.
           option.choices = rest.map((choice) => {
             const at = choice.indexOf('=');
             return { value: Number(choice.slice(0, at)), label: choice.slice(at + 1) };

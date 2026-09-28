@@ -1156,6 +1156,24 @@ click(overlayButton('Close'), 'the level picker has no way out');
         `${weight.key} is not at its default, so the screen is not the only way to move it`,
       );
     }
+
+    // And a setting that names its values shows the name, not the number. A
+    // toggle carries Off and On across the ABI for exactly this: a row
+    // reading 1 tells a player nothing about what it is set to.
+    const drawn = engine.options.filter((option) => option.kind !== 'weight');
+    for (const [at, option] of drawn.entries()) {
+      if (!option.choices) {
+        continue;
+      }
+      const controls = rows[at].children.find((child) => child.className === 'setup-controls');
+      const reading = controls.children.find((child) => child.className === 'setup-value');
+      const named = option.choices.map((choice) => choice.label);
+      assert.ok(
+        named.includes(reading.textContent),
+        `${option.key} reads as ${JSON.stringify(reading.textContent)}, `
+          + `which is none of ${JSON.stringify(named)}`,
+      );
+    }
   }
 
   // Every control is built by walking the engine's table, so each row should
