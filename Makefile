@@ -22,7 +22,7 @@ APWORLD := build/twiddlygems.apworld
 AP_TAG  ?= 0.6.7
 
 .PHONY: all wasm test abi check serve smoke shots audio balance clean target-check \
-	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link
+	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link ap-live
 
 all: check wasm
 
@@ -108,6 +108,22 @@ apworld: apdata
 	cd build/apworld && $(PYTHON) -m zipfile -c ../$(notdir $(APWORLD)) twiddlygems
 	@echo "built $(APWORLD) ($$(wc -c < $(APWORLD) | awk '{printf "%.0f KiB", $$1/1024}'))"
 
+## Play a real multiworld against Archipelago's own server.
+##
+## The check the stubbed one cannot be. `make smoke` drives the client against
+## a socket written here, from a reading of the protocol document, so a
+## misreading would be built into the stub and the tests would agree with it.
+## This runs `MultiServer` out of the pinned checkout, on a seed our own world
+## generated, over a real socket.
+##
+## The server is started by the node script and killed through its own child
+## handle, so nothing is ever matched by name.
+ap-live: wasm apworld-gen
+	rm -rf build/ap/live
+	mkdir -p build/ap/live
+	$(PYTHON) -m zipfile -e "$$(ls build/ap/out/*.zip | head -1)" build/ap/live
+	node tools/ap_live.mjs "$$(ls build/ap/live/*.archipelago | head -1)" $(OUT)
+
 ## Run Archipelago's own tests against the world, in a pinned checkout.
 ##
 ## The three that come free from WorldTestBase are the ones worth having: that
@@ -169,7 +185,20 @@ ap-setup:
 		https://github.com/ArchipelagoMW/Archipelago.git $(AP)
 	test -d $(VENV) || $(PYTHON) -m venv $(VENV)
 	$(VENV)/bin/python -m pip install --quiet colorama PyYAML jellyfish schema orjson \
-		typing_extensions platformdirs certifi websockets pathspec
+		typing_extensions platformdirs certifi pathspec
+	# websockets at the version Archipelago pins, read out of its own
+	# requirements rather than written down here, so bumping AP_TAG follows it.
+	#
+	# It has to be the pinned one, which is not what "install websockets" gets.
+	# Generation never opens a socket, so any version at all passed for as long
+	# as this checkout only ever generated seeds. `make ap-live` runs the real
+	# server, and websockets 14 removed the `ServerConnection.open` attribute
+	# that MultiServer reads on every connection: every client is accepted and
+	# then dropped with an AttributeError before it is told anything.
+	# The `cut` drops the trailing comment on that line, which pip reads as
+	# another package to install and refuses.
+	grep -E '^websockets[=<>]' $(AP)/requirements.txt | cut -d'#' -f1 \
+		| xargs $(VENV)/bin/python -m pip install --quiet
 	# Generate.py reads every world's requirements through pkg_resources, which
 	# setuptools stopped shipping at 81, and loading an installed .apworld goes
 	# through worlds/Files.py, which imports bsdiff4. Neither is needed to run
