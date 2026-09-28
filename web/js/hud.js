@@ -578,7 +578,12 @@ export class Hud {
    */
   showSetup() {
     const { engine, dom } = this;
-    const rows = engine.options.map((option) => {
+    // Not the weights. Four numbers whose only meaning is their share of a
+    // total is not a control anybody wants to meet on a phone, and the run
+    // they describe is the one a solo player gets by leaving them alone. They
+    // are still in the table, and still carry their own place in it, which is
+    // what `option.index` is: skipping them here cannot shift anything else.
+    const rows = engine.options.filter((option) => option.kind !== 'weight').map((option) => {
       const row = document.createElement('div');
       row.className = 'setup-option';
 

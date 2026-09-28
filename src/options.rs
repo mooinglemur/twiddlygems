@@ -47,7 +47,22 @@ pub struct Options {
     /// while [`Options::progressive_levels`] is on: with the ladder opening by
     /// clearing there is no such item to have spares of.
     pub spare_unlocks: u32,
+    /// How likely each kind of bonus item is, relative to the others.
+    ///
+    /// In the order [`crate::progression::CONSUMABLES`] lists them, which
+    /// `the_inventory_weights_line_up_with_the_kinds_they_weigh` holds them
+    /// to. Weights rather than counts: what they mean is only their share of
+    /// the total, so all four at 1 and all four at 1000 are the same run. All
+    /// four at nothing is the one special case, and it means what it says:
+    /// a run with no bonus items in it at all.
+    pub inventory_weights: [u32; INVENTORY_KINDS],
 }
+
+/// How many kinds of bonus item there are to weigh.
+///
+/// Said here rather than taken from `CONSUMABLES` so that [`Options`] stays a
+/// few numbers with nothing behind them. The two are held together by a test.
+pub const INVENTORY_KINDS: usize = 4;
 
 impl Default for Options {
     fn default() -> Self {
@@ -58,6 +73,11 @@ impl Default for Options {
             inventory_items: 10,
             progressive_levels: 1,
             spare_unlocks: 20,
+            // Even, which is what they were before there was a way to say
+            // otherwise. Fifty rather than one because that is the number a
+            // yaml usually carries, and a player reaching for this wants room
+            // to move in both directions from where it started.
+            inventory_weights: [50; INVENTORY_KINDS],
         }
     }
 }
@@ -121,7 +141,7 @@ impl Options {
             INVENTORY_ITEMS => Some(self.inventory_items),
             PROGRESSIVE_LEVELS => Some(self.progressive_levels),
             SPARE_UNLOCKS => Some(self.spare_unlocks),
-            _ => None,
+            key => weight_at(key).map(|slot| self.inventory_weights[slot]),
         }
     }
 
@@ -142,7 +162,10 @@ impl Options {
                 Some(goal) => self.goal = goal,
                 None => return false,
             },
-            _ => return false,
+            key => match weight_at(key) {
+                Some(slot) => self.inventory_weights[slot] = value,
+                None => return false,
+            },
         }
         true
     }
@@ -160,6 +183,19 @@ pub const INVENTORY_ITEMS: &str = "inventory_items";
 pub const PROGRESSIVE_LEVELS: &str = "progressive_levels";
 /// The key of the setting that decides [`Options::spare_unlocks`].
 pub const SPARE_UNLOCKS: &str = "spare_unlocks";
+
+/// What a yaml calls the four weights together. See [`Kind::Weight`].
+pub const INVENTORY_CHANCE: &str = "inventory_item_chance";
+/// The keys of the four weights, in the order they are held in
+/// [`Options::inventory_weights`], which is also the order the kinds are
+/// numbered in.
+pub const INVENTORY_WEIGHTS: [&str; INVENTORY_KINDS] =
+    ["rocket", "rainbow", "cross_clear", "rocket_cluster"];
+
+/// Which of [`Options::inventory_weights`] a setting key names, if any.
+fn weight_at(key: &str) -> Option<usize> {
+    INVENTORY_WEIGHTS.iter().position(|name| *name == key)
+}
 
 /// One setting: everything needed to show it, check it and write it down.
 pub struct Setting {
@@ -181,6 +217,11 @@ impl Setting {
             Kind::Range { low, high, .. } => (low..=high).contains(&value),
             Kind::Choice(choices) => choices.iter().any(|choice| choice.value == value),
             Kind::Toggle => value <= 1,
+            // A weight means nothing on its own, only against the others, so
+            // the ceiling is there to keep a save and a run down to numbers
+            // rather than to say what is sensible. A thousand to one is past
+            // any use anybody has for it.
+            Kind::Weight { .. } => value <= MOST_WEIGHT,
         }
     }
 
@@ -205,6 +246,10 @@ impl Setting {
             // Wraps, like the choice it looks like on screen: a step either
             // way off one of two values lands on the other.
             Kind::Toggle => u32::from(value == 0),
+            // Nothing steps it, because nothing draws it. Answered rather
+            // than refused so that a caller walking the whole table cannot
+            // trip over one.
+            Kind::Weight { .. } => value.min(MOST_WEIGHT),
         }
     }
 }
@@ -219,6 +264,15 @@ pub enum Kind {
     Range { low: u32, high: u32, step: u32 },
     /// One of a list.
     Choice(&'static [Choice]),
+    /// One of a set of weights that a yaml takes as a single option.
+    ///
+    /// Not on the solo screen at all. Four numbers whose only meaning is
+    /// their share of a total is not a control anybody wants to meet on a
+    /// phone, and the run it describes is the one a solo player gets by
+    /// leaving it alone. In a yaml it is one mapping with a line per weight,
+    /// which is how Archipelago spells this and is what
+    /// [`GROUPS`] gathers them into.
+    Weight { group: &'static str },
     /// Off or on: 0 or 1, and nothing else.
     ///
     /// A choice of two would look the same on the solo screen, and on the
@@ -233,6 +287,31 @@ pub enum Kind {
 /// What a toggle's two values are called on screen, since it carries no
 /// choices of its own to name them.
 pub const TOGGLE_LABELS: [&str; 2] = ["Off", "On"];
+
+/// The most any one weight may be. See [`Kind::Weight`].
+pub const MOST_WEIGHT: u32 = 1_000;
+
+/// A set of weights that a yaml takes as one option.
+///
+/// The members carry their own names, because each is a line in that option.
+/// What the option as a whole is called and what it says about itself live
+/// here, since neither belongs to any one weight.
+pub struct Group {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub about: &'static str,
+}
+
+/// Every such set. One so far.
+pub static GROUPS: &[Group] = &[Group {
+    key: INVENTORY_CHANCE,
+    label: "Inventory item chance",
+    about: "How likely each kind of bonus item is, relative to the others. \
+            The numbers are weights rather than percentages: they are added \
+            up and each kind takes its share, so all four at 1 and all four \
+            at 1000 are the same run. Set one to 0 to leave that kind out, \
+            and all four to 0 for a run with no bonus items at all.",
+}];
 
 /// One of the values a [`Kind::Choice`] setting can take.
 pub struct Choice {
@@ -346,6 +425,37 @@ pub static SETTINGS: &[Setting] = &[
         // allow.
         kind: Kind::Range { low: 0, high: 100, step: 5 },
         default: 20,
+    },
+    // The four weights, which a yaml takes as one option and the solo screen
+    // does not take at all. In the order the kinds are numbered, because
+    // `Options::inventory_weights` is indexed by that number.
+    Setting {
+        key: INVENTORY_WEIGHTS[0],
+        label: "Rocket",
+        about: "How likely a bonus item is a rocket.",
+        kind: Kind::Weight { group: INVENTORY_CHANCE },
+        default: 50,
+    },
+    Setting {
+        key: INVENTORY_WEIGHTS[1],
+        label: "Rainbow",
+        about: "How likely a bonus item is a rainbow.",
+        kind: Kind::Weight { group: INVENTORY_CHANCE },
+        default: 50,
+    },
+    Setting {
+        key: INVENTORY_WEIGHTS[2],
+        label: "Cross Clear",
+        about: "How likely a bonus item is a cross clear.",
+        kind: Kind::Weight { group: INVENTORY_CHANCE },
+        default: 50,
+    },
+    Setting {
+        key: INVENTORY_WEIGHTS[3],
+        label: "Rocket Cluster",
+        about: "How likely a bonus item is a rocket cluster.",
+        kind: Kind::Weight { group: INVENTORY_CHANCE },
+        default: 50,
     },
     // A level's moves upgrade has no setting of its own yet. Each level
     // declares what its upgrade is worth and one item carries the whole of it,

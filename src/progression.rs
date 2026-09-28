@@ -1222,19 +1222,43 @@ pub fn spare_unlocks(needed: u32, percent: u32) -> u32 {
 
 /// The bonus items a run is given, and which kind each one turns out to be.
 ///
-/// The setting says how many there are altogether; which kind each one is, is
-/// a draw at equal chance. A total and a draw rather than a count per kind,
-/// because four counts on the setup screen is five controls for one idea, and
+/// One setting says how many there are altogether and four more say how
+/// likely each kind is. A total and a draw rather than a count per kind,
 /// because a run that comes out rocket-heavy and another that comes out
 /// rainbow-heavy are more interesting than every run getting three, three,
-/// two and two.
+/// two and two. The weights only mean their share of the total, so all four
+/// the same is an even draw whatever number they are all set to.
+///
+/// Nothing at all when they add up to nothing, which is how a yaml says it
+/// wants none of these: the kinds are what there is to draw from, and a draw
+/// from nothing is no item rather than an even chance again.
 ///
 /// Drawn off a stream of its own, so which kinds a run is given does not shift
 /// when something changes about where the fill puts things.
 fn inventory_pool(seed: u64, options: &Options) -> Vec<Item> {
+    let weights = options.inventory_weights;
+    let total: u32 = weights.iter().sum();
+    if total == 0 {
+        return Vec::new();
+    }
     let mut rng = Rng::new(seed ^ INVENTORY_STREAM);
     (0..options.inventory_items)
-        .map(|_| Item::Consumable(CONSUMABLES[rng.below(CONSUMABLES.len() as u32) as usize]))
+        .map(|_| {
+            let mut roll = rng.below(total);
+            let at = weights
+                .iter()
+                .position(|weight| {
+                    if roll < *weight {
+                        return true;
+                    }
+                    roll -= weight;
+                    false
+                })
+                // Only reachable if the weights changed under the roll, which
+                // they cannot: the last kind takes whatever is left.
+                .unwrap_or(CONSUMABLES.len() - 1);
+            Item::Consumable(CONSUMABLES[at])
+        })
         .collect()
 }
 
@@ -1565,6 +1589,80 @@ mod tests {
         );
     }
 
+    /// The weights and the kinds are indexed by the same number, and nothing
+    /// but this says so.
+    #[test]
+    fn the_inventory_weights_line_up_with_the_kinds_they_weigh() {
+        use crate::options::{INVENTORY_KINDS, INVENTORY_WEIGHTS};
+        assert_eq!(CONSUMABLES.len(), INVENTORY_KINDS, "a kind has no weight, or the other way");
+        // And each weight is named after the kind it sits against, so a yaml
+        // saying `rocket` moves the rocket and not the one beside it.
+        for (at, key) in INVENTORY_WEIGHTS.iter().enumerate() {
+            let named = match CONSUMABLES[at] {
+                Consumable::Rocket => "rocket",
+                Consumable::Rainbow => "rainbow",
+                Consumable::CrossClear => "cross_clear",
+                Consumable::RocketCluster => "rocket_cluster",
+            };
+            assert_eq!(*key, named, "weight {at} is called {key} and weighs a {named}");
+        }
+    }
+
+    #[test]
+    fn a_kind_asked_for_more_often_turns_up_more_often() {
+        // The whole of what the weights do. Asked of a pool big enough for a
+        // share to be a share rather than a run of luck.
+        let mut options = Options { inventory_items: 15, ..Options::default() };
+        let count = |options: &Options, wanted: Consumable| {
+            (0..40u64)
+                .map(|seed| {
+                    item_pool(13, fill_seed(seed), options)
+                        .iter()
+                        .filter(|item| matches!(item, Item::Consumable(kind) if *kind == wanted))
+                        .count()
+                })
+                .sum::<usize>()
+        };
+
+        let even = count(&options, Consumable::Rocket);
+        // Ten to one against the other three, which should tell over six
+        // hundred items even allowing for a draw being a draw.
+        options.inventory_weights = [500, 50, 50, 50];
+        let heavy = count(&options, Consumable::Rocket);
+        assert!(heavy > even * 2, "weighting a kind ten to one gave {heavy} against {even}");
+
+        // And nothing at all means none of that kind, which is the answer a
+        // yaml is asking for when it writes a zero.
+        options.inventory_weights = [0, 50, 50, 50];
+        assert_eq!(count(&options, Consumable::Rocket), 0, "a kind weighted at nothing turned up");
+        // The others are still dealt, and the pool is still the size it was.
+        assert_eq!(
+            item_pool(13, 7, &options).iter().filter(|i| matches!(i, Item::Consumable(_))).count(),
+            options.inventory_items as usize,
+        );
+    }
+
+    #[test]
+    fn a_run_that_wants_no_bonus_items_is_given_none() {
+        // Every weight at nothing is how a yaml says it wants none of these.
+        // Not an even draw again, which is what a total of zero would mean to
+        // anything dividing by it.
+        let options = Options { inventory_weights: [0; 4], ..Options::default() };
+        assert!(options.inventory_items > 0, "this run asks for none anyway, so it proves nothing");
+        let pool = item_pool(13, 7, &options);
+        assert!(
+            !pool.iter().any(|item| matches!(item, Item::Consumable(_))),
+            "a run that weighted every kind at nothing was dealt bonus items",
+        );
+        // And what the rest of the pool holds is untouched: the unlocks, the
+        // ladder and the moves are all still there.
+        let full = item_pool(13, 7, &Options::default());
+        assert_eq!(
+            pool.len() + full.iter().filter(|i| matches!(i, Item::Consumable(_))).count(),
+            full.len(),
+        );
+    }
+
     #[test]
     fn the_pool_is_the_same_size_whatever_it_rolls() {
         // The draw decides which kinds a run gets, never how many items there
@@ -1780,6 +1878,14 @@ mod tests {
                 Kind::Range { low, high, .. } => vec![low, setting.default, high],
                 // Both of them, always: two is a handful.
                 Kind::Toggle => vec![0, 1],
+                // Left where it is. Four of these would multiply the sweep by
+                // eighty-one for a setting that decides which kinds a run is
+                // given and not how many there are, which is what everything
+                // swept here is about. The one value of theirs that does
+                // change the count is all of them at nothing, and
+                // `a_run_that_wants_no_bonus_items_is_given_none` is where
+                // that lives.
+                Kind::Weight { .. } => vec![setting.default],
                 Kind::Choice(choices) if choices.len() <= SWEPT_WHOLE => {
                     choices.iter().map(|choice| choice.value).collect()
                 }

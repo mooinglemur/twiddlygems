@@ -26,7 +26,7 @@ import pkgutil
 from typing import Any
 
 from BaseClasses import Item, ItemClassification, Location, Region
-from Options import Choice, PerGameCommonOptions, Range, Toggle
+from Options import Choice, OptionCounter, PerGameCommonOptions, Range, Toggle
 from rule_builder.field_resolvers import FromOption
 from worlds.AutoWorld import World
 
@@ -86,12 +86,27 @@ def _build_options() -> type[PerGameCommonOptions]:
         body: dict[str, Any] = {
             "display_name": setting["label"],
             "__doc__": setting["about"],
-            "default": setting["default"],
         }
+        # A number for most, and a mapping for a set of weights, which carries
+        # one per line instead.
+        if "default" in setting:
+            body["default"] = setting["default"]
         if setting["kind"] == "range":
             body["range_start"] = setting["low"]
             body["range_end"] = setting["high"]
             base: type = Range
+        elif setting["kind"] == "weights":
+            # A mapping with a line per kind, which is how Archipelago spells
+            # a set of relative chances. A Counter rather than a plain dict,
+            # so a file naming only some of them reads the rest as nothing:
+            # writing one line is a way of asking for only that kind.
+            body["default"] = {
+                weight["key"]: weight["default"] for weight in setting["weights"]
+            }
+            body["valid_keys"] = [weight["key"] for weight in setting["weights"]]
+            body["min"] = 0
+            body["max"] = setting["most"]
+            base = OptionCounter
         elif setting["kind"] == "toggle":
             # Archipelago's own two-value type, which takes true, on, yes and
             # 1 alike, and their opposites. A two-value Choice would take only
@@ -243,22 +258,43 @@ class TwiddlyGemsWorld(World):
         drawn: dict[str, int] = {}
         # By the total they name, so any number of items can share one, and
         # a second group sharing a different total would work the same way
-        # without anything here being told about it.
-        sharing: dict[str, list[str]] = {}
+        # without anything here being told about it. Each carries the weight
+        # it is drawn against, which is a line in a mapping the player sets.
+        sharing: dict[str, list[tuple[str, int]]] = {}
         for item in ITEMS:
             count = item["count"]
             share = count.get("share_of") if isinstance(count, dict) else None
             if share is None:
                 continue
             drawn[item["name"]] = 0
-            sharing.setdefault(share["option"], []).append(item["name"])
+            sharing.setdefault(share["option"], []).append(
+                (item["name"], self._weight(share["weight"]))
+            )
 
-        for ap_class, names in sharing.items():
-            for name in self.random.choices(names, k=self._option(ap_class)):
+        for ap_class, members in sharing.items():
+            names = [name for name, _ in members]
+            weights = [weight for _, weight in members]
+            # Every kind weighted at nothing is how a file says it wants none
+            # of these at all, and it is the one answer a weighted draw cannot
+            # give: `random.choices` refuses a total of zero, and it would be
+            # wrong to fall back to an even draw when what was asked for was
+            # none. The engine's `inventory_pool` stops in the same place.
+            if sum(weights) == 0:
+                continue
+            for name in self.random.choices(
+                names, weights=weights, k=self._option(ap_class)
+            ):
                 drawn[name] += 1
 
         self._shares_drawn = drawn
         return drawn
+
+    def _weight(self, pointer: dict[str, Any]) -> int:
+        """One line out of the mapping a set of weights is written as."""
+        key = next(
+            setting["key"] for setting in SETTINGS if setting["ap_class"] == pointer["option"]
+        )
+        return int(getattr(self.options, key).value.get(pointer["key"], 0))
 
     def _count(self, item: dict[str, Any]) -> int:
         """How many of an item this run's pool holds.

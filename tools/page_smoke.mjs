@@ -1135,6 +1135,29 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const rows = elements.get('setup-options').children;
   assert.ok(rows.length > 0, 'the setup screen has no settings on it');
 
+  // Not every setting, though: the weights are a yaml's business. Four
+  // numbers whose only meaning is their share of a total do not belong on a
+  // phone, and a run gets the ones it would have chosen by leaving them
+  // alone. Their place in the table is untouched, which is what the engine
+  // sets them by.
+  {
+    const { engine } = window.twiddlygems;
+    const weights = engine.options.filter((option) => option.kind === 'weight');
+    assert.ok(weights.length > 0, 'nothing in the table is a weight, so this checks nothing');
+    assert.equal(
+      rows.length,
+      engine.options.length - weights.length,
+      'the setup screen is drawing settings it was meant to leave out',
+    );
+    for (const weight of weights) {
+      assert.equal(
+        engine.optionValue(weight.index),
+        weight.default,
+        `${weight.key} is not at its default, so the screen is not the only way to move it`,
+      );
+    }
+  }
+
   // Every control is built by walking the engine's table, so each row should
   // have a way to move the setting and something showing where it is. Tapping
   // one has to change what it says, or the control is decoration.

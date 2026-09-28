@@ -21,7 +21,8 @@ use std::path::Path;
 
 use twiddlygems::level::levels;
 use twiddlygems::options::{
-    Kind, Options, Setting, INVENTORY_ITEMS, PROGRESSIVE_LEVELS, SETTINGS, SPARE_UNLOCKS,
+    Group, Kind, Options, Setting, GROUPS, INVENTORY_CHANCE, INVENTORY_ITEMS, INVENTORY_WEIGHTS,
+    MOST_WEIGHT, PROGRESSIVE_LEVELS, SETTINGS, SPARE_UNLOCKS,
 };
 use twiddlygems::progression::{
     goal, item_name, item_pool, items, location_name, locations, requirement, spare_unlocks, Count,
@@ -70,6 +71,9 @@ fn option_table() -> Json {
     Json::Arr(
         SETTINGS
             .iter()
+            // The weights are not options of their own in a yaml: each group
+            // of them is one mapping, written out below.
+            .filter(|setting| !matches!(setting.kind, Kind::Weight { .. }))
             .map(|setting| {
                 let mut fields = vec![
                     ("key", Json::Str(setting.key.to_string())),
@@ -93,6 +97,9 @@ fn option_table() -> Json {
                     Kind::Toggle => {
                         fields.push(("kind", Json::Str("toggle".to_string())));
                     }
+                    // Filtered out above: a weight is a line in somebody
+                    // else's option rather than an option of its own.
+                    Kind::Weight { .. } => unreachable!("the weights are not written here"),
                     Kind::Choice(choices) => {
                         fields.push(("kind", Json::Str("choice".to_string())));
                         fields.push((
@@ -114,8 +121,47 @@ fn option_table() -> Json {
                 }
                 Json::Obj(fields)
             })
+            .chain(GROUPS.iter().map(weight_option))
             .collect(),
     )
+}
+
+/// One set of weights, as the single option a yaml writes it as.
+///
+/// A mapping with a line per weight rather than four options side by side:
+/// that is how Archipelago spells a set of relative chances, and it is what
+/// lets a player see at a glance that these four numbers are about each
+/// other. The defaults come from the same settings the engine reads, so the
+/// two sides cannot come to different ideas about an untouched run.
+fn weight_option(group: &Group) -> Json {
+    let members: Vec<&Setting> = SETTINGS
+        .iter()
+        .filter(|setting| matches!(setting.kind, Kind::Weight { group: of } if of == group.key))
+        .collect();
+    assert!(!members.is_empty(), "the group '{}' weighs nothing", group.key);
+    Json::Obj(vec![
+        ("key", Json::Str(group.key.to_string())),
+        ("ap_class", Json::Str(class_of_name(group.key))),
+        ("label", Json::Str(group.label.to_string())),
+        ("about", Json::Str(group.about.to_string())),
+        ("kind", Json::Str("weights".to_string())),
+        ("most", Json::Num(MOST_WEIGHT)),
+        (
+            "weights",
+            Json::Arr(
+                members
+                    .iter()
+                    .map(|member| {
+                        Json::Obj(vec![
+                            ("key", Json::Str(member.key.to_string())),
+                            ("label", Json::Str(member.label.to_string())),
+                            ("default", Json::Num(member.default)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
 }
 
 /// What the Python will call one setting's option class, fully qualified.
@@ -124,8 +170,14 @@ fn option_table() -> Json {
 /// key of `gem_frequency` becomes `GemFrequency`, and the name travels in the
 /// data so the two cannot disagree about it.
 fn ap_class(setting: &Setting) -> String {
+    class_of_name(setting.key)
+}
+
+/// The same for anything else a yaml names, which today is a group of
+/// weights: those are one option there and have no `Setting` of their own.
+fn class_of_name(key: &str) -> String {
     let mut name = String::new();
-    for word in setting.key.split('_') {
+    for word in key.split('_') {
         let mut letters = word.chars();
         if let Some(first) = letters.next() {
             name.extend(first.to_uppercase());
@@ -296,7 +348,11 @@ fn copies(item: Item, levels: usize) -> Copies {
         // because how many of a kind there are is not a number anybody wrote
         // down: the setting says how many bonus items there are and the kinds
         // are drawn at equal chance, so it is a roll.
-        Item::Consumable(_) => Copies::Share { of: INVENTORY_ITEMS },
+        Item::Consumable(kind) => Copies::Share {
+            of: INVENTORY_ITEMS,
+            weighed_by: INVENTORY_CHANCE,
+            key: INVENTORY_WEIGHTS[kind.code() as usize],
+        },
         // The ladder itself, when a run is opening it this way: one per level
         // past the first is what it takes to reach the top, and the setting
         // says how many more than that the world holds. A count neither
@@ -325,8 +381,9 @@ fn copies(item: Item, levels: usize) -> Copies {
 /// this engine for a solo run and the world's own generator for a multiworld.
 enum Copies {
     Fixed(Count),
-    /// One of the kinds sharing the total that setting names.
-    Share { of: &'static str },
+    /// One of the kinds sharing the total that setting names, drawn against
+    /// the others by the weight `key` names in the group `weighed_by`.
+    Share { of: &'static str, weighed_by: &'static str, key: &'static str },
     /// One per level past the first, plus a percentage of that on top, and
     /// none at all unless the named setting is on. The progressive level
     /// unlock and nothing else.
@@ -424,9 +481,21 @@ fn count_json(copies: Copies) -> Json {
         // Every item naming the same total shares it, and the world draws the
         // split. Not a `FromOption`: that resolver answers with the setting's
         // own number, and what is wanted here is a share of it.
-        Copies::Share { of } => Json::Obj(vec![(
+        // The total to share, and which line of the weights decides how much
+        // of it this one takes. Both are pointers at settings rather than
+        // numbers, because both are a player's to set.
+        Copies::Share { of, weighed_by, key } => Json::Obj(vec![(
             "share_of",
-            Json::Obj(vec![("option", Json::Str(class_of(of)))]),
+            Json::Obj(vec![
+                ("option", Json::Str(class_of(of))),
+                (
+                    "weight",
+                    Json::Obj(vec![
+                        ("option", Json::Str(class_of_name(weighed_by))),
+                        ("key", Json::Str(key.to_string())),
+                    ]),
+                ),
+            ]),
         )]),
         // Nor is this one: what it comes to is arithmetic on the ladder's
         // length, which the world cannot read off a setting because the

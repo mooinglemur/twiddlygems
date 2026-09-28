@@ -102,6 +102,14 @@ fn option_table_text() -> Vec<u8> {
             // all the same, so the page could tell them apart if it ever had a
             // reason to. What the difference is really for is the yaml, which
             // is the apworld's end of the table rather than this one.
+            // Carried across all the same, and the screen skips it: leaving
+            // it out would shift every setting after it, and what the page
+            // sets a setting by is its place in this list.
+            Kind::Weight { group } => {
+                fields.push("weight".to_string());
+                fields.push(setting.default.to_string());
+                fields.push(group.to_string());
+            }
             Kind::Toggle => {
                 fields.push("toggle".to_string());
                 fields.push(setting.default.to_string());

@@ -16,3 +16,12 @@ Twiddly Gems:
   # of two, which is what makes that work.
   progressive_levels: true
   spare_unlocks: 20
+  # Leaned rather than even, and with one kind left out altogether, so a real
+  # generation walks the weighted draw and the zero rather than only the
+  # default. These are relative: what they say is that a bonus item is four
+  # times more likely to be a rocket than a rainbow, and never a cluster.
+  inventory_item_chance:
+    rocket: 200
+    rainbow: 50
+    cross_clear: 50
+    rocket_cluster: 0

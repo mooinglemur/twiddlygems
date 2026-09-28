@@ -324,6 +324,68 @@ class TestTheLadderOpensByClearing(TwiddlyGemsTestBase):
         self.assertNotIn(LADDER, [item.name for item in self.multiworld.itempool])
 
 
+class TestTheBonusItemsAreWeighted(TwiddlyGemsTestBase):
+    """One kind asked for far more often than the other three.
+
+    The weights are relative and nothing else: what they decide is each kind's
+    share of a total the other setting names. A file that wants mostly rockets
+    says so by making that line bigger than the rest.
+    """
+
+    options = {
+        "inventory_items": 20,
+        "inventory_item_chance": {
+            "rocket": 1000,
+            "rainbow": 1,
+            "cross_clear": 1,
+            "rocket_cluster": 1,
+        },
+    }
+
+    def test_the_heavy_kind_takes_most_of_the_total(self) -> None:
+        held = [item.name for item in self.multiworld.itempool if item.name in SHARED]
+        self.assertEqual(len(held), 20, "the total is the other setting's business")
+        rockets = [name for name in held if name == "Inventory Item: Rocket"]
+        self.assertGreater(
+            len(rockets),
+            len(held) // 2,
+            f"a kind weighted a thousand to one took {len(rockets)} of {len(held)}",
+        )
+
+
+class TestNoBonusItemsAtAll(TwiddlyGemsTestBase):
+    """Every weight at nothing, which is how a file asks for none of them.
+
+    The one answer a weighted draw cannot give on its own: a total of zero is
+    not an even chance again, it is no item. Both sides stop in the same
+    place, the engine in `inventory_pool` and this world in `_shares`.
+    """
+
+    options = {
+        "inventory_items": 10,
+        "inventory_item_chance": {
+            "rocket": 0,
+            "rainbow": 0,
+            "cross_clear": 0,
+            "rocket_cluster": 0,
+        },
+    }
+
+    def test_none_of_them_are_in_the_world(self) -> None:
+        held = [item.name for item in self.multiworld.itempool if item.name in SHARED]
+        self.assertEqual(held, [], "a run that weighted every kind at nothing got some anyway")
+        # And the world is still a world: it submits as many items as it has
+        # places, with filler where the bonus items would have been.
+        self.assertEqual(
+            len([item for item in self.multiworld.itempool if item.player == self.player]),
+            len(self.world._locations_in_play()),
+        )
+
+    def test_a_seed_is_still_finishable(self) -> None:
+        self.collect_all_but([])
+        self.assertBeatable(True)
+
+
 class TestFalseIsAWayToSayOff(TwiddlyGemsTestBase):
     """A two-value setting written the way a player would write it.
 
