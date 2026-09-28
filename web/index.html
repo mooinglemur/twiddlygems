@@ -47,6 +47,12 @@
   </footer>
 </div>
 
+<!-- How the multiworld connection is doing, when there is something to say.
+     Fixed rather than a row in the bar: the playfield is sized against what
+     is above and below it, and a message that came and went would resize the
+     board under the player's thumb. -->
+<div id="link" class="hidden" role="status" aria-live="polite"></div>
+
 <!-- What a clear sends to the goal it counted toward. Over the whole page
      rather than inside the board, because that is the journey it makes. -->
 <canvas id="fx" aria-hidden="true"></canvas>
@@ -70,8 +76,8 @@
     <div id="title-buttons">
       <button id="solo-button" class="primary" type="button">Solo Play</button>
       <p id="solo-note" class="title-note">&nbsp;</p>
-      <button id="archipelago-button" type="button" disabled aria-disabled="true">Archipelago</button>
-      <p class="title-note">Multiworld play is not built yet.</p>
+      <button id="archipelago-button" type="button">Archipelago</button>
+      <p id="archipelago-note" class="title-note">Join a multiworld</p>
     </div>
   </div>
 </div>
@@ -85,6 +91,39 @@
       <button id="setup-start" class="primary" type="button">Start</button>
       <button id="setup-back" type="button">Back</button>
     </div>
+  </div>
+</div>
+
+<!-- Joining a multiworld. A form rather than the stepper the solo settings
+     use: none of this is a choice among things the engine knows about, it is
+     four things only the player can tell us. -->
+<div id="connect" class="hidden" role="dialog" aria-modal="true" aria-labelledby="connect-heading">
+  <div id="connect-card">
+    <h2 id="connect-heading">Join a multiworld</h2>
+    <p id="connect-note">Your settings come from the room, so there is nothing to choose here.</p>
+    <form id="connect-form" autocomplete="off">
+      <label class="connect-field">
+        <span>Server</span>
+        <input id="connect-host" type="text" inputmode="url" placeholder="archipelago.gg" required>
+      </label>
+      <label class="connect-field">
+        <span>Port</span>
+        <input id="connect-port" type="text" inputmode="numeric" pattern="[0-9]*" placeholder="38281">
+      </label>
+      <label class="connect-field">
+        <span>Slot name</span>
+        <input id="connect-slot" type="text" placeholder="Your name in the room" required>
+      </label>
+      <label class="connect-field">
+        <span>Password</span>
+        <input id="connect-password" type="password" placeholder="Only if the room has one">
+      </label>
+      <p id="connect-status" role="status" aria-live="polite">&nbsp;</p>
+      <div id="connect-buttons">
+        <button id="connect-go" class="primary" type="submit">Connect</button>
+        <button id="connect-back" type="button">Back</button>
+      </div>
+    </form>
   </div>
 </div>
 

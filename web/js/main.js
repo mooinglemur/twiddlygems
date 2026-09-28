@@ -3,6 +3,7 @@
 // input and asks what to draw.
 
 import { AIMED, Consumable, EventKind, Special, loadEngine, Phase, Status } from './engine.js';
+import { ArchipelagoClient, State as Link } from './archipelago.js';
 import { Audio } from './audio.js';
 import { GOAL_EFFECT_MS, Renderer } from './render.js';
 import { attachInput } from './input.js';
@@ -11,6 +12,35 @@ import { Hud } from './hud.js';
 const WASM_URL = 'twiddlygems.wasm';
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SOUND_KEY = 'twiddlygems.sound.v1';
+/**
+ * Where the last room was, so a returning player types nothing but a password.
+ *
+ * The only thing about a multiworld this browser writes down. Everything else
+ * about the run lives on the server, which is what lets a player open the same
+ * slot somewhere else and carry on. The password is deliberately not here.
+ */
+const ROOM_KEY = 'twiddlygems.ap.room.v1';
+/**
+ * What the room says that belongs in the feed.
+ *
+ * Nearly everything: the feed is where the room is heard from, and a player
+ * wants to know somebody joined as much as they want to know what they found.
+ * The two left out are addressed to the client rather than to the player.
+ */
+const WORTH_SAYING = new Set([
+  'ItemSend',
+  'ItemCheat',
+  'Hint',
+  'Join',
+  'Part',
+  'Chat',
+  'ServerChat',
+  'Goal',
+  'Release',
+  'Collect',
+  'Countdown',
+  'Text',
+]);
 /**
  * How long a player may stare at the board before it offers a move.
  *
@@ -54,7 +84,39 @@ const dom = {
   levelsButton: document.getElementById('levels-button'),
   retryButton: document.getElementById('retry-button'),
   soundButton: document.getElementById('sound-button'),
+  connect: document.getElementById('connect'),
+  connectForm: document.getElementById('connect-form'),
+  connectHost: document.getElementById('connect-host'),
+  connectPort: document.getElementById('connect-port'),
+  connectSlot: document.getElementById('connect-slot'),
+  connectPassword: document.getElementById('connect-password'),
+  connectStatus: document.getElementById('connect-status'),
+  connectBack: document.getElementById('connect-back'),
+  link: document.getElementById('link'),
 };
+
+/** The last room joined, so the form opens mostly filled in. */
+function readRoom() {
+  try {
+    const raw = window.localStorage.getItem(ROOM_KEY);
+    const room = raw ? JSON.parse(raw) : {};
+    return room && typeof room === 'object' ? room : {};
+  } catch (error) {
+    console.warn('could not read the last room', error);
+    return {};
+  }
+}
+
+function writeRoom({ host, port, slot }) {
+  try {
+    // No password. It is the one thing here worth keeping out of a store that
+    // any script on this origin can read, and it is also the one thing short
+    // enough to type again.
+    window.localStorage.setItem(ROOM_KEY, JSON.stringify({ host, port, slot }));
+  } catch (error) {
+    console.warn('could not remember the room', error);
+  }
+}
 
 /** Progress lives in the browser; the engine is told about it on start. */
 function readSave() {
@@ -181,29 +243,42 @@ async function boot() {
   // than the engine's: it is the flight time of the motes. Handed over before
   // anything else, so it survives the run being dealt again below.
   engine.setGoalHold(GOAL_EFFECT_MS);
-  // First of all, because setting one deals the run again: anything restored
-  // before this would be thrown away with the session it was restored into.
-  for (const option of engine.options) {
-    const saved = save.options[option.key];
-    if (Number.isInteger(saved)) {
-      engine.setOption(option.index, saved);
+
+  /**
+   * Puts a saved solo run back into a session that has none.
+   *
+   * Used twice: once at startup, and once on the way back from a multiworld,
+   * which plays in a session of its own and leaves this save untouched. One
+   * piece of code rather than two, because the order below is the whole of it
+   * and getting it wrong in one place only would be a bug nobody could see.
+   */
+  const restoreSolo = (from) => {
+    // First of all, because setting one deals the run again: anything restored
+    // before this would be thrown away with the session it was restored into.
+    for (const option of engine.options) {
+      const saved = from.options[option.key];
+      if (Number.isInteger(saved)) {
+        engine.setOption(option.index, saved);
+      }
     }
-  }
-  engine.setUnlocked(save.unlocked);
-  // Before the level is loaded, so it opens holding what the run had earned
-  // rather than being dealt bare and corrected a moment later.
-  for (const id of save.checked) {
-    engine.restore(id);
-  }
-  save.bestScores.forEach((score, index) => engine.restoreBestScore(index, score));
-  for (const [kind, held] of Object.entries(save.consumables)) {
-    if (Number.isInteger(held) && held > 0) {
-      engine.restoreConsumables(Number(kind), held);
+    engine.setUnlocked(from.unlocked);
+    // Before the level is loaded, so it opens holding what the run had earned
+    // rather than being dealt bare and corrected a moment later.
+    for (const id of from.checked) {
+      engine.restore(id);
     }
-  }
-  if (save.level > 0) {
-    engine.loadLevel(save.level);
-  }
+    from.bestScores.forEach((score, index) => engine.restoreBestScore(index, score));
+    for (const [kind, held] of Object.entries(from.consumables)) {
+      if (Number.isInteger(held) && held > 0) {
+        engine.restoreConsumables(Number(kind), held);
+      }
+    }
+    if (from.level > 0) {
+      engine.loadLevel(from.level);
+    }
+  };
+
+  restoreSolo(save);
 
   const renderer = new Renderer(dom.canvas, engine, dom.fx);
 
@@ -349,6 +424,15 @@ async function boot() {
   /// multiworld sent, which is why this reads the stream rather than asking
   /// the engine what it happens to be holding.
   const logItems = (events) => {
+    // Not in a multiworld. There the same events still fire, and they are the
+    // run being told what it holds rather than the player being told what
+    // happened: a reconnection replays every item the server ever sent, which
+    // through here would be a wall of news about nothing. What the player
+    // reads comes from the server's own messages instead, which are only ever
+    // sent live. See `onSaid`.
+    if (mode === 'multiworld') {
+      return;
+    }
     for (const event of events) {
       if (event.kind !== EventKind.ITEM) {
         continue;
@@ -358,6 +442,19 @@ async function boot() {
         hud.logItem(said);
         audio.play('sparkle');
       }
+    }
+  };
+
+  /// Something the room said, which in a multiworld is the whole of the feed.
+  const onSaid = (message) => {
+    if (mode !== 'multiworld' || !WORTH_SAYING.has(message.type)) {
+      return;
+    }
+    hud.logParts(message.parts);
+    // The same chime a solo find gets, and only for the ones that are ours:
+    // a busy room would otherwise be a metronome.
+    if (message.mine) {
+      audio.play('sparkle');
     }
   };
 
@@ -380,8 +477,40 @@ async function boot() {
 
   let hintAt = performance.now() + HINT_DELAY_MS;
   let resultShown = false;
-  /** 'title' while the menu is up, 'solo' once a run is being played. */
+  /**
+   * Where the page is: 'title' or 'setup' or 'connect' while a menu is up,
+   * 'solo' or 'multiworld' once a run is being played.
+   *
+   * The two playing modes differ in exactly three places, all of them here:
+   * the clock runs for both, the save is only written for one, and the feed is
+   * fed from a different direction.
+   */
   let mode = 'title';
+
+  /**
+   * The connection to a multiworld, made once and kept for the page's life.
+   *
+   * Built further down, because what it reports goes to handlers that are not
+   * written yet at this point in the file.
+   */
+  let client = null;
+
+  /** Whether a run is being played, whoever is dealing it. */
+  const playing = () => mode === 'solo' || mode === 'multiworld';
+
+  /**
+   * Writes the solo save, unless this is not a solo run.
+   *
+   * A multiworld run must never land in here. Everything it holds belongs to
+   * the server and none of it means anything without the room it came from, so
+   * writing it would both corrupt the solo run waiting underneath and leave a
+   * save that could not be loaded.
+   */
+  const saveRun = () => {
+    if (mode !== 'multiworld') {
+      writeSave(engine, seed);
+    }
+  };
 
   const onLevelChanged = () => {
     renderer.layout();
@@ -393,13 +522,15 @@ async function boot() {
     hud.disarm();
     hintAt = performance.now() + HINT_DELAY_MS;
     resultShown = false;
-    writeSave(engine, seed);
+    saveRun();
   };
 
   const showTitle = () => {
     mode = 'title';
     hud.hideOverlay();
     hud.hideSetup();
+    hud.hideConnect();
+    hud.showLink('');
     dom.title.classList.remove('hidden');
     // The board is still laid out underneath so the canvas keeps its size;
     // hiding it from assistive tech is what stops it being read as content.
@@ -429,7 +560,114 @@ async function boot() {
     hintAt = performance.now() + HINT_DELAY_MS;
     // Pin the seed now rather than at the first level change, so reloading
     // part way through the opening level deals the same board again.
-    writeSave(engine, seed);
+    saveRun();
+  };
+
+  // ---- the multiworld ----
+
+  /// The title screen's Archipelago button: ask where the room is.
+  const setUpMultiworld = () => {
+    mode = 'connect';
+    dom.title.classList.add('hidden');
+    hud.showConnect(readRoom());
+  };
+
+  /**
+   * Joins a room, on a session of its own.
+   *
+   * The engine is restarted first, which throws away whatever solo run was
+   * loaded. That run is still in its save and untouched: a multiworld deals
+   * its own progression and the two must not be mixed, and coming back to the
+   * title puts the solo one back.
+   */
+  const joinMultiworld = async () => {
+    const room = hud.connectDetails();
+    if (!room.host || !room.slot) {
+      hud.setConnectStatus('A server and a slot name are both needed', 'bad');
+      return;
+    }
+    hud.setConnectStatus('Connecting…');
+    seed = freshSeed();
+    engine.restart(seed);
+    hud.clearFeed();
+    try {
+      await client.connect(room);
+      writeRoom(room);
+    } catch (error) {
+      // Failing to reach the room at all. Being refused by it is a different
+      // thing that happens later and arrives through `onLinkState`.
+      hud.setConnectStatus(error.message, 'bad');
+    }
+  };
+
+  /// The handshake finished, so there is a run to play.
+  const startMultiworld = () => {
+    mode = 'multiworld';
+    hud.hideConnect();
+    dom.title.classList.add('hidden');
+    dom.app.removeAttribute('aria-hidden');
+    // The run was dealt again on the way in, by every setting the room sent,
+    // so everything drawn from it has to be built from scratch.
+    renderer.reset();
+    renderer.hint = null;
+    rebuildHud();
+    renderer.layout();
+    hud.hideOverlay();
+    hud.disarm();
+    resultShown = false;
+    hintAt = performance.now() + HINT_DELAY_MS;
+  };
+
+  /**
+   * How the connection is doing, from the client.
+   *
+   * The same handler covers the way in and everything after it, because being
+   * refused by a room is not a different sort of event from being dropped by
+   * one an hour later.
+   */
+  const onLinkState = (state, detail) => {
+    if (state === Link.PLAYING) {
+      hud.setConnectStatus('Connected', 'good');
+      hud.showLink('');
+      if (mode !== 'multiworld') {
+        startMultiworld();
+      }
+      return;
+    }
+    if (state === Link.REFUSED) {
+      const said = detail ?? 'The room refused the connection';
+      hud.setConnectStatus(said, 'bad');
+      // Already playing when it happened, which a version mismatch cannot be
+      // but a room being shut down mid-game can.
+      if (mode === 'multiworld') {
+        hud.showLink(said, 'bad');
+      }
+      return;
+    }
+    if (mode === 'multiworld') {
+      hud.showLink(state === Link.LOST ? 'Connection lost, retrying…' : 'Reconnecting…', 'bad');
+    }
+  };
+
+  client = new ArchipelagoClient(engine, { onFeed: onSaid, onState: onLinkState });
+
+  /// Leaves the room and puts the solo run back, which was never disturbed.
+  const leaveMultiworld = () => {
+    client.disconnect();
+    hud.showLink('');
+    hud.clearFeed();
+    const saved = readSave();
+    seed = saved.seed;
+    // A fresh session, which is also what clears the engine of the multiworld:
+    // a new one is its own run again until something says otherwise.
+    engine.restart(seed);
+    restoreSolo(saved);
+    mode = 'title';
+    renderer.reset();
+    renderer.hint = null;
+    rebuildHud();
+    hud.disarm();
+    showTitle();
   };
 
   /// Ends the run: the saved progress goes, and the engine opens a new session
@@ -469,15 +707,31 @@ async function boot() {
     if (hud.armed === null) {
       return false;
     }
-    if (engine.useConsumable(hud.armed, cell)) {
+    const kind = hud.armed;
+    if (engine.useConsumable(kind, cell)) {
       hud.disarm();
       // Before anything else looks at the engine: the whole first clear was
       // raised inside that call and the next tick would clear it away.
       consume(performance.now());
       moved();
-      writeSave(engine, seed);
+      spent(kind);
+      saveRun();
     }
     return true;
+  };
+
+  /**
+   * One of the things the run was carrying has been used up.
+   *
+   * In a multiworld this goes to the server rather than into a file here. The
+   * server knows what it sent and has no idea any of it was spent, so without
+   * this a reload would hand the player back everything they had fired. In
+   * solo the save covers it, which is what the line above does.
+   */
+  const spent = (kind) => {
+    if (mode === 'multiworld') {
+      client.spend(kind);
+    }
   };
 
   /// Tapping a slot arms it, or puts it away if it was already armed. The
@@ -496,7 +750,8 @@ async function boot() {
       if (engine.useConsumable(kind)) {
         consume(performance.now());
         moved();
-        writeSave(engine, seed);
+        spent(kind);
+        saveRun();
       }
       return;
     }
@@ -536,7 +791,14 @@ async function boot() {
         }
       },
       onClose: () => hud.hideOverlay(),
-      onQuit: () => hud.confirmQuit({ onCancel: openLevels, onConfirm: endRun }),
+      // Leaving a room is not the same as throwing a solo run away: the room
+      // keeps everything this run has done, so there is nothing to lose by
+      // going and the solo save is still sitting where it was.
+      onQuit: () =>
+        hud.confirmQuit({
+          onCancel: openLevels,
+          onConfirm: mode === 'multiworld' ? leaveMultiworld : endRun,
+        }),
     });
   };
 
@@ -571,6 +833,19 @@ async function boot() {
   dom.setupStart.addEventListener('click', startSolo);
   dom.setupBack.addEventListener('click', showTitle);
 
+  dom.archipelagoButton.addEventListener('click', setUpMultiworld);
+  dom.connectForm.addEventListener('submit', (event) => {
+    // A form rather than a bare button, so a phone keyboard shows Go and
+    // pressing it connects. Which means stopping the page from reloading.
+    event.preventDefault();
+    joinMultiworld();
+  });
+  dom.connectBack.addEventListener('click', () => {
+    client.disconnect();
+    hud.hideConnect();
+    showTitle();
+  });
+
   dom.retryButton.addEventListener('click', () => {
     engine.retry();
     onLevelChanged();
@@ -593,13 +868,20 @@ async function boot() {
     // The title screen holds the clock rather than running a level nobody can
     // see behind it. `last` is still moved on above, so choosing a mode does
     // not hand the engine the whole time the menu was up as one frame.
-    if (mode !== 'solo') {
+    if (!playing()) {
       requestAnimationFrame(frame);
       return;
     }
 
     engine.update(dt);
     consume(now);
+
+    // What this frame checked, if anything, and whether the run is over. Both
+    // are a number compared against a number on a frame where nothing
+    // happened, which is almost all of them: see `poll`.
+    if (mode === 'multiworld') {
+      client.poll();
+    }
 
     if (engine.phase !== Phase.IDLE) {
       hintAt = now + HINT_DELAY_MS;
@@ -617,7 +899,7 @@ async function boot() {
 
     if (engine.status !== Status.PLAYING && !resultShown && !hud.overlayVisible) {
       resultShown = true;
-      writeSave(engine, seed);
+      saveRun();
       hud.showResult(engine.status, {
         onRetry: () => {
           engine.retry();

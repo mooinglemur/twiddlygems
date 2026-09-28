@@ -148,7 +148,22 @@ assert.deepEqual(addressesFor('localhost', 38281), [
   'wss://localhost:38281',
   'ws://localhost:38281',
 ]);
-assert.deepEqual(addressesFor('ws://localhost', 38281), ['ws://localhost:38281'], 'a typed scheme is taken at its word');
+assert.deepEqual(
+  addressesFor('ws://localhost', 38281),
+  ['ws://localhost:38281'],
+  'a typed scheme is taken at its word rather than tried both ways',
+);
+// The shape a room actually gets shared in, pasted whole into the first box
+// while the port box still holds its default.
+assert.deepEqual(
+  addressesFor('archipelago.gg:45678', '38281'),
+  ['wss://archipelago.gg:45678', 'ws://archipelago.gg:45678'],
+  'a port typed into the address lost to the one in the other box',
+);
+assert.deepEqual(addressesFor('archipelago.gg/', ''), [
+  'wss://archipelago.gg',
+  'ws://archipelago.gg',
+]);
 
 // ---- the handshake --------------------------------------------------------
 

@@ -10,6 +10,7 @@ import {
   Status,
   Tier,
 } from './engine.js';
+import { ItemFlag } from './archipelago.js';
 import {
   PALETTE,
   paintConsumableIcon,
@@ -851,6 +852,110 @@ export class Hud {
   }
 
   /**
+   * One thing the room said, already broken into parts by the client.
+   *
+   * A multiworld's feed is the server's own message rather than a sentence
+   * assembled here, for a reason worth keeping in view: the server only ever
+   * sends these live. Reconnecting quietly puts fifty items back into the run
+   * without saying a word, which is what a player coming back should see.
+   *
+   * So there is no describing to do here, only coloring: an item by what the
+   * world makes of it, a player by whether it is us, and everything else as
+   * it came.
+   */
+  logParts(parts) {
+    const { dom } = this;
+    const line = document.createElement('li');
+    for (const part of parts) {
+      if (part.kind === 'text') {
+        line.append(part.text);
+        continue;
+      }
+      const span = document.createElement('span');
+      span.textContent = part.text;
+      if (part.kind === 'item') {
+        // The same four colors a local find gets, off the same flags
+        // Archipelago puts on the wire.
+        span.className = `what ${flagClass(part.flags)}`;
+      } else if (part.kind === 'player') {
+        span.className = part.you ? 'player you' : 'player';
+      } else if (part.kind === 'location') {
+        span.className = 'location';
+      } else {
+        span.className = 'ap-text';
+      }
+      line.append(span);
+    }
+    dom.feed.append(line);
+    while (dom.feed.children.length > FEED_LIMIT) {
+      dom.feed.children[0].remove();
+    }
+    dom.feed.scrollTop = dom.feed.scrollHeight;
+  }
+
+  // ---- joining a multiworld ----
+
+  showConnect(remembered = {}) {
+    const { dom } = this;
+    dom.connectHost.value = remembered.host ?? '';
+    dom.connectPort.value = remembered.port ?? '';
+    dom.connectSlot.value = remembered.slot ?? '';
+    // Deliberately not remembered, and deliberately emptied rather than left
+    // holding whatever was typed last time.
+    dom.connectPassword.value = '';
+    this.setConnectStatus('');
+    dom.connect.classList.remove('hidden');
+    // The server is the one field most likely to want changing, and on a
+    // phone this is what raises the keyboard without a second tap.
+    dom.connectHost.focus();
+  }
+
+  hideConnect() {
+    this.dom.connect.classList.add('hidden');
+  }
+
+  get connectVisible() {
+    return !this.dom.connect.classList.contains('hidden');
+  }
+
+  /** What the connect screen has to say, if anything. */
+  setConnectStatus(text, kind = '') {
+    const { connectStatus } = this.dom;
+    connectStatus.textContent = text || ' ';
+    connectStatus.className = kind;
+  }
+
+  /** What the player typed, for handing to the client. */
+  connectDetails() {
+    const { dom } = this;
+    return {
+      host: dom.connectHost.value.trim(),
+      port: dom.connectPort.value.trim(),
+      slot: dom.connectSlot.value.trim(),
+      password: dom.connectPassword.value,
+    };
+  }
+
+  /**
+   * The state of the connection, over the top of the game.
+   *
+   * Empty text puts it away, which is the state a working connection is in:
+   * a pill that said "connected" forever would be a pill nobody reads, and
+   * the one that matters is the one that appears when something has gone
+   * wrong.
+   */
+  showLink(text, kind = '') {
+    const { link } = this.dom;
+    if (!text) {
+      link.classList.add('hidden');
+      return;
+    }
+    link.textContent = text;
+    link.className = kind;
+    link.classList.remove('hidden');
+  }
+
+  /**
    * Turns an item event into the words for it: what happened, what the item
    * is, and where it came from.
    *
@@ -896,6 +1001,26 @@ export class Hud {
   get overlayVisible() {
     return !this.dom.overlay.classList.contains('hidden');
   }
+}
+
+/**
+ * What an item's wire flags make of it, as a class the feed already styles.
+ *
+ * Archipelago's flags are a bit set and this game's classes are one apiece, so
+ * the order here is the order of precedence: something both progression and
+ * useful is progression, because that is the thing worth knowing about it.
+ */
+function flagClass(flags) {
+  if (flags & ItemFlag.TRAP) {
+    return 'trap';
+  }
+  if (flags & ItemFlag.PROGRESSION) {
+    return 'progression';
+  }
+  if (flags & ItemFlag.USEFUL) {
+    return 'useful';
+  }
+  return 'filler';
 }
 
 function button(label, onClick, primary) {

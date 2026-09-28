@@ -224,6 +224,16 @@ for (const [name, metrics] of [
   await shoot(`${name}-01-setup`);
   await evaluate(`window.twiddlygems.hud.hideSetup()`);
 
+  // And the other way in, which asks for a room rather than for settings:
+  // under a multiworld the settings come from the room. Shot with something
+  // in the boxes, because an empty form is a picture of placeholder text.
+  await evaluate(
+    `window.twiddlygems.hud.showConnect({ host: 'archipelago.gg', port: '38281', slot: 'twiddly' })`,
+  );
+  await sleep(200);
+  await shoot(`${name}-02-connect`);
+  await evaluate(`window.twiddlygems.hud.hideConnect()`);
+
   await evaluate(`document.getElementById('solo-button').click()`);
   await sleep(400);
 

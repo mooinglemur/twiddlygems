@@ -136,6 +136,11 @@ function stubElement(id) {
     removeAttribute(name) { delete this.attributes[name]; },
     setPointerCapture() {},
     releasePointerCapture() {},
+    focus() {},
+    // What a form field holds. Every element gets one because the stub has no
+    // idea which of them are inputs, and an element nobody reads it from is
+    // not harmed by having it.
+    value: '',
     getContext() {
       if (element === canvas) {
         return context2d;
@@ -150,15 +155,17 @@ function stubElement(id) {
   return element;
 }
 
-for (const id of [
-  'app', 'board', 'fx', 'stage', 'level-number', 'level-name', 'score', 'score-box', 'score-marks',
-  'moves', 'objectives', 'inventory', 'feed',
-  'overlay', 'overlay-title', 'overlay-body', 'overlay-buttons',
-  'tracker', 'tracker-items', 'level-list',
-  'levels-button', 'retry-button', 'sound-button',
-  'title', 'solo-button', 'solo-note', 'archipelago-button',
-  'setup', 'setup-options', 'setup-start', 'setup-back',
-]) {
+// Every id the real page defines, read out of the real page.
+//
+// This was a list kept here by hand, which made the assertion below a lie: it
+// said the markup did not define an id when what had happened was that nobody
+// had added it to this list. Reading `index.html` makes the sentence true and
+// means markup and script can be changed together without a third file having
+// to be remembered.
+const markup = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
+const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map((found) => found[1]);
+assert.ok(ids.length > 20, 'the page markup could not be read, so this proves nothing');
+for (const id of ids) {
   elements.set(id, stubElement(id));
 }
 canvas = elements.get('board');
@@ -325,17 +332,36 @@ function overlayButton(label) {
 {
   const title = elements.get('title');
   assert.ok(!title.classList.contains('hidden'), 'the game did not open on its title screen');
-  // Archipelago is not built yet. The stub does not parse the markup, so the
-  // attribute is checked where it is written, and the thing that would
-  // actually go wrong (someone wiring the button up early) is checked here.
-  const markup = await readFile('web/index.html', 'utf8');
+  // Archipelago is built now, so the button has to be reachable: enabled in
+  // the markup, wired here, and leading somewhere a player can get back out
+  // of. It was checked the other way round for as long as it did nothing.
   const tag = markup.match(/<button id="archipelago-button"[^>]*>/)?.[0] ?? '';
-  assert.match(tag, /\bdisabled\b/, 'the Archipelago button is not disabled in the markup');
-  assert.equal(
-    elements.get('archipelago-button').handlers.length,
-    0,
-    'something is wired to the Archipelago button, which does not work yet',
+  assert.doesNotMatch(tag, /\bdisabled\b/, 'the Archipelago button is still disabled in the markup');
+  assert.ok(
+    elements.get('archipelago-button').handlers.length > 0,
+    'nothing is wired to the Archipelago button',
   );
+
+  dispatch('archipelago-button', 'click');
+  assert.ok(
+    !elements.get('connect').classList.contains('hidden'),
+    'the Archipelago button did not open the connect screen',
+  );
+  assert.ok(title.classList.contains('hidden'), 'the title screen stayed up over the connect screen');
+  // And back out again, without having touched a socket.
+  dispatch('connect-back', 'click');
+  assert.ok(elements.get('connect').classList.contains('hidden'), 'there is no way back from the connect screen');
+  assert.ok(!title.classList.contains('hidden'), 'backing out of the connect screen went nowhere');
+  // Nothing typed, so trying to connect must say so rather than reaching for a
+  // server that was never named.
+  dispatch('archipelago-button', 'click');
+  dispatch('connect-form', 'submit');
+  assert.match(
+    elements.get('connect-status').textContent,
+    /server and a slot name/,
+    'an empty form tried to connect anyway',
+  );
+  dispatch('connect-back', 'click');
   assert.equal(
     elements.get('app').getAttribute('aria-hidden'),
     'true',
