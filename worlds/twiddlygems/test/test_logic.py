@@ -15,6 +15,9 @@ SHARED = [
     if isinstance(item["count"], dict) and "share_of" in item["count"]
 ]
 
+#: The ladder's own item, which the pool holds many of on purpose.
+LADDER = "Progressive Level Unlock"
+
 UNLOCKS = [
     "Horizontal Line Clear",
     "Vertical Line Clear",
@@ -35,18 +38,23 @@ class TestDefault(TwiddlyGemsTestBase):
         # nobody can start.
         self.assertTrue(self.can_reach_location("Level 1 Clear"))
 
-    def test_the_whole_ladder_is_open_to_a_player_holding_nothing(self) -> None:
-        # A level is gated on the one below it and on nothing else, and no
-        # level asks for an item, so the chain bottoms out at a player who has
-        # found nothing: every clear on the ladder is in the first sphere.
-        #
-        # This is the claim that costs something. It means every level has to
-        # be beatable on its own move budget, because a generator believing
-        # this will happily put the last unlock behind the last level.
+    def test_the_ladder_is_shut_past_the_level_a_run_has_reached(self) -> None:
+        # The default opens the ladder by item, so the clears are a real chain
+        # of spheres rather than all sitting in the first one. What a level
+        # asks for is its place in the ladder and nothing else: no level asks
+        # for a special or a moves upgrade to be cleared, which is what keeps
+        # every level beatable on its own move budget.
+        self.assertTrue(self.can_reach_location("Level 1 Clear"))
+        for index in range(2, len(LEVELS) + 1):
+            self.assertFalse(
+                self.can_reach_location(f"Level {index} Clear"),
+                f"level {index} is open to a run that has found nothing",
+            )
+        self.collect_by_name("Progressive Level Unlock")
         for index in range(1, len(LEVELS) + 1):
             self.assertTrue(
                 self.can_reach_location(f"Level {index} Clear"),
-                f"level {index} asks for an item before it can be cleared",
+                f"level {index} asks for more than its place in the ladder",
             )
 
     def test_a_score_mark_wants_the_specials(self) -> None:
@@ -69,6 +77,9 @@ class TestDefault(TwiddlyGemsTestBase):
         # everything that level has to offer should be in hand first. The
         # upgrade for it may be found anywhere at all, including on a later
         # level, which is exactly why it cannot be kept on this one.
+        # Level two first, since the ladder opens by item: a mark on a level
+        # nobody can play is a mark nobody can reach.
+        self.collect_by_name("Progressive Level Unlock")
         self.collect_by_name(UNLOCKS)
         self.assertTrue(self.can_reach_location("Level 2 Silver"))
         self.assertFalse(self.can_reach_location("Level 2 Gold"))
@@ -128,11 +139,19 @@ class TestDefault(TwiddlyGemsTestBase):
             by_name[item.name] = by_name.get(item.name, 0) + 1
 
         for name, count in by_name.items():
-            if name == "Filler" or name in SHARED:
+            if name == "Filler" or name in SHARED or name == LADDER:
                 continue
             self.assertEqual(
                 count, 1, f"{name} was submitted {count} times to fill the world out"
             )
+        # The ladder's own item is the other exception, and for the opposite
+        # reason to the shared ones: how many there are is not a roll but a
+        # count, and it is the ladder's length plus the spares asked for.
+        self.assertEqual(
+            by_name.get(LADDER, 0),
+            self.world._count(ITEMS_BY_NAME[LADDER]),
+            "the world submitted a different number of level unlocks than its settings ask for",
+        )
         self.assertGreater(by_name.get("Filler", 0), 0, "nothing filled the leftovers")
 
         # The shared items are exempt above because how many of each there are
@@ -309,17 +328,35 @@ class TestTheLadderOpensByClearing(TwiddlyGemsTestBase):
 
 
 class TestClearingIsTheGoal(TwiddlyGemsTestBase):
-    """The goal that asks for nothing, chosen on purpose.
+    """The goal that asks for the least, on a ladder that opens by clearing.
 
-    Worth having as a setting and worth knowing what it costs: clearing a
-    level needs no items, so a run set this way is beatable the moment it
-    starts and the generator will treat every item in the world as optional.
-    Somebody who wants a relaxed slot should be able to ask for that.
+    Both settings together are what makes a world with nothing to find:
+    clearing a level needs no items, and a ladder that opens by clearing needs
+    none either, so a run set this way is beatable the moment it starts and
+    the generator treats every item in the world as optional. Somebody who
+    wants a relaxed slot should be able to ask for that, and should have to
+    ask for both halves of it.
+    """
+
+    options = {"goal": "clear_last_level", "progressive_levels": "off"}
+
+    def test_it_is_beatable_out_of_an_empty_inventory(self) -> None:
+        self.assertBeatable(True)
+
+
+class TestClearingIsTheGoalOnAnItemLadder(TwiddlyGemsTestBase):
+    """The same goal with the ladder opening by item, which is the default.
+
+    The ladder is what makes this goal a goal. Reaching the last level means
+    holding every unlock below it, so a generator has something to place and a
+    playthrough has spheres, where the pair above has neither.
     """
 
     options = {"goal": "clear_last_level"}
 
-    def test_it_is_beatable_out_of_an_empty_inventory(self) -> None:
+    def test_the_ladder_is_what_it_asks_for(self) -> None:
+        self.assertBeatable(False)
+        self.collect_by_name(LADDER)
         self.assertBeatable(True)
 
 
@@ -332,6 +369,7 @@ class TestGoldEverywhereIsTheGoal(TwiddlyGemsTestBase):
         # Gold on the last level is not enough when every level wants one, so
         # the branches of the goal rule are doing their own work rather than
         # all collapsing onto the same thing.
+        self.collect_by_name(LADDER)
         self.collect_by_name(UNLOCKS)
         self.collect_by_name(f"Level {len(LEVELS)} Moves Upgrade")
         self.assertTrue(self.can_reach_location(f"Level {len(LEVELS)} Gold"))

@@ -54,9 +54,9 @@ impl Default for Options {
         Options {
             goal: Goal::GoldOnLastLevel,
             ap_gems: 1,
-            ap_gem_odds: 64,
+            ap_gem_odds: 100,
             inventory_items: 10,
-            progressive_levels: 0,
+            progressive_levels: 1,
             spare_unlocks: 20,
         }
     }
@@ -175,7 +175,7 @@ impl Setting {
     /// Whether this is a value the setting can take.
     pub fn allows(&self, value: u32) -> bool {
         match self.kind {
-            Kind::Range { low, high } => (low..=high).contains(&value),
+            Kind::Range { low, high, .. } => (low..=high).contains(&value),
             Kind::Choice(choices) => choices.iter().any(|choice| choice.value == value),
         }
     }
@@ -188,8 +188,8 @@ impl Setting {
     /// the setting's business rather than the screen's.
     pub fn step(&self, value: u32, by: i32) -> u32 {
         match self.kind {
-            Kind::Range { low, high } => {
-                let moved = value as i64 + by as i64;
+            Kind::Range { low, high, step } => {
+                let moved = value as i64 + by as i64 * step.max(1) as i64;
                 moved.clamp(low as i64, high as i64) as u32
             }
             Kind::Choice(choices) => {
@@ -204,8 +204,12 @@ impl Setting {
 
 /// What sort of control a setting wants.
 pub enum Kind {
-    /// A number between two bounds, inclusive.
-    Range { low: u32, high: u32 },
+    /// A number between two bounds, inclusive, moved in `step`s.
+    ///
+    /// The step is what a tap of the button is worth, not a grid the value has
+    /// to sit on: a range accepts anything between its bounds, because a yaml
+    /// is free to say 137 where the buttons would only ever reach 130 or 140.
+    Range { low: u32, high: u32, step: u32 },
     /// One of a list.
     Choice(&'static [Choice]),
 }
@@ -247,7 +251,7 @@ pub static SETTINGS: &[Setting] = &[
         // wants none should get none unless their own options demand them.
         // Ten is the ceiling because ten is what the location table holds, and
         // that number is a datapackage and cannot move.
-        kind: Kind::Range { low: 0, high: 10 },
+        kind: Kind::Range { low: 0, high: 10, step: 1 },
         default: 1,
     },
     Setting {
@@ -255,26 +259,17 @@ pub static SETTINGS: &[Setting] = &[
         label: "How often a gem falls",
         about: "One refilled gem in this many is an AP gem, while the level \
                 still has checks waiting in them.",
-        // A list rather than a range, because the useful values span three
-        // orders of magnitude and a pair of step buttons walking one at a time
-        // from 64 to 16384 is not a control anybody can use. Doubling each
-        // step is how a frequency is actually thought about.
-        kind: Kind::Choice(&[
-            Choice { key: "one_in_16", label: "1 in 16", value: 16 },
-            Choice { key: "one_in_32", label: "1 in 32", value: 32 },
-            Choice { key: "one_in_64", label: "1 in 64", value: 64 },
-            Choice { key: "one_in_96", label: "1 in 96", value: 96 },
-            Choice { key: "one_in_128", label: "1 in 128", value: 128 },
-        ]),
-        // Measured rather than guessed: `make balance` plays levels out at
-        // each of these and counts how long a gem takes to fall. One in 64
-        // puts one on most boards, which is what a check a player is meant to
-        // collect should feel like. The sparser end is the dial for somebody
-        // who wants them to be an event, and it stops at 128 because past
-        // that a run's own checks turn into a grind: one in 256 already cost
-        // three playthroughs of a level for its single check, and one in 512
-        // cost five.
-        default: 64,
+        // A range in tens rather than the doubling list this used to be. The
+        // useful band turned out to be narrow enough to walk: outside 50 to
+        // 200 a gem is either on every board or on hardly any, and neither end
+        // is a setting anybody wants. Ten to a tap crosses it in fifteen.
+        //
+        // The number is the one in one-in-this-many, which the sentence above
+        // is what says: the control shows 100 and the line under it reads it
+        // out. `make balance` measures the other end of the same thing, in
+        // playthroughs per gem.
+        kind: Kind::Range { low: 50, high: 200, step: 10 },
+        default: 100,
     },
     Setting {
         key: INVENTORY_ITEMS,
@@ -297,7 +292,7 @@ pub static SETTINGS: &[Setting] = &[
         // raise when the ladder grows: `the_pool_fits_in_the_locations_there_are`
         // and `the_solo_placement_finds_a_home_for_the_whole_pool` sweep this
         // setting at its ends and are what would say so.
-        kind: Kind::Range { low: 0, high: 15 },
+        kind: Kind::Range { low: 0, high: 15, step: 1 },
         default: 10,
     },
     Setting {
@@ -306,16 +301,16 @@ pub static SETTINGS: &[Setting] = &[
         about: "Off, clearing a level opens the next one. On, the ladder is \
                 shut past the first level and each Progressive Level Unlock \
                 found opens one more.",
-        // Off by default because it is the larger change of the two: a run
-        // with it on cannot be played straight through, and somebody opening
-        // the solo screen for the first time should get the game they expect.
-        // It is also the one that makes a multiworld of this game interesting,
-        // which is a reason to offer it, not a reason to assume it.
+        // On by default, which is the game this is meant to be: a ladder that
+        // opens by clearing is a game where nothing in the world is needed to
+        // finish it, and a run that finds its way up by items is what makes
+        // both a solo run and a multiworld worth playing. Off is kept for
+        // somebody who wants to play it straight through.
         kind: Kind::Choice(&[
             Choice { key: "off", label: "Off", value: 0 },
             Choice { key: "on", label: "On", value: 1 },
         ]),
-        default: 0,
+        default: 1,
     },
     Setting {
         key: SPARE_UNLOCKS,
@@ -334,7 +329,7 @@ pub static SETTINGS: &[Setting] = &[
         // pointing at "Progressive Level Unlock" is worth acting on more than
         // once. The ceiling is a doubling, which is past useful and cheap to
         // allow.
-        kind: Kind::Range { low: 0, high: 100 },
+        kind: Kind::Range { low: 0, high: 100, step: 5 },
         default: 20,
     },
     // A level's moves upgrade has no setting of its own yet. Each level
@@ -420,7 +415,7 @@ mod tests {
             key: "test",
             label: "Test",
             about: "A range, for the check below.",
-            kind: Kind::Range { low: 1, high: 4 },
+            kind: Kind::Range { low: 1, high: 4, step: 1 },
             default: 2,
         };
         assert!(!span.allows(0), "a range took a value below its floor");
@@ -439,12 +434,29 @@ mod tests {
             key: "test",
             label: "Test",
             about: "A range, for the check below.",
-            kind: Kind::Range { low: 1, high: 4 },
+            kind: Kind::Range { low: 1, high: 4, step: 1 },
             default: 2,
         };
         assert_eq!(span.step(4, 1), 4, "a range walked past its ceiling");
         assert_eq!(span.step(1, -1), 1, "a range walked past its floor");
         assert_eq!(span.step(2, 1), 3, "a range would not move");
+
+        // A range that moves in more than ones, which is what the gem
+        // frequency wants: a band a hundred and fifty wide is not a control
+        // anybody can walk one at a time. The ends still stop it dead rather
+        // than letting a step overshoot them.
+        let tens = Setting {
+            key: "test",
+            label: "Test",
+            about: "A range in tens.",
+            kind: Kind::Range { low: 50, high: 200, step: 10 },
+            default: 100,
+        };
+        assert_eq!(tens.step(100, 1), 110, "a range in tens moved by one");
+        assert_eq!(tens.step(100, -1), 90);
+        assert_eq!(tens.step(195, 1), 200, "a step overshot the ceiling");
+        assert_eq!(tens.step(50, -1), 50, "a step walked past the floor");
+        assert!(tens.allows(137), "a range refused a value between its bounds");
 
         let goal = &SETTINGS[setting_index(GOAL).unwrap()];
         assert_eq!(goal.step(3, 1), 0, "a choice did not wrap round");

@@ -197,7 +197,13 @@ for (const [name, metrics] of [
     // is the one state of it these shots would otherwise always be of. Keyed
     // by the engine's own code for each kind, the same as the save writes it,
     // and ten of them altogether, which is what a run is dealt by default.
-    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, consumables: { 0: 3, 1: 1, 2: 2, 3: 4 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090] }))`,
+    // And the ladder set to open by clearing, which is not the default. A run
+    // opening it by item is only as far up as its items have carried it, and
+    // which location holds the first unlock is the seed's business, so a save
+    // claiming to be on the second level would be a save the engine is right
+    // to refuse. These shots are of the game's screens; the ladder's own rule
+    // is checked in the engine's tests and the world's.
+    `localStorage.setItem('twiddlygems.save.v1', JSON.stringify({ seed: 20260920, unlocked: 99, level: ${LEVEL}, options: { progressive_levels: 0 }, consumables: { 0: 3, 1: 1, 2: 2, 3: 4 }, checked: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 1002, 1003, 1004, 1005, 1006, 2002, 3002, 2003, 4000, 4010, 4020, 4030, 4040, 4050, 4060, 4070, 4080, 4090] }))`,
   );
   // `?debug` puts the engine, renderer and HUD on `window.twiddlygems`, which
   // is how the shots below reach past the board to things an ordinary run only
@@ -332,6 +338,31 @@ for (const [name, metrics] of [
   }
   await sleep(600);
   await shoot(`${name}-05-cashing-in`);
+
+  // And what the flourish leads to: the panel that says how the level went.
+  // It comes up on its own once the board stops, so this waits for it rather
+  // than asking for it, which is also a check that it appears at all.
+  const panel = await evaluate(`
+    (async () => {
+      for (let i = 0; i < 4000; i += 1) {
+        if (!document.getElementById('overlay').classList.contains('hidden')) {
+          return true;
+        }
+        await new Promise((done) => requestAnimationFrame(done));
+      }
+      // Said rather than a bare false: a level that never ended and a panel
+      // that never came up are different faults with the same symptom.
+      return 'status ' + window.twiddlygems.engine.status
+        + ', overlay ' + document.getElementById('overlay').className;
+    })()
+  `);
+  if (panel !== true) {
+    console.error(`the level never raised its finished panel (${panel})`);
+    stop();
+    process.exit(1);
+  }
+  await sleep(300);
+  await shoot(`${name}-05-finished`);
 
   await evaluate(`document.getElementById('levels-button').click()`);
   await sleep(400);

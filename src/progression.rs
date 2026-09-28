@@ -1512,16 +1512,15 @@ mod tests {
     fn the_pool_carries_a_level_unlock_per_level_and_the_spares_on_top() {
         // The ladder's own length is what it takes to reach the top, and the
         // setting says how many more than that the world holds.
-        let off = Options::default();
-        assert_eq!(off.progressive_levels, 0, "the ladder no longer opens by clearing by default");
+        let off = Options { progressive_levels: 0, ..Options::default() };
         assert_eq!(
             item_pool(13, 7, &off).iter().filter(|item| **item == Item::LevelUnlock).count(),
             0,
             "a run opening the ladder by clearing was dealt unlocks it can do nothing with",
         );
 
-        let mut on = Options::default();
-        on.progressive_levels = 1;
+        let on = Options::default();
+        assert_eq!(on.progressive_levels, 1, "the ladder no longer opens by item by default");
         // Twelve to climb a thirteen level ladder, and a fifth of twelve is
         // 2.4, which rounds to two spares.
         assert_eq!(level_unlocks(13, &on), 14);
@@ -1548,9 +1547,7 @@ mod tests {
         // the items nothing waits on. In front, they spend the first level's
         // handful of places on themselves and strand the specials: that is a
         // fill that fails, and it did.
-        let mut on = Options::default();
-        on.progressive_levels = 1;
-        on.spare_unlocks = 100;
+        let on = Options { spare_unlocks: 100, ..Options::default() };
         let pool = item_pool(13, 7, &on);
         let ladder = 12;
         assert!(
@@ -1779,7 +1776,7 @@ mod tests {
             // a different branch of the completion rule and all four have to
             // be walked.
             let mut values: Vec<u32> = match setting.kind {
-                Kind::Range { low, high } => vec![low, setting.default, high],
+                Kind::Range { low, high, .. } => vec![low, setting.default, high],
                 Kind::Choice(choices) if choices.len() <= SWEPT_WHOLE => {
                     choices.iter().map(|choice| choice.value).collect()
                 }
@@ -2062,8 +2059,13 @@ mod tests {
         // it exists to find, so here is that shape at its smallest: the
         // opening level's clear asking for the very unlock it is holding.
         // Nothing opens it, so nothing opens at all.
+        //
+        // On a ladder that opens by clearing, because the shape needs an item
+        // that exists exactly once: the ladder's own item has fourteen copies
+        // spread around the world, so an opening clear asking for one is
+        // asking for something a chain can also pay, which is not a circle.
         let levels = 13;
-        let options = Options::default();
+        let options = Options { progressive_levels: 0, ..Options::default() };
         let placed = solo_placement(levels, fill_seed(3), &options);
         let held = placed[0].expect("the opening clear holds something");
         let circular = |at: Location| match at {
@@ -2098,9 +2100,8 @@ mod tests {
         // lets the ladder be climbed by someone who finds nothing optional. So
         // clearing one asks for the ladder and for nothing else, under either
         // of the two ways the ladder opens.
-        let by_clearing = Options::default();
-        let mut by_item = Options::default();
-        by_item.progressive_levels = 1;
+        let by_clearing = Options { progressive_levels: 0, ..Options::default() };
+        let by_item = Options::default();
 
         for levels in LADDERS {
             for index in 0..levels {

@@ -87,7 +87,11 @@ fn option_table_text() -> Vec<u8> {
             setting.about.to_string(),
         ];
         match setting.kind {
-            Kind::Range { low, high } => {
+            // The step is left out on purpose: the screen asks the engine to
+            // move a setting one step rather than working the new value out
+            // itself, so it is the engine's business how far a step is. See
+            // `tg_step_option`.
+            Kind::Range { low, high, step: _ } => {
                 fields.push("range".to_string());
                 fields.push(setting.default.to_string());
                 fields.push(low.to_string());
@@ -296,6 +300,13 @@ impl Session {
     /// Moves on after a win. Returns false when the ladder is finished, and
     /// also when the next level is not open: a run unlocking by item can beat
     /// a level and have nowhere to go until one turns up.
+    ///
+    /// Nothing crosses the ABI for this any more. The panel at the end of a
+    /// level stopped offering to go on, because with the ladder opening by
+    /// item there is not always an onward to offer and the level select is
+    /// where that question belongs. Kept because the ladder is a ladder and
+    /// "the next one" is a thing to be able to ask for; `tg_load_level` is
+    /// what the page uses.
     pub fn next_level(&mut self) -> bool {
         let next = self.index + 1;
         if next >= self.levels.len() {
@@ -731,6 +742,18 @@ mod tests {
     /// The score is put out of reach and then the board is nudged until it
     /// ends, because what these tests are about is what a clear leads to, not
     /// whether the level is beatable.
+    /// A run whose ladder opens by clearing, which is not what a fresh one
+    /// does any more.
+    ///
+    /// Most of what follows is about something other than the ladder and wants
+    /// one it can simply walk up: a test that stops at the second level
+    /// because it has not been handed an item is a test about the wrong thing.
+    /// The two ways the ladder opens are checked on their own, in
+    /// `a_ladder_that_opens_by_item_does_not_open_by_clearing` and its pair.
+    fn climbing(seed: u64) -> Session {
+        Session::set_up(seed, Options { progressive_levels: 0, ..Options::default() })
+    }
+
     /// What an item event says, unpacked: which item, and where from.
     type Announced = (u16, u16);
 
@@ -787,8 +810,12 @@ mod tests {
     /// reach holding nothing, so most seeds put one here and a handful is
     /// plenty to look through.
     fn run_finding_an_unlock() -> (Session, Special) {
+        // On a ladder that opens by clearing, like its pair below. What the
+        // opening clear pays is the whole point of both, and with the ladder
+        // opening by item it mostly pays a level unlock: the fill puts those
+        // in first, because everything waits on them.
         for seed in 0..64 {
-            let session = Session::new(seed);
+            let session = climbing(seed);
             if let Some(Item::Unlock(special)) = session.holds(Location::LevelClear(0)) {
                 return (session, special);
             }
@@ -803,7 +830,7 @@ mod tests {
     /// on top of whatever the score was pinned to.
     fn run_finding_no_unlock() -> Session {
         for seed in 0..64 {
-            let session = Session::new(seed);
+            let session = climbing(seed);
             if let Some(Item::Moves { .. }) = session.holds(Location::LevelClear(0)) {
                 return session;
             }
@@ -1554,7 +1581,7 @@ mod tests {
 
     #[test]
     fn winning_unlocks_the_next_level() {
-        let mut session = Session::new(7);
+        let mut session = climbing(7);
         force_win(&mut session);
         assert_eq!(session.unlocked(), 2);
         assert!(session.next_level());
@@ -1564,7 +1591,7 @@ mod tests {
 
     #[test]
     fn the_ladder_ends_cleanly() {
-        let mut session = Session::new(7);
+        let mut session = climbing(7);
         let last = session.level_count() - 1;
         session.unlocked = session.level_count();
         assert!(session.load(last));
@@ -1606,11 +1633,11 @@ mod tests {
 
     #[test]
     fn a_ladder_that_opens_by_clearing_ignores_the_item() {
-        // The default way round: the count a clear keeps is the answer, and an
+        // The other way round: the count a clear keeps is the answer, and an
         // unlock arriving from somewhere changes nothing. It cannot arrive in
         // a solo run set up this way, because none are in the pool, but a
         // multiworld can send anything.
-        let mut session = Session::new(7);
+        let mut session = climbing(7);
         assert_eq!(session.unlocked(), 1);
         session.receive(Item::LevelUnlock);
         assert_eq!(session.unlocked(), 1, "an unlock opened a level in a run not using them");
@@ -1620,15 +1647,15 @@ mod tests {
 
     #[test]
     fn levels_are_reproducible_but_not_identical() {
-        let a = Session::new(99);
-        let b = Session::new(99);
+        let a = climbing(99);
+        let b = climbing(99);
         assert!(a
             .game()
             .board
             .positions()
             .all(|p| a.game().board.gem(p) == b.game().board.gem(p)));
 
-        let mut c = Session::new(99);
+        let mut c = climbing(99);
         c.unlocked = c.level_count();
         c.load(1);
         let differs = c
@@ -1641,7 +1668,11 @@ mod tests {
 
     #[test]
     fn restoring_progress_is_clamped_to_the_ladder() {
-        let mut session = Session::new(7);
+        // A run whose ladder opens by clearing, because this is about the
+        // count a save hands back, and a run opening it by item has no such
+        // count: what it holds is the answer. That is
+        // `a_ladder_that_opens_by_item_does_not_open_by_clearing`.
+        let mut session = climbing(7);
         session.set_unlocked(4);
         assert_eq!(session.unlocked(), 4);
         assert!(session.load(3));
@@ -1673,7 +1704,7 @@ mod tests {
         // follows from its seed, which is what the screenshot tooling and the
         // difficulty bots rely on.
         let walk = |seed| {
-            let mut session = Session::new(seed);
+            let mut session = climbing(seed);
             session.retry();
             session.set_unlocked(3);
             assert!(session.load(2));
@@ -1685,7 +1716,7 @@ mod tests {
 
     #[test]
     fn retry_restores_the_level_without_unlocking_anything() {
-        let mut session = Session::new(7);
+        let mut session = climbing(7);
         let (a, b) = first_move(&mut session).unwrap();
         session.game_mut().try_swap(a, b);
         for _ in 0..200 {

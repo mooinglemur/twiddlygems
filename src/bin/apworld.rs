@@ -79,7 +79,10 @@ fn option_table() -> Json {
                     ("default", Json::Num(setting.default)),
                 ];
                 match setting.kind {
-                    Kind::Range { low, high } => {
+                    // No step: an Archipelago Range takes any value between
+                    // its bounds, and the step is what a button on the solo
+                    // screen is worth. A yaml is free to say 137.
+                    Kind::Range { low, high, step: _ } => {
                         fields.push(("kind", Json::Str("range".to_string())));
                         fields.push(("low", Json::Num(low)));
                         fields.push(("high", Json::Num(high)));
@@ -176,13 +179,16 @@ fn item_table(levels: usize) -> Json {
                     // than a number, so there is nothing to compare one
                     // against. They are added up instead, below.
                     Copies::Share { .. } => shared += counted,
-                    // The default settings have the ladder opening by
-                    // clearing, so the pool holds none of these. What it holds
-                    // when it is switched on is checked below, where both
-                    // settings can be moved at once.
-                    Copies::Ladder { .. } => assert_eq!(
-                        0, counted,
-                        "the pool holds level unlocks at the default settings, which do not use them",
+                    // The ladder's own item. The arithmetic is written twice
+                    // on purpose: `item_pool` is what the engine builds a pool
+                    // from, and the three numbers in the table are what a
+                    // multiworld builds one from, so this is where the two are
+                    // held together.
+                    Copies::Ladder { needed, .. } => assert_eq!(
+                        counted,
+                        needed + spare_unlocks(needed, fresh.spare_unlocks),
+                        "the pool holds {counted} level unlocks, which is not the ladder's \
+                         length plus the spares the setting asks for",
                     ),
                     Copies::Fixed(count) => assert_eq!(
                         count.resolve(&fresh),
@@ -213,24 +219,17 @@ fn item_table(levels: usize) -> Json {
          {} the setting asks for",
         fresh.inventory_items,
     );
-    // And the ladder's own item, which the default settings do not use, so it
-    // is checked with them switched on. The arithmetic is written twice on
-    // purpose: `level_unlocks` is what the engine builds a pool from, and the
-    // three numbers in the table are what a multiworld builds one from, so
-    // this is the place the two are held together.
+    // And the other way round, which the default settings are not: a run
+    // opening the ladder by clearing holds none of that item, and the world
+    // has to leave them out of its pool rather than dealing a run items it
+    // has nothing to do with.
     {
-        let mut using = Options::default();
-        using.progressive_levels = 1;
-        let counted = item_pool(levels, 0, &using)
-            .iter()
-            .filter(|item| **item == Item::LevelUnlock)
-            .count() as u32;
-        let needed = levels.saturating_sub(1) as u32;
+        let mut clearing = Options::default();
+        clearing.progressive_levels = 0;
         assert_eq!(
-            counted,
-            needed + spare_unlocks(needed, using.spare_unlocks),
-            "the pool holds {counted} level unlocks, which is not the ladder's length plus \
-             the spares the setting asks for",
+            item_pool(levels, 0, &clearing).iter().filter(|item| **item == Item::LevelUnlock).count(),
+            0,
+            "a run opening the ladder by clearing was dealt level unlocks anyway",
         );
     }
     table

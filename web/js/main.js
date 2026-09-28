@@ -344,10 +344,6 @@ async function boot() {
     }
   };
 
-  /// The last item this level turned up, for the panel that appears when it
-  /// ends. Cleared when another level is dealt.
-  let lastFound = null;
-
   /// Anything the run was given goes in the feed. In solo these come from
   /// clearing levels; under Archipelago the same events will carry what the
   /// multiworld sent, which is why this reads the stream rather than asking
@@ -360,10 +356,6 @@ async function boot() {
       const said = hud.describeItem(event);
       if (said) {
         hud.logItem(said);
-        // Kept for the end-of-level panel, which says what this level turned
-        // up. Taken from the stream rather than asked of the engine, so the
-        // panel and the feed cannot disagree about what was found.
-        lastFound = said;
         audio.play('sparkle');
       }
     }
@@ -401,7 +393,6 @@ async function boot() {
     hud.disarm();
     hintAt = performance.now() + HINT_DELAY_MS;
     resultShown = false;
-    lastFound = null;
     writeSave(engine, seed);
   };
 
@@ -628,17 +619,17 @@ async function boot() {
       resultShown = true;
       writeSave(engine, seed);
       hud.showResult(engine.status, {
-        onNext: () => {
-          if (engine.nextLevel()) {
-            onLevelChanged();
-          }
-        },
         onRetry: () => {
           engine.retry();
           onLevelChanged();
         },
         onLevels: openLevels,
-      }, lastFound);
+        // Leaves the finished board on screen, which is the one thing the
+        // panel is in the way of. It does not come back on its own: the panel
+        // is shown once per attempt, and the way on from here is the level
+        // select or the restart button.
+        onClose: () => hud.hideOverlay(),
+      });
     }
 
     requestAnimationFrame(frame);

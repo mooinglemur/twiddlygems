@@ -144,14 +144,6 @@ pub unsafe extern "C" fn tg_load_level(handle: *mut Handle, index: u32) -> u32 {
 /// # Safety
 /// `handle` must come from [`tg_create`].
 #[no_mangle]
-pub unsafe extern "C" fn tg_next_level(handle: *mut Handle) -> u32 {
-    let handle = session_mut!(handle, 0);
-    handle.session.next_level() as u32
-}
-
-/// # Safety
-/// `handle` must come from [`tg_create`].
-#[no_mangle]
 pub unsafe extern "C" fn tg_retry(handle: *mut Handle) {
     let handle = session_mut!(handle, ());
     handle.session.retry();
@@ -786,7 +778,7 @@ fn pack_events(handle: &mut Handle) {
 mod tests {
     use super::*;
     use crate::game::EV_SWAP;
-    use crate::options::SETTINGS;
+    use crate::options::{setting_index, PROGRESSIVE_LEVELS, SETTINGS};
     use crate::progression::{Class, Location};
 
     /// Drives the ABI the way the front end does, to catch a mismatch between
@@ -907,6 +899,12 @@ mod tests {
     fn restored_progress_opens_the_level_select() {
         unsafe {
             let handle = tg_create(5, 0);
+            // A ladder that opens by clearing, set across the boundary the
+            // way the page sets it when it reads a save. The count a save
+            // hands back means nothing to a run opening it by item, which is
+            // `a_ladder_that_opens_by_item_does_not_open_by_clearing`.
+            let at = setting_index(PROGRESSIVE_LEVELS).expect("the setting exists");
+            assert_eq!(tg_set_option(handle, at as u32, 0), 1, "the setting refused to go off");
             assert_eq!(tg_load_level(handle, 3), 0);
             tg_set_unlocked(handle, 5);
             assert_eq!(tg_unlocked(handle), 5);

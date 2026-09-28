@@ -504,33 +504,21 @@ export class Hud {
    * place items are announced: the panel and the feed should never be able to
    * disagree about what was found.
    */
-  showResult(status, actions, found) {
+  showResult(status, actions) {
     const { engine, dom } = this;
     const won = status === Status.WON;
-    const lastLevel = engine.levelIndex + 1 >= engine.levelCount;
-    // A run opening the ladder by item can beat a level and have nowhere to
-    // go: the next one is shut until a Progressive Level Unlock turns up. The
-    // ladder opening by clearing never sees this, because clearing this level
-    // is what opened the next one.
-    const nextOpen = engine.levelIndex + 1 < engine.unlocked;
+    const score = Math.round(engine.score);
+    const { silver, gold } = engine.tiers;
+    // What this attempt came to, named the way the level select names it. The
+    // heading is the result: a player who has just watched the flourish knows
+    // the level is over and wants to know how it went.
+    const tier = gold > 0 && score >= gold ? 'Gold' : silver > 0 && score >= silver ? 'Silver' : null;
+    const level = `Level ${engine.levelIndex + 1}`;
+    dom.overlayTitle.textContent = won ? `${level} ${tier ?? 'Cleared'}` : 'Out of moves';
 
-    dom.overlayTitle.textContent = won
-      ? lastLevel
-        ? 'Ladder complete'
-        : 'Level complete'
-      : 'Out of moves';
     const lines = [];
     if (won) {
-      const score = Math.round(engine.score);
-      // What the level was worth beating well, said before the number, since
-      // the tier is the achievement and the score is only the evidence.
-      const { silver, gold } = engine.tiers;
-      const tier = gold > 0 && score >= gold ? 'Gold' : silver > 0 && score >= silver ? 'Silver' : null;
-      lines.push(
-        tier
-          ? `${tier}: ${score.toLocaleString()} points on ${engine.levelName}.`
-          : `${score.toLocaleString()} points on ${engine.levelName}.`,
-      );
+      lines.push(`${score.toLocaleString()} points on ${engine.levelName}.`);
       // How far off the next mark up is, which is the whole reason to play a
       // level again once it is cleared. The nearer one first: someone short of
       // silver wants to hear about silver, not gold.
@@ -541,27 +529,23 @@ export class Hud {
       if (next) {
         lines.push(`${(next.at - score).toLocaleString()} more for ${next.name}.`);
       }
-      if (found) {
-        lines.push(found.where ? `${found.said}${found.what} (${found.where}).` : `${found.said}${found.what}.`);
-      }
-      // Said rather than left to be worked out from a missing button: a level
-      // beaten with nothing to move on to is a state worth explaining, and the
-      // thing to do about it is play something else and wait.
-      if (!lastLevel && !nextOpen) {
-        lines.push('The next level is shut until a Progressive Level Unlock turns up.');
-      }
+      // What the level turned up is not said here. It is already in the feed,
+      // a few inches up the same screen, where it stays rather than being
+      // shown once and dismissed.
     } else {
       lines.push(unmetSummary(engine));
     }
     dom.overlayBody.textContent = lines.join(' ');
 
-    const buttons = [];
-    if (won && !lastLevel && nextOpen) {
-      buttons.push(button('Next level', actions.onNext, true));
-    }
-    buttons.push(button(won ? 'Play again' : 'Try again', actions.onRetry, !won));
-    buttons.push(button('Levels', actions.onLevels, false));
-    dom.overlayButtons.replaceChildren(...buttons);
+    // Three ways out, and none of them is "onward": where to go next is the
+    // level select's business, and with the ladder opening by item there is
+    // not always an onward to offer. Close is the quiet one, and leaves the
+    // board it was covering on screen.
+    dom.overlayButtons.replaceChildren(
+      button('Levels', actions.onLevels, false),
+      button('Replay', actions.onRetry, !won),
+      button('Close', actions.onClose, won),
+    );
 
     dom.tracker.classList.add('hidden');
     dom.overlay.classList.remove('hidden');

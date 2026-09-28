@@ -250,10 +250,27 @@ globalThis.fetch = async (url) => {
 // one, on a seed where following hints wins with ten moves to spare and the
 // run ends up holding only the rocket and the rainbow, neither of which the
 // flourish can mint.
+//
+// The ladder is set to open by clearing rather than by item, which is not the
+// default any more. A run opening it by item is only as far up as its items
+// have carried it, and which location holds the first unlock is the seed's
+// business, so a save that simply claims to be on the second level would be a
+// save the engine is right to refuse. What is being checked below is the page,
+// and the page needs a level with room on it to check anything at all. The
+// ladder's own rule is checked where it lives, in the engine's tests and the
+// world's.
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SEED = 11;
 const LEVEL = 1;
-store.set(SAVE_KEY, JSON.stringify({ seed: SEED, unlocked: LEVEL + 1, level: LEVEL }));
+store.set(
+  SAVE_KEY,
+  JSON.stringify({
+    seed: SEED,
+    unlocked: LEVEL + 1,
+    level: LEVEL,
+    options: { progressive_levels: 0 },
+  }),
+);
 
 await import(path.resolve('web/js/main.js'));
 
@@ -844,19 +861,23 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const overlay = elements.get('overlay');
   assert.ok(!overlay.classList.contains('hidden'), 'winning raised no panel');
 
-  // Clearing a level hands over whatever is kept there, and the panel is
-  // where the player is told. Which item that is belongs to the placement, so
-  // this asks that it was named and said where it came from, not which one it
-  // was.
-  //
-  // Any location, not this level's own: the panel shows the last item the run
-  // was handed, and a winning move can pay a chain or an AP gem in the same
-  // breath as the clear. That the level's own item was announced is checked
-  // against the feed below, which keeps every line rather than the last.
+  // The panel says how the level went and nothing else. What it turned up is
+  // in the feed a few inches up the same screen, and saying it twice meant
+  // saying it once somewhere that disappears.
+  assert.equal(
+    elements.get('overlay-title').textContent,
+    `Level ${LEVEL + 1} Cleared`,
+    'the panel does not say which level was beaten, or how well',
+  );
   assert.match(
     elements.get('overlay-body').textContent,
-    /Found .+ \((Level \d+ (Clear|Silver|Gold|AP Gem \d+)|\d+ Chain|Activate \d match)\)\./,
-    'clearing the level announced nothing',
+    /^[\d,]+ points on .+\./,
+    'the panel does not say what the level was beaten with',
+  );
+  assert.doesNotMatch(
+    elements.get('overlay-body').textContent,
+    /Found |Received /,
+    'the panel is still announcing an item the feed already holds',
   );
 
   // The feed is the running record of what the run has been given, and where
@@ -946,9 +967,18 @@ click(overlayButton('Close'), 'the level picker has no way out');
     'the finished-level panel is showing the level picker underneath its buttons',
   );
 
-  // From there the picker marks where the player is going, not the level they
-  // just finished: it sits beside a button offering to start the next one.
-  click(overlayButton('Levels'), 'the finished-level panel offers no way to the picker');
+  // Close gets out of the way and leaves the finished board on screen, which
+  // is the whole of what it does. Checked on the real panel rather than on a
+  // stand-in, because what is being checked is what the page wired it to.
+  click(overlayButton('Close'), 'the finished-level panel cannot be closed');
+  assert.ok(
+    elements.get('overlay').classList.contains('hidden'),
+    'closing the finished-level panel left it on screen',
+  );
+
+  // From there the picker is reached the ordinary way, and marks where the
+  // player is rather than where they were.
+  dispatch('levels-button', 'click', {});
   const marked = list.children.findIndex((row) => row.classList.contains('current'));
   assert.equal(marked, LEVEL + 1, 'the picker marks the level just finished rather than the next one');
 
@@ -1022,52 +1052,53 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.equal(rebuilt.levelBestScore(LEVEL), beaten, 'a reloaded run forgot its best score');
 }
 
-// A level beaten with the next one still shut offers no way on to it. Only a
-// run opening the ladder by item can be in that state, and the panel is what
-// decides: it asks the engine how far the ladder is open rather than assuming
-// that clearing a level opened something.
+// The panel offers three ways out and no fourth. Where to go next is the
+// level select's business: with the ladder opening by item there is not always
+// an onward to offer, and a button that sometimes does nothing is worse than
+// no button. Close is the one that simply gets out of the way.
 {
   const { hud } = window.twiddlygems;
   const { Status } = await import(path.resolve('web/js/engine.js'));
   const real = hud.engine;
-  // A stand-in rather than the run itself. The engine never takes a level
-  // back, so a run this far in cannot be put into the state being checked,
-  // and what is being checked is the panel's own decision: this is everything
-  // it reads to make it.
+  // A stand-in rather than the run itself, so the marks can be moved around
+  // underneath it: what is being checked is what the panel makes of them.
   const stub = {
     levelIndex: 3,
     levelCount: 13,
-    unlocked: 4,
     score: 9_000,
-    tiers: { silver: 0, gold: 0 },
+    tiers: { silver: 5_000, gold: 20_000 },
     levelName: 'Test Level',
   };
-  const nothing = { onNext() {}, onRetry() {}, onLevels() {} };
+  let closed = 0;
+  const actions = { onRetry() {}, onLevels() {}, onClose: () => { closed += 1; } };
   hud.engine = stub;
 
-  hud.showResult(Status.WON, nothing, null);
-  assert.ok(
-    !overlayButton('Next level'),
-    'a level beaten with the next one still shut offered a way on to it anyway',
-  );
-  assert.match(
-    elements.get('overlay-body').textContent,
-    /Progressive Level Unlock/,
-    'a stuck run was left to work out for itself why it cannot go on',
+  hud.showResult(Status.WON, actions);
+  for (const label of ['Levels', 'Replay', 'Close']) {
+    assert.ok(overlayButton(label), `the finished-level panel has no ${label} button`);
+  }
+  assert.ok(!overlayButton('Next level'), 'the panel still offers to go on to the next level');
+  assert.equal(
+    elements.get('overlay-title').textContent,
+    'Level 4 Silver',
+    'the panel does not name the mark this attempt reached',
   );
 
-  // And with the next level open it is offered, which is every other run.
-  stub.unlocked = 5;
-  hud.showResult(Status.WON, nothing, null);
-  assert.ok(
-    overlayButton('Next level'),
-    'a level beaten with the next one open offers no way on to it',
-  );
-  assert.doesNotMatch(
-    elements.get('overlay-body').textContent,
-    /Progressive Level Unlock/,
-    'a run that can go on was told it was stuck',
-  );
+  // Past the gold, and the heading says so rather than saying it again in the
+  // body: the heading is the result.
+  stub.score = 25_000;
+  hud.showResult(Status.WON, actions);
+  assert.equal(elements.get('overlay-title').textContent, 'Level 4 Gold');
+
+  // And a clear that reached neither is still a clear.
+  stub.score = 1_000;
+  hud.showResult(Status.WON, actions);
+  assert.equal(elements.get('overlay-title').textContent, 'Level 4 Cleared');
+
+  // Each button calls the action it was handed. That the page hands Close
+  // something that hides the panel is checked against the real one, above.
+  click(overlayButton('Close'), 'the panel cannot be closed');
+  assert.equal(closed, 1, 'closing the panel did nothing');
 
   hud.engine = real;
   hud.hideOverlay();
@@ -1136,6 +1167,15 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const { EventKind, ObjectiveKind, Status } = await import(path.resolve('web/js/engine.js'));
   const { engine, renderer } = window.twiddlygems;
 
+  // This run was dealt fresh a moment ago, so it is opening the ladder by
+  // item, and a floor on how many levels are unlocked means nothing to a run
+  // playing that way. What follows is about goals and chips and has no opinion
+  // about the ladder, so it is turned back to opening by clearing and then
+  // opened. Setting an option deals the run again, which is why it comes
+  // first.
+  const ladder = engine.options.find((option) => option.key === 'progressive_levels');
+  assert.ok(ladder, 'the settings table has no progressive level unlock');
+  engine.setOption(ladder.index, 0);
   engine.setUnlocked(engine.levelCount);
 
   /// Moves to a level by the route a player takes and leaves the air clear, so

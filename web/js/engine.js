@@ -536,14 +536,6 @@ export class Engine {
     return ok;
   }
 
-  nextLevel() {
-    const ok = this.wasm.tg_next_level(this.handle) === 1;
-    if (ok) {
-      this.readGeometry();
-    }
-    return ok;
-  }
-
   retry() {
     this.wasm.tg_retry(this.handle);
     this.readGeometry();
