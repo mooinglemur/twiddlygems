@@ -114,6 +114,7 @@ function connected(engine, over = {}) {
     slot_info: { 1: { name: 'twiddly', game: GAME, type: 1 } },
     checked_locations: [],
     slot_data: {
+      generator: engine.generator,
       levels: [],
       options: {},
       ap_gems_per_level: engine.gemsPerLevel,
@@ -370,10 +371,54 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
   await client.connect({ host: 'localhost', port: 38281, slot: 'twiddly' });
   socket.deliver(roomInfo());
   await settle();
-  socket.deliver(connected(engine, { slot_data: { levels: [], options: {}, ap_gems_per_level: 99 } }));
+  socket.deliver(
+    connected(engine, {
+      slot_data: { generator: engine.generator, levels: [], options: {}, ap_gems_per_level: 99 },
+    }),
+  );
   await settle();
   assert.equal(client.state, State.REFUSED, 'a seed the game cannot play was played anyway');
-  assert.match(states.at(-1)[1], /different versions/, 'the refusal did not say why');
+  assert.match(states.at(-1)[1], /AP gems in a level/, 'the refusal did not say why');
+}
+
+// ---- a seed from a generator this build does not know -------------------
+
+{
+  // The version gate, which comes before anything else is read out of the slot
+  // data: whether any of it can be read at all is what it answers.
+  const cases = [
+    // A generation from the future, which is the ordinary case: a player
+    // installed a newer apworld than their game.
+    [{ generator: 99, levels: [], options: {}, ap_gems_per_level: 1 }, /generator 99/],
+    // And one from before any of this existed, which must not be taken for
+    // the oldest supported: that is exactly what the gate is for.
+    [{ levels: [], options: {}, ap_gems_per_level: 1 }, /unknown generator/],
+  ];
+  for (const [slot_data, says] of cases) {
+    const engine = await loadEngine('unused', 7);
+    let socket = null;
+    const states = [];
+    const client = new ArchipelagoClient(engine, {
+      cache: new MemoryCache(),
+      open: (url) => (socket = new StubSocket(url)),
+      onState: (state, detail) => states.push([state, detail]),
+    });
+    await client.connect({ host: 'localhost', port: 38281, slot: 'twiddly' });
+    socket.deliver(roomInfo());
+    await settle();
+    socket.deliver(connected(engine, { slot_data }));
+    await settle();
+    assert.equal(client.state, State.REFUSED, `${JSON.stringify(slot_data)} was played anyway`);
+    assert.match(states.at(-1)[1], says, 'the refusal did not say which generation');
+    assert.equal(client.retryAt, null, 'a seed this build cannot read would be retried forever');
+    // And nothing of that seed reached the run: refusing has to happen before
+    // any of it is believed.
+    assert.equal(engine.unlocked, 1);
+  }
+
+  // The one it does know is played.
+  const { client } = await joinARoom();
+  assert.equal(client.state, State.PLAYING, 'the generation this build writes was refused');
 }
 
 // ---- a refusal is not retried ---------------------------------------------
@@ -395,4 +440,7 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
   assert.equal(client.retryAt, null, 'a wrong password would be retried forever');
 }
 
-console.log('ap ok: handshake, datapackage cache, resync, spent items, checks sent once, version refused');
+console.log(
+  'ap ok: handshake, datapackage cache, resync, spent items, checks sent once, ' +
+    'unknown generator refused',
+);

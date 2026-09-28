@@ -26,8 +26,8 @@ use twiddlygems::options::{
 };
 use twiddlygems::progression::{
     goal, item_name, item_pool, items, location_name, locations, requirement, spare_unlocks, Count,
-    Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, LONGEST_CHAIN, RELIABLE_CHAIN,
-    SHORTEST_CHAIN,
+    Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, GENERATOR, LONGEST_CHAIN,
+    RELIABLE_CHAIN, SHORTEST_CHAIN,
 };
 
 /// What the game is called wherever Archipelago says its name.
@@ -194,6 +194,10 @@ fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
         // Written so the Python side can say where this came from without
         // anyone having to remember to keep a version number in step.
         ("generated_by", Json::Str("cargo run --bin apworld".to_string())),
+        // Which generation of all this a seed built from it was made to. It
+        // travels to the player in the slot data, and the game refuses a seed
+        // whose number it does not know: see `GENERATOR`.
+        ("generator", Json::Num(GENERATOR)),
         (
             "levels",
             Json::Arr(ladder.iter().map(|level| Json::Str(level.name.to_string())).collect()),

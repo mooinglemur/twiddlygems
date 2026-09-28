@@ -506,6 +506,22 @@ export class ArchipelagoClient {
     });
   }
 
+  /**
+   * Stops for good, saying why.
+   *
+   * For the things that will be just as wrong the next time: a seed this
+   * build cannot read is not a connection problem, and retrying it every
+   * second would only be a slower way of not playing. The socket goes,
+   * because unlike a refused password there is nothing to correct and try
+   * again over the same connection.
+   */
+  refuse(why) {
+    this.error = why;
+    this.cancelRetry();
+    this.disconnect();
+    this.setState(State.REFUSED);
+  }
+
   onConnectionRefused(packet) {
     const said = (packet.errors ?? []).join(', ');
     this.error = said ? `the server refused the connection: ${said}` : 'the server refused the connection';
@@ -530,6 +546,29 @@ export class ArchipelagoClient {
       this.slots.set(Number(at), info);
     }
 
+    // Before anything is read out of the slot data, because whether any of it
+    // can be read at all is what this says.
+    //
+    // Nothing in a seed announces its own meaning: an item id is an integer
+    // whichever generation wrote it, and a setting's value is an integer
+    // whichever list it was an index into. A game playing a seed built to
+    // rules it does not have would not fail, it would quietly play a different
+    // game. So the seed carries the number of the generator that made it and
+    // this is where an unknown one stops.
+    //
+    // A seed with no number at all is refused for the same reason, and not
+    // treated as the oldest: it was built before any of this existed, which is
+    // exactly the case being guarded against.
+    const generator = packet.slot_data?.generator;
+    if (!Number.isInteger(generator) || !this.engine.playsGenerator(generator)) {
+      const said = Number.isInteger(generator) ? `generator ${generator}` : 'an unknown generator';
+      this.refuse(
+        `this seed was built by ${said}, and this version of the game plays ` +
+          `generator ${this.engine.generator}; one of the two needs updating`,
+      );
+      return;
+    }
+
     // First, because everything after it depends on the run being the right
     // run, and because changing a setting deals the whole run again.
     const settings = packet.slot_data?.options ?? {};
@@ -545,14 +584,19 @@ export class ArchipelagoClient {
     // each other. If these disagree the board spawns gems for locations this
     // seed does not have and the checks behind them go nowhere, which is a
     // failure nobody would notice until a seed would not finish.
+    // Then the one number both sides work out for themselves, held up against
+    // each other. The check above says the two agree about what everything
+    // means; this says they actually computed the same thing, which is a
+    // different claim and can fail while that one holds. If they disagree the
+    // board spawns gems for locations this seed does not have and the checks
+    // behind them go nowhere, which nobody would notice until a seed would not
+    // finish. So it is a bug rather than a mismatch, and it still stops here.
     const wanted = packet.slot_data?.ap_gems_per_level;
     if (Number.isInteger(wanted) && wanted !== this.engine.gemsPerLevel) {
-      this.error =
-        `this seed puts ${wanted} AP gems in a level and the game makes ${this.engine.gemsPerLevel}; ` +
-        'the game and the world it was generated with are different versions';
-      this.cancelRetry();
-      this.disconnect();
-      this.setState(State.REFUSED);
+      this.refuse(
+        `this seed puts ${wanted} AP gems in a level and the game makes ` +
+          `${this.engine.gemsPerLevel}, although both claim generator ${generator}`,
+      );
       return;
     }
 

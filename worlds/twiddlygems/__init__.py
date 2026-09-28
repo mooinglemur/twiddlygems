@@ -404,8 +404,17 @@ class TwiddlyGemsWorld(World):
         and the checks behind them go nowhere. Better for a client to compare
         the two and refuse than to play a game that is subtly not the one that
         was generated.
+
+        `generator` is the first thing the game reads and the first thing it
+        can refuse on. Everything else here is only meaningful if the two sides
+        agree about what the numbers in it mean, and nothing in a seed says so
+        by itself: an item id is an integer whichever generation wrote it, and
+        a setting's value is an integer whichever list it was an index into. So
+        the generation says so explicitly, and a game that does not know the
+        number stops rather than playing somebody else's rules.
         """
         return {
+            "generator": GAME_DATA["generator"],
             "levels": GAME_DATA["levels"],
             "options": self._settings_sent(),
             "ap_gems_per_level": self._ap_gems_per_level(),

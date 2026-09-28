@@ -501,6 +501,15 @@ class TestWhatTheGameIsTold(TwiddlyGemsTestBase):
     def test_the_ladder_is_named(self) -> None:
         self.assertEqual(self.world.fill_slot_data()["levels"], LEVELS)
 
+    def test_the_seed_says_which_generator_built_it(self) -> None:
+        # The first thing the game reads and the first thing it can refuse on.
+        # Everything else in here is integers whose meaning is settled
+        # elsewhere, and this is the only thing that says which elsewhere.
+        data = self.world.fill_slot_data()
+        self.assertIn("generator", data)
+        self.assertIsInstance(data["generator"], int)
+        self.assertEqual(data["generator"], GAME_DATA["generator"])
+
 
 class TestWhatAnUnusualSlotIsTold(TwiddlyGemsTestBase):
     """The same, for a run that asked for something other than the defaults.

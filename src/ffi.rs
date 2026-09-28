@@ -18,7 +18,7 @@
 
 use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
-use crate::progression::{Consumable, AP_ID_BASE};
+use crate::progression::{plays_generator, Consumable, AP_ID_BASE, GENERATOR};
 use crate::session::Session;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
@@ -661,6 +661,25 @@ pub unsafe extern "C" fn tg_forget_items(handle: *mut Handle) {
     pack_run_events(handle);
 }
 
+/// Which generation of the world's data this build writes and plays by default.
+///
+/// Takes no handle: a fact about the game rather than about a run of it.
+#[no_mangle]
+pub extern "C" fn tg_generator() -> u32 {
+    GENERATOR
+}
+
+/// Whether this build can play a seed that generator made.
+///
+/// Asked of the engine rather than answered by comparing numbers on the other
+/// side, because which versions are playable is a list rather than a floor:
+/// supporting one is a claim about having the code to read it, and that is not
+/// automatically true of everything older.
+#[no_mangle]
+pub extern "C" fn tg_plays_generator(version: u32) -> u32 {
+    plays_generator(version) as u32
+}
+
 /// What Archipelago's own item and location numbers are offset by.
 ///
 /// Read rather than written down on the other side, so the two cannot drift.
@@ -1297,6 +1316,14 @@ mod tests {
             // The offset the client works in. Read rather than written down on
             // the other side, so the two cannot drift.
             assert_eq!(tg_ap_id_base(), crate::progression::AP_ID_BASE);
+
+            // And which seeds this build will take. Both of these cross the
+            // ABI as numbers, so a client can refuse a seed at the door
+            // without knowing anything about what a generation means.
+            assert_eq!(tg_generator(), GENERATOR);
+            assert_eq!(tg_plays_generator(GENERATOR), 1);
+            assert_eq!(tg_plays_generator(GENERATOR + 1), 0);
+            assert_eq!(tg_plays_generator(u32::MAX), 0);
 
             tg_destroy(handle);
         }

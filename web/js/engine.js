@@ -435,6 +435,22 @@ export class Engine {
     return this.wasm.tg_gems_per_level(this.handle);
   }
 
+  /** Which generation of the world's data this build writes. */
+  get generator() {
+    return this.wasm.tg_generator();
+  }
+
+  /**
+   * Whether this build can play a seed that generator made.
+   *
+   * Asked rather than worked out from the number above, because what a build
+   * supports is a list rather than everything up to a ceiling: being able to
+   * read one format says nothing about being able to read an older one.
+   */
+  playsGenerator(version) {
+    return this.wasm.tg_plays_generator(version) === 1;
+  }
+
   get levelCount() { return this.wasm.tg_level_count(this.handle); }
   get unlocked() { return this.wasm.tg_unlocked(this.handle); }
 

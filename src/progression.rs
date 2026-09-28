@@ -483,6 +483,46 @@ const LEVEL_UNLOCK_ID: u32 = 4_000;
 /// the other can stay put. The digits are the ASCII for "tw".
 pub const AP_ID_BASE: u32 = 7_477_000;
 
+/// Which generation of this world's data the engine currently writes.
+///
+/// A seed carries the number of the generator that made it, and a game refuses
+/// one it does not know how to play. What it guards is everything a seed and a
+/// game have to agree about without either being able to check the other: what
+/// the item numbers mean, what the location numbers mean, which settings there
+/// are and what their values stand for. All of that is generated once, into an
+/// apworld somebody installs, and then read by whatever version of the game
+/// they happen to be running months later.
+///
+/// Bumped when a change would make an old seed play wrongly rather than fail
+/// loudly, which is the only kind of change worth a version. Renumbering an
+/// item, reordering a choice's values and changing what a setting means are
+/// all that kind. Adding a level, a location or a setting is not: those turn
+/// up as something the other side has never heard of, which both sides already
+/// refuse one at a time.
+///
+/// Still 0, and deliberately not yet 1: nothing has been published, so there
+/// is no seed anywhere that has to keep working, and the shape of the apworld
+/// is still being settled. It goes to 1 when the generation side is called
+/// stable, and after that it only ever moves for a real break.
+pub const GENERATOR: u32 = 0;
+
+/// Which generations this build of the game can play.
+///
+/// A list rather than a floor, because supporting a version is a claim about
+/// having the code to read it, and that is not automatically true of
+/// everything older. A build that can play two formats says so by naming both.
+///
+/// The one thing that must never happen quietly is a game reading a seed built
+/// to rules it does not have: every id would still be a number and every
+/// setting would still be an integer, and the run would simply be somebody
+/// else's game. So an unknown version is refused at the door.
+pub const PLAYABLE_GENERATORS: &[u32] = &[GENERATOR];
+
+/// Whether this build can play a seed that generator made.
+pub fn plays_generator(version: u32) -> bool {
+    PLAYABLE_GENERATORS.contains(&version)
+}
+
 /// The location index standing for no location at all: an item the multiworld
 /// sent rather than one this run found.
 pub const NO_LOCATION: u16 = u16::MAX;
@@ -2535,6 +2575,28 @@ mod tests {
             }),
             "an item is numbered outside its own range",
         );
+    }
+
+    #[test]
+    fn this_build_plays_the_seeds_it_writes_and_refuses_the_ones_it_cannot() {
+        // The point of the whole arrangement: a game must be able to play what
+        // its own apworld generates, and must stop at anything else rather
+        // than reading somebody else's numbers as its own.
+        assert!(plays_generator(GENERATOR), "this build cannot play its own seeds");
+        assert!(
+            !plays_generator(GENERATOR + 1),
+            "a seed from a later generator would be played as though it were this one",
+        );
+        // Older ones are a list rather than everything below the current
+        // number, because supporting one is a claim about having the code to
+        // read it. Whatever the list says, it has to be deliberate.
+        for version in 0..GENERATOR {
+            assert_eq!(
+                plays_generator(version),
+                PLAYABLE_GENERATORS.contains(&version),
+                "generator {version} is neither named nor refused",
+            );
+        }
     }
 
     #[test]
