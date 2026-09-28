@@ -138,6 +138,42 @@ impl Item {
         }
     }
 
+    /// Reads one back, the way [`Location::from_id`] does for a location.
+    ///
+    /// This is the direction a multiworld needs: what arrives from the server
+    /// is a number, and the run has to work out what it was given. `None` for
+    /// a number no item has, which is not an error but the ordinary answer to
+    /// a number from a later version of this game.
+    ///
+    /// Says nothing about whether the ladder in play is long enough to have
+    /// the item it names. A move upgrade for level forty reads back cleanly
+    /// here and belongs to nobody on a ladder of thirteen; that question is
+    /// [`item_index`]'s, and [`crate::session::Session::receive_id`] asks it.
+    ///
+    /// The blocks are tested downward, highest first, so that a kind added
+    /// above cannot change what a number already in somebody's seed reads
+    /// back as.
+    pub fn from_id(id: u32) -> Option<Item> {
+        if id >= LEVEL_UNLOCK_ID {
+            // One number for every copy, so anything past it is nothing.
+            return (id == LEVEL_UNLOCK_ID).then_some(Item::LevelUnlock);
+        }
+        if id >= CONSUMABLE_ID_BASE {
+            return Consumable::from_code(id - CONSUMABLE_ID_BASE).map(Item::Consumable);
+        }
+        if id >= FILLER_ID {
+            return (id == FILLER_ID).then_some(Item::Filler);
+        }
+        if id >= MOVES_ID_BASE {
+            return Some(Item::Moves { level: (id - MOVES_ID_BASE) as usize });
+        }
+        // The five that can be unlocked, by their own codes. Going through
+        // the list rather than through `Special` leaves out the two nobody can
+        // hold for free: there is no gem to gate for `None`, and an
+        // Archipelago gem is a location rather than an item.
+        UNLOCKABLE.iter().copied().find(|special| special.code() as u32 == id).map(Item::Unlock)
+    }
+
     /// How much a world should care about this one going missing.
     ///
     /// Everything that gates something is progression: the unlocks gate every
@@ -2499,6 +2535,35 @@ mod tests {
             }),
             "an item is numbered outside its own range",
         );
+    }
+
+    #[test]
+    fn an_item_survives_being_written_down_and_read_back() {
+        // What a multiworld hands over is a number, so this is the direction
+        // that matters there: every item the game has must come back as
+        // itself, or a player is handed the wrong thing by a server that did
+        // nothing wrong.
+        for item in items(50) {
+            assert_eq!(Item::from_id(item.id()), Some(item), "{} did not survive", item_name(item));
+        }
+        // The two specials nobody can hold. `None` is not a gem to gate for,
+        // and an Archipelago gem is a location: reading either back as an item
+        // would put something in the inventory that nothing can spend.
+        assert_eq!(Item::from_id(Special::None.code() as u32), None);
+        assert_eq!(Item::from_id(Special::Archipelago.code() as u32), None);
+        // And the gaps between the blocks, each of which is a number some
+        // other game's item could be sitting on.
+        assert_eq!(Item::from_id(FILLER_ID + 1), None, "there is only one filler");
+        assert_eq!(Item::from_id(LEVEL_UNLOCK_ID + 1), None, "there is only one level unlock");
+        assert_eq!(
+            Item::from_id(CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32),
+            None,
+            "a fifth kind of bonus item does not exist yet",
+        );
+        // A move upgrade for a level past the end of the ladder reads back
+        // cleanly on purpose: how long the ladder is is not this function's
+        // business. `Session::receive_id` is where it gets refused.
+        assert_eq!(Item::from_id(MOVES_ID_BASE + 500), Some(Item::Moves { level: 500 }));
     }
 
     #[test]

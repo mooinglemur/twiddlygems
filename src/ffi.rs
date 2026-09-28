@@ -18,7 +18,7 @@
 
 use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
-use crate::progression::Consumable;
+use crate::progression::{Consumable, AP_ID_BASE};
 use crate::session::Session;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
@@ -596,6 +596,93 @@ pub unsafe extern "C" fn tg_restore(handle: *mut Handle, id: u32) {
     pack_events(handle);
 }
 
+// ---- the multiworld -------------------------------------------------------
+
+/// Hands what the locations hold over to a multiworld, or takes it back.
+///
+/// Set once a run is known to be a multiworld's. From then on checking a
+/// location records the check and pays out nothing, because what was in it is
+/// the server's to send; it comes back through [`tg_receive`]. Everything the
+/// front end reads off the checked locations, the level marks and the gem
+/// counts among them, carries on working unchanged.
+///
+/// Anything but 0 is on, so a caller passing a JavaScript boolean through
+/// gets what it meant either way.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_set_remote(handle: *mut Handle, on: u32) {
+    let handle = session_mut!(handle, ());
+    handle.session.set_remote(on != 0);
+}
+
+/// Hands the run an item from the multiworld, by the engine's own item id.
+///
+/// 1 when the run is better off for it and 0 otherwise, which covers a number
+/// no item has, an item for a level past the end of this ladder, and an unlock
+/// that had already arrived. A server resending on a reconnect is the ordinary
+/// way to see the last of those, so 0 is an answer rather than a complaint.
+///
+/// The id is the engine's own. Archipelago's is this plus [`tg_ap_id_base`],
+/// and taking the offset off is the caller's job: the caller is the only part
+/// of this that ever sees a number of the other kind.
+///
+/// Reports only what this call did, so handing over a list of fifty items
+/// announces fifty items rather than one and a half thousand.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_receive(handle: *mut Handle, id: u32) -> u32 {
+    let handle = session_mut!(handle, 0);
+    let took = handle.session.receive_id(id);
+    pack_run_events(handle);
+    took as u32
+}
+
+/// Empties what the run is holding, leaving what it has checked alone.
+///
+/// For the sequence a reconnect takes: this, then every item the server listed.
+/// Archipelago resends the list from the beginning each time it says hello, and
+/// everything but the unlocks stacks, so adding it to what the run already held
+/// would double it. Doing it this way round means neither side has to keep a
+/// count of how many items it has already applied.
+///
+/// Quiet, like [`tg_restore`]: the list that follows is what says what the run
+/// holds.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_forget_items(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    handle.session.forget_items();
+    pack_run_events(handle);
+}
+
+/// What Archipelago's own item and location numbers are offset by.
+///
+/// Read rather than written down on the other side, so the two cannot drift.
+/// Takes no handle: it is a fact about the game, not about a run of it.
+#[no_mangle]
+pub extern "C" fn tg_ap_id_base() -> u32 {
+    AP_ID_BASE
+}
+
+/// Whether the run has finished the game, by whatever its goal setting asks.
+///
+/// The same rule the apworld gates its completion on, so what this says and
+/// what a multiworld believes cannot disagree. A client tells the server on
+/// the strength of it.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_goal_met(handle: *const Handle) -> u32 {
+    session!(handle, 0).session.goal_met() as u32
+}
+
 /// A legal move packed as `r1 << 24 | c1 << 16 | r2 << 8 | c2`, or `u32::MAX`
 /// when the board has none.
 ///
@@ -755,11 +842,31 @@ pub unsafe extern "C" fn tg_events_ptr(handle: *const Handle) -> *const u8 {
 }
 
 fn pack_events(handle: &mut Handle) {
-    handle.events.clear();
     // The board's own, then the run's. One stream: the page should not have to
     // ask two places what just happened.
     let mut events: Vec<Event> = handle.session.game().events().to_vec();
     events.extend_from_slice(handle.session.events());
+    pack(handle, &events);
+}
+
+/// The run's own events and none of the board's, for a call that could not
+/// have moved the board.
+///
+/// [`pack_events`] rebuilds the whole buffer from both sides every time, which
+/// is right for a call that went through the board: the board clears its own
+/// events as each call starts, so what is there is always what that call did.
+/// A call that never reaches the board would find the board's last frame still
+/// sitting there and hand it over a second time, which on this path means
+/// replaying a whole cascade's worth of pops and debris for an item that
+/// arrived while the board was settling.
+fn pack_run_events(handle: &mut Handle) {
+    let events: Vec<Event> = handle.session.events().to_vec();
+    pack(handle, &events);
+}
+
+/// Writes events into the buffer the front end reads, replacing what was in it.
+fn pack(handle: &mut Handle, events: &[Event]) {
+    handle.events.clear();
     for event in events {
         handle.events.extend_from_slice(&[
             event.kind,
@@ -1102,7 +1209,96 @@ mod tests {
             assert!(tg_cells_ptr(null).is_null());
             tg_update(null, 16.0);
             tg_set_unlocked(null, 3);
+            tg_receive(null, 0);
+            tg_set_remote(null, 1);
+            tg_forget_items(null);
+            assert_eq!(tg_goal_met(null), 0);
             tg_destroy(null);
+        }
+    }
+
+    /// How many events the last call into the ABI reported.
+    fn packed(handle: *const Handle) -> Vec<u8> {
+        unsafe {
+            std::slice::from_raw_parts(
+                tg_events_ptr(handle),
+                tg_events_len(handle) as usize * EVENT_SIZE,
+            )
+            .to_vec()
+        }
+    }
+
+    #[test]
+    fn a_received_item_reports_itself_and_nothing_the_board_did_earlier() {
+        // A call that never reaches the board has to pack only its own news.
+        // The board clears its events as each of its own calls starts, so what
+        // was left there from the last frame would otherwise be handed over a
+        // second time: an item arriving while gems were still falling would
+        // replay the whole cascade's pops and debris to the page.
+        unsafe {
+            let handle = tg_create(7, 0);
+            tg_set_remote(handle, 1);
+
+            // Get the board busy and leave its events sitting in the engine.
+            let hint = tg_hint(handle);
+            let (r1, c1, r2, c2) = (
+                (hint >> 24) as i32,
+                ((hint >> 16) & 0xff) as i32,
+                ((hint >> 8) & 0xff) as i32,
+                (hint & 0xff) as i32,
+            );
+            assert_eq!(tg_swap(handle, r1, c1, r2, c2), 1);
+            tg_update(handle, 16.0);
+            assert!(!packed(handle).is_empty(), "the board raised nothing to be confused by");
+
+            // One item, one event, and it is the item.
+            let rainbow = crate::progression::Item::Unlock(Special::Rainbow);
+            assert_eq!(tg_receive(handle, rainbow.id()), 1);
+            let events = packed(handle);
+            assert_eq!(events.len(), EVENT_SIZE, "a receive packed more than its own item");
+            assert_eq!(events[0], crate::game::EV_ITEM);
+
+            // And a second one does not bring the first along with it.
+            let rocket = crate::progression::Item::Unlock(Special::Rocket);
+            assert_eq!(tg_receive(handle, rocket.id()), 1);
+            assert_eq!(packed(handle).len(), EVENT_SIZE, "the second receive replayed the first");
+
+            // A refusal is quiet, and a resent unlock is a refusal.
+            assert_eq!(tg_receive(handle, rocket.id()), 0);
+            assert!(packed(handle).is_empty(), "a refused item announced something");
+
+            tg_destroy(handle);
+        }
+    }
+
+    #[test]
+    fn a_multiworld_run_is_told_what_it_holds_rather_than_finding_it() {
+        unsafe {
+            let handle = tg_create(7, 0);
+            tg_set_remote(handle, 1);
+            assert_eq!(tg_unlocked(handle), 1);
+            assert_eq!(tg_goal_met(handle), 0);
+
+            // The ladder opens one level per item, and nothing else opens it.
+            let unlock = crate::progression::Item::LevelUnlock;
+            assert_eq!(tg_receive(handle, unlock.id()), 1);
+            assert_eq!(tg_unlocked(handle), 2);
+            assert_eq!(tg_receive(handle, unlock.id()), 1);
+            assert_eq!(tg_unlocked(handle), 3);
+
+            // And a reconnect: forget, be told again, land in the same place.
+            tg_forget_items(handle);
+            assert_eq!(tg_unlocked(handle), 1, "the forgetting left the ladder open");
+            assert!(packed(handle).is_empty(), "the forgetting announced itself");
+            tg_receive(handle, unlock.id());
+            tg_receive(handle, unlock.id());
+            assert_eq!(tg_unlocked(handle), 3, "being resent the list did not restore the ladder");
+
+            // The offset the client works in. Read rather than written down on
+            // the other side, so the two cannot drift.
+            assert_eq!(tg_ap_id_base(), crate::progression::AP_ID_BASE);
+
+            tg_destroy(handle);
         }
     }
 }

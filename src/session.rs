@@ -9,9 +9,9 @@ use crate::game::{Event, Game, Status, EV_AP_CLEAR, EV_ITEM};
 use crate::level::{levels, LevelSpec};
 use crate::options::{Kind, Options, SETTINGS, TOGGLE_LABELS};
 use crate::progression::{
-    ap_gems_per_level, fill_seed, item_index, item_name, item_pool, items, location_index,
-    location_name, locations, solo_placement, Class, Consumable, Inventory, Item, Location, Tier,
-    LONGEST_CHAIN, LONGEST_MATCH, NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
+    ap_gems_per_level, fill_seed, goal, item_index, item_name, item_pool, items, location_index,
+    location_name, locations, solo_placement, Class, Consumable, Inventory, Item, Location, Reached,
+    Tier, LONGEST_CHAIN, LONGEST_MATCH, NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
 };
 use crate::rng::Rng;
 
@@ -45,7 +45,21 @@ pub struct Session {
     /// What each location holds, dealt once when the run opens from the run's
     /// own seed. Working it out walks the whole ladder by reachability, which
     /// is not something to do on the frame a level is cleared.
+    ///
+    /// Unread while `remote` is set: a multiworld dealt its own.
     placement: Vec<Option<Item>>,
+    /// Whether a multiworld owns what the locations hold.
+    ///
+    /// Clear, this run deals its own progression and checking a location hands
+    /// over whatever [`Session::holds`] found there. Set, the locations carry
+    /// on recording what has been checked and pay out nothing: what each one
+    /// was worth is the server's to say, and it arrives separately, through
+    /// [`Session::receive_id`], from wherever in the multiworld it was placed.
+    ///
+    /// One flag rather than a second kind of session, because everything else
+    /// about a run is the same either way. What changes is only who answers
+    /// the one question.
+    remote: bool,
     /// The best score each level has been beaten with, this run, by level.
     ///
     /// Kept beside the marks rather than worked out on the page, because when
@@ -172,6 +186,9 @@ impl Session {
             inventory,
             checked: Vec::new(),
             placement: solo_placement(levels.len(), fill_seed(seed), &options),
+            // A run is its own until something tells it otherwise. The session
+            // is opened before there is any connection to know about.
+            remote: false,
             best_scores: vec![0; levels.len()],
             goal_hold_ms: 0.0,
             seed,
@@ -219,7 +236,16 @@ impl Session {
         if wanted == self.options {
             return true;
         }
+        // Carried over the re-deal, alone among everything a session holds.
+        // The rest is what the setting is supposed to throw away; this is not
+        // a fact about the run but about who is running it, and a run that
+        // forgot it belonged to a multiworld would start quietly handing
+        // itself its own items. A client applies the settings the server sent
+        // it *after* connecting, so this is the ordinary path rather than a
+        // corner of one.
+        let remote = self.remote;
         *self = Session::set_up(self.seed, wanted);
+        self.remote = remote;
         true
     }
 
@@ -405,6 +431,112 @@ impl Session {
         self.receive_from(item, None)
     }
 
+    /// The same, by the item's number, which is how a multiworld names one.
+    ///
+    /// The mirror of [`Session::restore`], and deliberately the same three
+    /// steps: read the number back into the thing it names, ask whether this
+    /// ladder has such a thing at all, then act. Answers whether the run is
+    /// better off for it, which is false for a number no item has, for an item
+    /// this ladder is too short to hold, and for an unlock that had already
+    /// arrived.
+    ///
+    /// The number is the engine's own, not Archipelago's. The offset between
+    /// the two is [`crate::progression::AP_ID_BASE`] and taking it off is the
+    /// caller's job, because the caller is the only part of this that ever
+    /// sees a number of the other kind.
+    ///
+    /// The run's events are cleared first, so what this reports is what this
+    /// call did. A whole list of items arrives as a run of these, and each has
+    /// to be able to say what it alone was worth: without the clear, the tenth
+    /// call would hand the page all ten again.
+    pub fn receive_id(&mut self, id: u32) -> bool {
+        self.events.clear();
+        let Some(item) = Item::from_id(id) else { return false };
+        // An item for a level past the end of this ladder reads back cleanly
+        // and belongs to nobody here. Refused rather than taken, because
+        // `receive_from` has no way to name it: `item_index` is what an event
+        // carries instead of the name, and its fallback would announce this as
+        // whichever item happens to sit first in the table.
+        if item_index(item, self.levels.len()).is_none() {
+            return false;
+        }
+        self.receive(item)
+    }
+
+    /// Empties what the run is holding, leaving what it has checked alone.
+    ///
+    /// For the one thing a multiworld says that nothing else does: *this is
+    /// your whole inventory, forget what you thought you had*. Archipelago
+    /// sends that on every reconnect, as a list starting from the beginning,
+    /// and a run that added it to what it already held would double every
+    /// item that stacks. Only the unlocks are safe to take twice; moves, level
+    /// unlocks, bonus items and filler all pile up.
+    ///
+    /// So the sequence is this and then the whole list, and the alternative
+    /// was a count of how many items had been applied, kept on the other side
+    /// and kept correct across re-deals and reconnections. This needs nothing
+    /// remembered, which is why it is this way round.
+    ///
+    /// The checks are deliberately untouched: they are the run's own record of
+    /// where it has been, the server agrees with them, and they are what the
+    /// level picker reads.
+    ///
+    /// Quiet, like [`Session::restore`]. Nothing is announced going out and
+    /// the list coming back in says what the run holds now.
+    pub fn forget_items(&mut self) {
+        // Every way in from outside clears these first, so that what they hold
+        // is what the call just did: `update` does it, `receive_id` does it,
+        // and a forgetting that did not would report the last item received as
+        // though losing it were news.
+        self.events.clear();
+        self.inventory = Inventory::empty();
+        self.refresh_specials();
+        // Deliberately after the inventory is emptied, so the level in play is
+        // re-derived from a run holding nothing. What the player can see on the
+        // counter is not taken back: `refresh_moves` only ever hands moves
+        // over, and moves already spent are spent. The list that follows this
+        // puts the budget back where it was.
+        self.refresh_moves();
+    }
+
+    /// Hands the placement to a multiworld. See [`Session::remote`].
+    ///
+    /// Meant for the moment a run turns out to be a multiworld's rather than
+    /// its own, which is after the session is already open: there is no
+    /// connection to ask when a session starts.
+    pub fn set_remote(&mut self, on: bool) {
+        self.remote = on;
+    }
+
+    /// Whether a multiworld owns what the locations hold.
+    pub fn remote(&self) -> bool {
+        self.remote
+    }
+
+    /// Whether this run has finished the game.
+    ///
+    /// The run's own goal, whichever the setting picked, evaluated against
+    /// what the run has reached. The very tree the apworld gates its
+    /// completion on rather than a reading of it, so a solo run and a
+    /// multiworld cannot disagree about when a player is done.
+    pub fn goal_met(&self) -> bool {
+        goal(self.levels.len()).met(&self.inventory, &self.reached(), &self.options)
+    }
+
+    /// Everywhere this run has got to, in the form the rules ask for it.
+    ///
+    /// Built from the checked ids rather than kept alongside them, for the
+    /// reason [`Session::best_tier`] is: two records of one fact drift.
+    fn reached(&self) -> Reached {
+        let mut reached = Reached::none(self.levels.len());
+        for id in &self.checked {
+            if let Some(location) = Location::from_id(*id) {
+                reached.add(location);
+            }
+        }
+        reached
+    }
+
     /// The same, saying where it came from so the announcement can too.
     ///
     /// `None` is an item that came from no location on this board, which is
@@ -479,7 +611,16 @@ impl Session {
 
     /// What one location is holding in this run. Another run holding a
     /// different seed will have something else there.
+    ///
+    /// Nothing, always, once a multiworld owns the placement. That single
+    /// answer is the whole of what changes under Archipelago: checking a
+    /// location still records the check, and finds nothing in it to pay out,
+    /// because what was there is somebody else's to send. See
+    /// [`Session::remote`].
     pub fn holds(&self, location: Location) -> Option<Item> {
+        if self.remote {
+            return None;
+        }
         location_index(location, self.levels.len()).and_then(|at| self.placement[at])
     }
 
@@ -753,6 +894,7 @@ mod tests {
     use super::*;
     use crate::board::{Gem, Pos, Special};
     use crate::game::Phase;
+    use crate::options::{setting_index, Goal, PROGRESSIVE_LEVELS};
     use crate::progression::CONSUMABLES;
     use crate::level::Objective;
     use crate::rules::SpecialSet;
@@ -1496,6 +1638,214 @@ mod tests {
         session.restore(at.id());
         assert_eq!(session.inventory().moves_found(level), 1, "restoring twice paid twice");
         assert_eq!(session.checked(), [at.id()], "and it was written down twice");
+    }
+
+    // ---- under a multiworld ----
+
+    #[test]
+    fn a_multiworld_run_records_its_checks_and_pays_itself_nothing() {
+        // The one thing that changes under Archipelago. A location still
+        // counts as checked, because that is what the client sends on and what
+        // the level picker reads, and what was in it is the server's to hand
+        // over rather than ours to find.
+        let mut session = climbing(7);
+        // What the solo fill put there, so this can say that item did not
+        // arrive rather than only that nothing did.
+        let held = session.holds(Location::LevelClear(0)).expect("the opener holds something");
+        session.set_remote(true);
+        assert_eq!(session.holds(Location::LevelClear(0)), None, "the placement is still being read");
+
+        let seen = force_win(&mut session);
+        assert!(
+            session.checked().contains(&Location::LevelClear(0).id()),
+            "the clear went unrecorded, so a client would have nothing to send",
+        );
+        assert!(seen.is_empty(), "a multiworld run paid itself: {seen:?}");
+        assert!(!session.inventory().has(held), "and it is holding what nobody sent it");
+    }
+
+    #[test]
+    fn a_setting_changed_under_a_multiworld_leaves_the_multiworld_in_charge() {
+        // A client applies the settings the server sent it after connecting,
+        // and changing one deals the whole run again. Everything else about
+        // the session is meant to go; this must not, or the run quietly starts
+        // finding its own items in a seed it does not own.
+        let mut session = climbing(7);
+        session.set_remote(true);
+        let at = setting_index(PROGRESSIVE_LEVELS).expect("the ladder setting is in the table");
+        assert!(session.set_option(at, 1), "the setting would not take");
+        assert!(session.remote(), "the re-deal forgot the multiworld");
+        assert_eq!(
+            session.holds(Location::LevelClear(0)),
+            None,
+            "and started reading the placement again",
+        );
+    }
+
+    #[test]
+    fn an_item_from_the_multiworld_arrives_by_its_number_and_says_it_came_from_nowhere() {
+        let mut session = climbing(7);
+        session.set_remote(true);
+        let item = Item::Unlock(Special::Rainbow);
+
+        assert!(session.receive_id(item.id()), "the rainbow was refused");
+        assert!(session.inventory().has(item));
+        // No location of ours, which is what tells the feed to say "received"
+        // rather than naming a place on our own board.
+        assert_eq!(announced(session.events()), [says(item, None)]);
+        // And the board in front of the player may now make one, without
+        // waiting for the next level to be dealt.
+        assert!(has(session.game().rules().specials, Special::Rainbow));
+    }
+
+    #[test]
+    fn a_number_the_game_has_no_item_for_is_refused_quietly() {
+        let mut session = climbing(7);
+        session.set_remote(true);
+        // Three ways a number can fail to name an item here: nothing in the
+        // gaps between the blocks, nothing for a special nobody can hold, and
+        // nothing for a level past the end of this ladder. The last is the one
+        // a real multiworld could produce, off a longer ladder than ours.
+        let past_the_ladder = Item::Moves { level: session.level_count() }.id();
+        for id in [Item::Filler.id() + 1, Special::Archipelago.code() as u32, past_the_ladder] {
+            assert!(!session.receive_id(id), "{id} was taken for an item");
+            assert!(session.events().is_empty(), "{id} announced something");
+        }
+        assert_eq!(session.inventory(), &Inventory::empty(), "something got in");
+    }
+
+    #[test]
+    fn a_resent_unlock_changes_nothing_and_says_nothing() {
+        // A server resends the whole list on a reconnect, so this is the
+        // ordinary path rather than a corner of one.
+        let mut session = climbing(7);
+        session.set_remote(true);
+        let item = Item::Unlock(Special::Rocket);
+        assert!(session.receive_id(item.id()));
+        assert!(!session.receive_id(item.id()), "the second copy was treated as news");
+        assert!(session.events().is_empty(), "and it was announced twice");
+    }
+
+    #[test]
+    fn each_received_item_is_announced_once_however_many_arrive() {
+        // A whole list arrives as a run of these calls, and each has to report
+        // what it alone was worth. Holding on to the last call's events would
+        // hand the page the first item again with the second, and so on: fifty
+        // items would announce more than a thousand.
+        let mut session = climbing(7);
+        session.set_remote(true);
+        let mut seen = Vec::new();
+        let sent = [
+            Item::Unlock(Special::Cross),
+            Item::Consumable(Consumable::Rocket),
+            Item::Moves { level: 0 },
+            Item::Filler,
+        ];
+        for item in sent {
+            assert!(session.receive_id(item.id()), "{} was refused", item_name(item));
+            assert_eq!(session.events().len(), 1, "{} did not arrive alone", item_name(item));
+            seen.extend(announced(session.events()));
+        }
+        assert_eq!(seen, sent.iter().map(|item| says(*item, None)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn the_ladder_opens_by_received_unlock_under_a_multiworld() {
+        // Nothing here opens a level any more, so this is the whole of how a
+        // multiworld run climbs.
+        let mut session = Session::set_up(7, Options::default());
+        session.set_remote(true);
+        assert_eq!(session.unlocked(), 1, "a run that has been sent nothing is at the bottom");
+        assert!(session.receive_id(Item::LevelUnlock.id()));
+        assert_eq!(session.unlocked(), 2);
+        assert!(session.receive_id(Item::LevelUnlock.id()));
+        assert_eq!(session.unlocked(), 3);
+    }
+
+    #[test]
+    fn forgetting_the_items_and_being_resent_them_lands_where_it_started() {
+        // What a reconnect is: the server sends the whole list again from the
+        // beginning, and the run has to come out holding exactly what it held.
+        // Everything but the unlocks stacks, so without the forgetting this
+        // doubles.
+        let mut session = climbing(7);
+        session.set_remote(true);
+        let sent = [
+            Item::Unlock(Special::Rainbow),
+            Item::Moves { level: 0 },
+            Item::Moves { level: 0 },
+            Item::Consumable(Consumable::Rocket),
+            Item::LevelUnlock,
+            Item::Filler,
+        ];
+        for item in sent {
+            session.receive_id(item.id());
+        }
+        let held = session.inventory().clone();
+        let checked = session.checked().to_vec();
+
+        session.forget_items();
+        assert_eq!(session.inventory(), &Inventory::empty(), "something survived the forgetting");
+        for item in sent {
+            session.receive_id(item.id());
+        }
+        assert_eq!(session.inventory(), &held, "a reconnect did not land where it started");
+        assert_eq!(session.checked(), &checked[..], "and it lost track of what it had checked");
+    }
+
+    #[test]
+    fn forgetting_the_items_shuts_the_ladder_and_the_specials_again() {
+        // The two things read off the inventory rather than kept beside it. A
+        // forgetting that left either standing would let a run play a level
+        // the server has not opened for it.
+        let mut session = Session::set_up(7, Options::default());
+        session.set_remote(true);
+        session.receive_id(Item::LevelUnlock.id());
+        session.receive_id(Item::Unlock(Special::Cross).id());
+        assert_eq!(session.unlocked(), 2);
+        assert!(has(session.game().rules().specials, Special::Cross));
+
+        session.forget_items();
+        assert_eq!(session.unlocked(), 1, "the ladder stayed open");
+        assert!(!has(session.game().rules().specials, Special::Cross), "the cross stayed minted");
+    }
+
+    #[test]
+    fn a_run_knows_when_it_has_finished_the_game() {
+        // What a client tells the server, and the same rule the apworld gates
+        // its own completion on. Under a multiworld a restored location only
+        // records the check, which is exactly what a goal is read from.
+        let last = levels().len() - 1;
+        let mut session =
+            Session::set_up(7, Options { goal: Goal::ClearLastLevel, ..Options::default() });
+        session.set_remote(true);
+        assert!(!session.goal_met(), "a run that has cleared nothing has finished");
+        // Clearing a level short of the last one is not the goal this run took.
+        session.restore(Location::LevelClear(last - 1).id());
+        assert!(!session.goal_met(), "the wrong level counted");
+        session.restore(Location::LevelClear(last).id());
+        assert!(session.goal_met(), "the last level was cleared and the run is not over");
+    }
+
+    #[test]
+    fn what_finishing_means_is_the_setting_the_run_chose() {
+        // The goal setting is the only difference between these two runs, and
+        // one of them is finished.
+        let last = levels().len() - 1;
+        let done_at_the_top =
+            Session::set_up(7, Options { goal: Goal::ClearLastLevel, ..Options::default() });
+        let done_everywhere =
+            Session::set_up(7, Options { goal: Goal::ClearEveryLevel, ..Options::default() });
+        for mut session in [done_at_the_top, done_everywhere] {
+            let wanted = session.options().goal;
+            session.set_remote(true);
+            session.restore(Location::LevelClear(last).id());
+            assert_eq!(
+                session.goal_met(),
+                wanted == Goal::ClearLastLevel,
+                "clearing only the last level finished a {wanted:?} run or failed to",
+            );
+        }
     }
 
     /// What the level select's two status marks are read from.
