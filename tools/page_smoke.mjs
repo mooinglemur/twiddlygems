@@ -238,7 +238,17 @@ globalThis.requestAnimationFrame = (callback) => {
 
 const wasmBytes = await readFile(WASM);
 globalThis.fetch = async (url) => {
-  assert.equal(url, 'twiddlygems.wasm', `the page fetched ${url}, which is not the module`);
+  // Asked for relative to the module that wants it rather than to the page,
+  // which makes it an absolute URL by the time it gets here. That is what lets
+  // the shipping server put the whole site under a prefix carrying a build
+  // fingerprint without the wasm being the one thing left behind at the root:
+  // see `WASM_URL` in main.js. So this checks the end of it rather than the
+  // whole, and still checks it is the module and not something else.
+  assert.match(
+    String(url),
+    /\/twiddlygems\.wasm$/,
+    `the page fetched ${url}, which is not the module`,
+  );
   return { ok: true, status: 200, arrayBuffer: async () => wasmBytes };
 };
 

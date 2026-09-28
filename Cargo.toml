@@ -10,6 +10,21 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 
+# The server that ships the built game, behind a feature because it builds the
+# whole site into itself and part of the site is not in the repository.
+#
+# `web/twiddlygems.wasm` is a build artifact and gitignored, so an
+# `include_bytes!` of it fails to compile in a fresh clone that has not run
+# `make wasm` yet. Off by default, every ordinary `cargo build` and `cargo
+# test` skips it, and `make site` turns it on after building the module.
+[[bin]]
+name = "twiddlygems-serve"
+path = "src/bin/serve.rs"
+required-features = ["site"]
+
+[features]
+site = []
+
 [profile.release]
 opt-level = "s"
 lto = true

@@ -1,0 +1,12 @@
+# The build makes its own wasm, so a local one would only be a stale one.
+web/twiddlygems.wasm
+target/
+.git/
+# The Archipelago checkout and its virtualenv. Both are large, both are only
+# for generating and testing the apworld, and neither has anything to do with
+# the image.
+vendor/
+.venv/
+build/
+shots/
+__pycache__/

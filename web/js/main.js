@@ -9,7 +9,17 @@ import { GOAL_EFFECT_MS, Renderer } from './render.js';
 import { attachInput } from './input.js';
 import { Hud } from './hud.js';
 
-const WASM_URL = 'twiddlygems.wasm';
+/**
+ * The engine, found relative to this module rather than to the page.
+ *
+ * `fetch('twiddlygems.wasm')` would resolve against the document, which is
+ * the one URL that moves: in production everything but the page is served
+ * under a prefix carrying a fingerprint of the build, so that the HTML and
+ * the module a player runs can never come from two different deploys. Asking
+ * from `import.meta.url` lands beside the modules either way, which is right
+ * under the prefix in production and right at the root in development.
+ */
+const WASM_URL = new URL('../twiddlygems.wasm', import.meta.url).href;
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SOUND_KEY = 'twiddlygems.sound.v1';
 /**

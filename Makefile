@@ -22,7 +22,8 @@ APWORLD := build/twiddlygems.apworld
 AP_TAG  ?= 0.6.7
 
 .PHONY: all wasm test abi check serve smoke shots audio balance clean target-check \
-	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link ap-live
+	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link ap-live \
+	site site-smoke
 
 all: check wasm
 
@@ -70,6 +71,23 @@ smoke: wasm
 serve: wasm
 	@echo "http://localhost:$(PORT)/"
 	$(PYTHON) tools/serve.py --port $(PORT) --directory web
+
+## Build the server that ships the game, with the whole site inside it.
+##
+## After the module, which is one of the files it builds in: the wasm is a
+## build artifact rather than something in the repository, so the feature that
+## pulls it in is off by default and everything else builds without it.
+site: wasm
+	$(CARGO) build --release --features site --bin twiddlygems-serve
+	./target/release/twiddlygems-serve --selftest
+
+## Load the game out of that server, in a real browser.
+##
+## The one check that covers what only the built image does: everything but the
+## page served under a prefix carrying a fingerprint of the build, and every
+## relative path inside the site still finding what it wants from under there.
+site-smoke: site
+	node tools/site_smoke.mjs
 
 ## Play the game in a headless browser and write screenshots to shots/.
 shots: wasm

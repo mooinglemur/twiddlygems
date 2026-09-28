@@ -1,0 +1,256 @@
+# Build pipeline for Twiddly Gems.
+#
+# Four jobs, split by what they need rather than by what they check. The engine
+# and the front end need a Rust toolchain and node; the browser checks need a
+# browser as well; the Archipelago side needs a Python virtualenv and a clone
+# of Archipelago itself, which is the slowest setup here and the reason it is
+# not folded into the others.
+#
+# Images are built on every branch and always pushed as :sha-<short sha>, which
+# is what a pod spec should pin. The moving tag is branch-gated: main pushes
+# :latest and every other branch pushes no moving tag at all.
+#
+# Every job's `changes:` filter includes .gitlab-ci.yml itself. Without that, a
+# fix to this file can only be deployed by a manual web-triggered run.
+
+# Only on the instance this belongs to. Forked somewhere else, mirrored, or
+# pushed to a different GitLab, no pipeline is created at all: the runners this
+# asks for do not exist there, and a fork should not be greeted by a wall of
+# jobs that cannot work.
+workflow:
+  rules:
+    - if: '$CI_SERVER_HOST == "git.mooinglemur.com"'
+
+default:
+  interruptible: true
+
+stages:
+  - test
+  - image
+
+# The engine, the front end and the world are one piece of work: the rules live
+# in Rust, the apworld is generated from them, and the front end is checked
+# against the same ABI. There is no useful narrower filter than "something that
+# feeds any of that moved".
+.everything: &everything
+  - "Cargo.*"
+  - "src/**/*"
+  - "web/**/*"
+  - "tools/**/*"
+  - "worlds/**/*"
+  - "Makefile"
+  - "Dockerfile"
+  - ".dockerignore"
+  - ".gitlab-ci.yml"
+
+.rust: &rust
+  image: rust:1.95-trixie
+  tags:
+    - linux
+    - k8s
+  # The registry only, deliberately not `target/`. What is worth keeping is the
+  # crates, and this tree has none: the point of the cache here is the wasm
+  # target's standard library, which rustup installs into the toolchain rather
+  # than into `target/`.
+  #
+  # Keyed on Cargo.lock, because what is cached is a function of the dependency
+  # set and nothing else.
+  cache:
+    key:
+      files:
+        - Cargo.lock
+    paths:
+      - .cargo/
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "2Gi"
+    KUBERNETES_MEMORY_LIMIT: "4Gi"
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+      changes: *everything
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+
+# ---- test stage ----
+
+# The engine's own tests, the ABI agreement between Rust and JavaScript, the
+# front end against a stubbed DOM, and the server that ships it all.
+#
+# `make smoke` is three checks: the module loads with no imports, the page
+# drives it through a stub DOM, and the Archipelago client plays a whole
+# conversation against a scripted socket. None of the three needs a browser,
+# which is why they are here and the two that do are next door.
+test:
+  <<: *rust
+  stage: test
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs python3
+    - rustup target add wasm32-unknown-unknown
+  script:
+    # No `cargo fmt --check` and no `clippy -D warnings` here yet, and that is
+    # a decision rather than an oversight. The tree has never been formatted by
+    # rustfmt and does not match it under any simple configuration: turning the
+    # check on means reformatting every file in `src/`, which would bury real
+    # diffs under whitespace for a long time afterwards. Clippy is the same
+    # story at a smaller scale, around thirty warnings, none of them in code
+    # written since this pipeline existed. Both are worth doing as a commit of
+    # their own, and the gate belongs here the day after that lands.
+    - make check
+    - make smoke
+    # Builds the shipping binary with the whole site inside it and runs its
+    # selftest, which is the same check the image build runs. Failing here
+    # rather than in the image stage is the cheaper place to find out.
+    - make site
+
+# The two that need a real browser: the game played through to a win, and the
+# game loaded out of the binary that ships it.
+#
+# Its own job because chromium is a large install and neither of these should
+# be able to hide a unit test failure behind it. The site check is the one that
+# cannot be done anywhere else: it is the only thing that exercises the
+# fingerprinted URLs the image actually serves, and the failure it catches is
+# a page that loads perfectly and then never starts.
+test-browser:
+  <<: *rust
+  stage: test
+  variables:
+    CARGO_HOME: $CI_PROJECT_DIR/.cargo
+    BROWSER: chromium
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "6Gi"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs python3 chromium
+    - rustup target add wasm32-unknown-unknown
+  script:
+    - make shots
+    - make site-smoke
+  # The screenshots are the point of `make shots` as much as its pass or fail:
+  # a layout that has gone wrong is something to look at rather than read
+  # about.
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - shots/
+
+# The Archipelago half: the world's own tests under Archipelago's test bases, a
+# real generation from the installed .apworld, and a real client against a real
+# server.
+#
+# Slow to set up, because it clones Archipelago and builds a virtualenv, and
+# both are cached on the Makefile, which is where the pinned tag lives. A
+# change to the tag changes the file and so changes the key.
+#
+# `make ap-live` is the one that cannot be faked: everything else about the
+# client is checked against a socket this repository wrote, from a reading of
+# the protocol document, so a misreading would be built into both. This runs
+# Archipelago's own server.
+test-archipelago:
+  <<: *rust
+  stage: test
+  cache:
+    - key:
+        files:
+          - Cargo.lock
+      paths:
+        - .cargo/
+    - key:
+        files:
+          - Makefile
+      paths:
+        - vendor/
+        - .venv/
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends nodejs python3 python3-venv git
+    - rustup target add wasm32-unknown-unknown
+    - make ap-setup
+  script:
+    - make apworld-test
+    # Generates from the zip a player would install rather than from the
+    # checkout, which is the check only the zip can fail: a module inside an
+    # .apworld has no directory to read a data file out of.
+    - make apworld-install
+    - make ap-live
+  artifacts:
+    when: on_failure
+    expire_in: 1 week
+    paths:
+      - build/ap/
+
+# ---- image stage ----
+
+# Buildah rather than docker-in-docker: nothing untrusted is built here, so
+# this wants a builder rather than an isolation boundary.
+#
+# Named `image-twiddlygems`, not `image`: a top-level `image:` key is the
+# reserved global job-image setting, so a job by that name is parsed as a
+# malformed one of those rather than as a job at all.
+image-twiddlygems:
+  stage: image
+  image: quay.io/buildah/stable
+  tags:
+    - linux
+    - k8s
+  needs:
+    - test
+  variables:
+    CONTAINERS_STORAGE_CONF: /tmp/storage.conf
+    KUBERNETES_CPU_REQUEST: "4"
+    KUBERNETES_CPU_LIMIT: "4"
+    KUBERNETES_MEMORY_REQUEST: "2Gi"
+    KUBERNETES_MEMORY_LIMIT: "4Gi"
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
+      changes: *everything
+    - if: '$CI_PIPELINE_SOURCE == "web"'
+  before_script:
+    # Native kernel overlay. The image's storage.conf sets mount_program =
+    # fuse-overlayfs, but FUSE needs CAP_SYS_ADMIN, which this tier lacks;
+    # /dev/fuse does not help, it fails EPERM at mount time. Dropping
+    # mount_program lets buildah mount overlay directly.
+    #
+    # Must be a config file via $CONTAINERS_STORAGE_CONF, not
+    # `--storage-driver overlay`: containers-storage persists driver options
+    # into the graphroot on first use, so the flag inherits mount_program
+    # anyway depending on what touched the store first.
+    - |
+      cat > "$CONTAINERS_STORAGE_CONF" <<'CONF'
+      [storage]
+      driver = "overlay"
+      runroot = "/var/run/containers/storage"
+      graphroot = "/var/lib/containers/storage"
+      [storage.options.overlay]
+      mountopt = "nodev"
+      CONF
+    # Build output says nothing about storage. GraphOptions shows whether this
+    # config won: overlay.mountopt=nodev alone is right, a mount_program entry
+    # means it did not. Falling back to vfs is slow, not broken.
+    - buildah info
+    - echo "$CI_REGISTRY_PASSWORD" | buildah login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # Which moving tag, if any, this branch owns. Everything else gets only the
+    # immutable sha- tag.
+    - |
+      case "$CI_COMMIT_BRANCH" in
+        main) MOVING_TAG=latest ;;
+        *)    MOVING_TAG= ;;
+      esac
+      echo "branch=$CI_COMMIT_BRANCH moving tag=${MOVING_TAG:-<none>}"
+      # Tagged after the build, so both names are guaranteed to be the same
+      # image.
+      push_image() {
+        buildah push "$1:sha-$CI_COMMIT_SHORT_SHA"
+        if [ -n "$MOVING_TAG" ]; then
+          buildah tag "$1:sha-$CI_COMMIT_SHORT_SHA" "$1:$MOVING_TAG"
+          buildah push "$1:$MOVING_TAG"
+        fi
+      }
+  script:
+    # The project's own registry path rather than a sub-image: this produces
+    # exactly one image, so `$CI_REGISTRY_IMAGE` already reads as
+    # `.../twiddlygems`.
+    - IMAGE="$CI_REGISTRY_IMAGE"
+    - buildah build -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
+    - push_image "$IMAGE"
