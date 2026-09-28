@@ -215,6 +215,18 @@ const FIRST_LEVEL: &[&str] = &[
     "##1002##",
 ];
 
+const EIGHT_BY_EIGHT: &[&str] = &[
+    "........",
+    "........",
+    "........",
+    "........",
+    "........",
+    "........",
+    "........",
+    "........",
+];
+
+
 const JELLY_PATCH: &[&str] = &[
     ".........",
     ".........",
@@ -228,15 +240,15 @@ const JELLY_PATCH: &[&str] = &[
 ];
 
 const CROSS: &[&str] = &[
+    "###...###",
     "##.....##",
     "#.......#",
-    ".........",
     "....o....",
     "...ooo...",
     "....o....",
-    ".........",
     "#.......#",
     "##.....##",
+    "###...###",
 ];
 
 const HOURGLASS: &[&str] = &[
@@ -258,11 +270,11 @@ const QUARRY: &[&str] = &[
     ".........",
     ".........",
     ".........",
-    "..=====..",
-    "..o...o..",
-    ".........",
     "..-----..",
-    "..o...o..",
+    "..ooooo..",
+    ".........",
+    "..=====..",
+    "..OOOOO..",
     ".........",
 ];
 
@@ -308,11 +320,61 @@ const VAULT: &[&str] = &[
     ".A.B.C.D.",
     ".a.b.c.d.",
     ".........",
-    "..ooooo..",
+    ".........",
     ".........",
     ".d.c.b.a.",
     ".D.C.B.A.",
     ".........",
+];
+
+const BRICK_COLUMNS: &[&str] = &[
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+    ".=.....=.",
+];
+
+const TETROMINO_BASE: &[&str] = &[
+    ".........",
+    ".........",
+    ".........",
+    ".........",
+    ".C.C.....",
+    "CC.CD....",
+    "CFFCDD..F",
+    "eeFCeD..F",
+    "eeFeee.FF",
+];
+
+// Five tetrominoes in four colors: the S piece in the bottom right answers to
+// the same color as the square in the top left, so one color is worth two
+// pieces and a run that draws it well gets paid twice.
+//
+// Those two rather than a closer pair, and it is a readability decision rather
+// than a balance one. A player has to see at a glance which seals a color will
+// open, and two pieces of the same color sitting in the same quarter of the
+// board read as one odd-shaped piece. Opposite corners, different shapes, no
+// confusion.
+//
+// It was five colors, one to a piece, and that made the level the longest on
+// the ladder by a wide margin. Every cell here is an uppercase letter, so
+// every seal takes two hits, and a fifth color meant a fifth of the draw going
+// to whichever piece was furthest from what the board had just handed over.
+const TETROMINO_FLOATING: &[&str] = &[
+    ".........",
+    "..GG.....",
+    "..GG..FF.",
+    ".......F.",
+    ".......F.",
+    ".D.EEE...",
+    ".D...E.G.",
+    ".D....GG.",
+    ".D....G..",
 ];
 
 const PILLARS: &[&str] = &[
@@ -325,6 +387,29 @@ const PILLARS: &[&str] = &[
     "..ooooo..",
     "..o=#=o..",
     "..o###o..",
+];
+
+const EMERALD_ISLES: &[&str] = &[
+    "........",
+    ".CC..CC.",
+    ".CC..CC.",
+    "........",
+    "........",
+    ".CC..CC.",
+    ".CC..CC.",
+    "........",
+];
+
+const GAUNTLET: &[&str] = &[
+    ".........",
+    "A.C...A.C",
+    "A=C...A=C",
+    "A.C...A.C",
+    "A=C...A=C",
+    "B.D...B.D",
+    "B=D...B=D",
+    "B.D...B.D",
+    "B=D...B=D",
 ];
 
 /// The built-in level ladder. Ordered by difficulty; the solo campaign walks
@@ -344,83 +429,147 @@ pub fn levels() -> Vec<LevelSpec> {
         // its two sit just above what scraping a win pays.
         LevelSpec::new(
             "First Light",
-            3,
-            vec![
-                Objective::Color { color: 0, count: 9 },
-                Objective::Color { color: 1, count: 9 },
-            ])
+            5,
+            vec![Objective::Color { color: 0, count: 18 }])
             .with_layout(FIRST_LEVEL)
             .colors(4)
             .palette(&[0, 5, 1, 2])
-            // Out of reach without specials, which is what a mark is for: both
-            // of them ask for all five unlocks, and a number a bare run scores
-            // anyway would make that rule a lie. Three moves on a narrow board
-            // means a long tail, so these are set off the far end of it rather
-            // than off the middle: two hundred bare runs top out around 25,000
-            // and a supplied one sits near 31,000.
-            .tiers(30_000, 45_000)
+            // The one level not set to the ladder's rule, twice over.
+            //
+            // Its clear is owed to nine seeds in ten where everything else
+            // owes one to half, because this is the first board anybody sees
+            // and the location every seed hangs off: failing half of all new
+            // players on their first swipe is a bad welcome and a slow start.
+            //
+            // Its silver is read straight off the bot like every other mark on
+            // the ladder, and unlike every other mark it is inside the reach
+            // of a run holding nothing: five moves on a narrow board has a
+            // long tail, and a bare run passes 23,000 about once in seventy.
+            // That is allowed here and nowhere else, which the balance gate
+            // knows about. Gold is not: it stays clear of the tail.
+            .tiers(23_000, 36_500)
+            .upgrade(2),
+        LevelSpec::new("Ruby Hunt", 8, vec![Objective::Color { color: 0, count: 30 }])
+            .with_layout(EIGHT_BY_EIGHT)
+            .colors(5)
+            .tiers(45_000, 59_000)
             .upgrade(4),
-        LevelSpec::new("Finding Fours", 22, vec![Objective::Score(7_000)])
-            .colors(5)
-            .tiers(12_000, 22_000)
-            .upgrade(10),
-        // Color goals ask you to aim rather than to clear whatever is nearest.
-        LevelSpec::new("Ruby Hunt", 22, vec![Objective::Color { color: 0, count: 30 }])
-            .colors(5)
-            .tiers(23_000, 41_000)
-            .upgrade(10),
         LevelSpec::new(
             "Two Tastes",
-            26,
+            18,
             vec![
                 Objective::Color { color: 1, count: 28 },
                 Objective::Color { color: 3, count: 28 },
             ],
         )
-        .tiers(18_000, 33_000)
-        .upgrade(12),
+        .with_layout(EIGHT_BY_EIGHT)
+        .tiers(33_000, 41_000)
+        .upgrade(9),
         // Jelly arrives: now position matters, not just volume.
-        LevelSpec::new("Sticky Middle", 16, vec![Objective::Jelly])
+        LevelSpec::new("Sticky Middle", 8, vec![Objective::Jelly])
             .with_layout(JELLY_PATCH)
-            .tiers(13_000, 24_000)
-            .upgrade(8),
+            .tiers(15_500, 26_500)
+            .upgrade(4),
+        // The last level a run can be asked to clear with nothing in hand, and
+        // it is the one that asks most of a bare run: bricks take two hits
+        // apiece and nothing a bare board can make reaches more than one at a
+        // time. Hence a budget well past its neighbours'.
+        LevelSpec::new("Donowall", 41, vec![Objective::Brick])
+            .with_layout(BRICK_COLUMNS)
+            .tiers(45_000, 53_500)
+            .upgrade(20),
+        LevelSpec::new(
+            "Tetromino Torture",
+            40,
+            vec![
+                Objective::Seal { color: 2 },
+                Objective::Seal { color: 3 },
+                Objective::Seal { color: 4 },
+                Objective::Seal { color: 5 },
+            ],
+        )
+        .with_layout(TETROMINO_BASE)
+        .colors(4)
+        .palette(&[2, 3, 4, 5])
+        // Four colors and four seal colors, so every clear is on top of a
+        // seal and the cascades never stop. The marks are an order up on the
+        // levels either side of it for that reason and not by mistake.
+        .tiers(395_000, 890_000)
+        .upgrade(20),
         LevelSpec::new(
             "Crowded House",
-            26,
+            12,
             vec![Objective::Score(13_000), Objective::Color { color: 4, count: 26 }],
         )
-        .tiers(17_000, 30_000)
-        .upgrade(12),
-        // Walls break the board into tubes and make cascades harder to aim.
-        LevelSpec::new("Crossroads", 20, vec![Objective::Jelly, Objective::Score(12_000)])
+        .tiers(29_000, 40_500)
+        .upgrade(6),
+        // Its own score objective pins where a bare win lands, so these sat on
+        // top of each other until they were measured the way a mark's rule
+        // asks: holding all five specials, which is what opens enough headroom
+        // above 12,000 for the two to separate at all. The narrowest pair on
+        // the ladder even so.
+        LevelSpec::new("Crossroads", 12, vec![Objective::Jelly, Objective::Score(12_000)])
             .with_layout(CROSS)
-            .tiers(13_000, 24_000)
-            .upgrade(10),
-        LevelSpec::new("Pillars", 32, vec![Objective::Jelly])
+            .tiers(19_000, 22_000)
+            .upgrade(6),
+        LevelSpec::new("Pillars", 54, vec![Objective::Jelly])
             .with_layout(PILLARS)
-            .tiers(14_000, 25_000)
-            .upgrade(16),
-        LevelSpec::new("Hourglass", 40, vec![Objective::Jelly])
+            .tiers(41_000, 46_500)
+            .upgrade(27),
+        LevelSpec::new("Hourglass", 59, vec![Objective::Jelly])
             .with_layout(HOURGLASS)
-            .tiers(26_000, 47_000)
-            .upgrade(20),
-        // The jelly is under the brick shelves, so it cannot be reached until
-        // the bricks come down, and nothing falls into those pockets until the
-        // gems above spill around the ends.
-        LevelSpec::new("Quarry", 34, vec![Objective::Jelly])
+            .tiers(63_000, 73_500)
+            .upgrade(29),
+        LevelSpec::new("Quarry", 23, vec![Objective::Jelly])
             .with_layout(QUARRY)
-            .tiers(13_000, 24_000)
-            .upgrade(16),
-        LevelSpec::new("Landslide", 40, vec![Objective::Brick])
+            .tiers(36_500, 45_500)
+            .upgrade(11),
+        LevelSpec::new("Landslide", 36, vec![Objective::Brick])
             .with_layout(SLOPE)
-            .tiers(25_000, 44_000)
-            .upgrade(20),
-        // A goal per color rather than one lumped total, so the level is about
-        // bringing each color to its own seals rather than breaking whichever
-        // happened to be easiest to reach.
+            .tiers(49_000, 59_500)
+            .upgrade(18),
+        // Four colors rather than three, and the third is not a number this
+        // level can have.
+        //
+        // At three, a sixty-four cell board matches everywhere: a rainbow took
+        // a third of it, that cascade minted more specials, and those cascaded
+        // again. Runs did not so much end as get interrupted by the bot's own
+        // iteration cap. Measured, the median winning score holding all five
+        // was thirty-four *billion*, against under a million for the next
+        // level up, and the marks came out with silver above gold because the
+        // distribution had stopped meaning anything. There was no tier value
+        // that worked: anything a bare run could not already pass was a number
+        // nobody could reach.
+        //
+        // A fourth color is enough to stop the board feeding itself.
+        LevelSpec::new("Refresher", 17, vec![Objective::Seal { color: 2 } ])
+            .colors(4)
+            .with_layout(EMERALD_ISLES)
+            .tiers(155_000, 250_000)
+            .upgrade(8),
+        LevelSpec::new(
+            "Tetromino Tease",
+            23,
+            vec![
+                Objective::Seal { color: 3 },
+                Objective::Seal { color: 4 },
+                Objective::Seal { color: 5 },
+                Objective::Seal { color: 6 },
+            ],
+        )
+        .with_layout(TETROMINO_FLOATING)
+        .colors(4)
+        .palette(&[3, 4, 5, 6])
+        // Twenty-three moves where the five color version wanted eighty-three,
+        // which is the whole of what a color is worth on a board of seals: a
+        // quarter of the draw landing on each piece instead of a fifth, over
+        // and over, for forty hits. The marks went up by as much as the budget
+        // came down, and for the same reason.
+        .tiers(295_000, 760_000)
+        .upgrade(11),
         LevelSpec::new(
             "The Vault",
-            30,
+            11,
             vec![
                 Objective::Seal { color: 0 },
                 Objective::Seal { color: 1 },
@@ -430,18 +579,27 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(VAULT)
         .palette(&[0, 1, 2, 3])
-        .tiers(310_000, 550_000)
-        .upgrade(14),
+        .tiers(355_000, 1_005_000)
+        .upgrade(5),
+        // The top of the ladder, and the only level measured holding all five
+        // specials, because it is the only one whose rule asks for all five.
+        // Its marks are the highest in the game by a wide margin: four colors
+        // on a board this dense means a rainbow is worth tens of thousands and
+        // the flourish spends what is left over on top of that.
         LevelSpec::new(
-            "Last Call",
-            30,
+            "The Gauntlet",
+            10,
             vec![
-                Objective::Score(18_000),
-                Objective::Color { color: 2, count: 32 },
+                Objective::Seal { color: 0 },
+                Objective::Seal { color: 1 },
+                Objective::Seal { color: 2 },
+                Objective::Seal { color: 3 },
             ],
         )
-        .tiers(27_000, 48_000)
-        .upgrade(14),
+        .with_layout(GAUNTLET)
+        .palette(&[0, 1, 2, 3])
+        .tiers(495_000, 1_315_000)
+        .upgrade(5),
     ]
 }
 

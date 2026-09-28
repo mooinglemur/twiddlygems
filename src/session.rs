@@ -1956,7 +1956,10 @@ mod tests {
         assert_eq!(session.unlocked(), 2);
         assert!(session.next_level());
         assert_eq!(session.index(), 1);
-        assert_eq!(session.level_name(), b"Finding Fours");
+        // Read off the ladder rather than written down here. What this is
+        // about is that moving on lands on the next level, not what that level
+        // happens to be called this month.
+        assert_eq!(session.level_name(), levels()[1].name.as_bytes());
     }
 
     #[test]

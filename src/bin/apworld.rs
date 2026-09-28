@@ -26,8 +26,8 @@ use twiddlygems::options::{
 };
 use twiddlygems::progression::{
     goal, item_name, item_pool, items, location_name, locations, requirement, spare_unlocks, Count,
-    Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, GENERATOR, LONGEST_CHAIN,
-    RELIABLE_CHAIN, SHORTEST_CHAIN,
+    Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, FIRST_GATED_LEVEL, GENERATOR,
+    LONGEST_CHAIN, RELIABLE_CHAIN, SHORTEST_CHAIN,
 };
 
 /// What the game is called wherever Archipelago says its name.
@@ -202,6 +202,11 @@ fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
             "levels",
             Json::Arr(ladder.iter().map(|level| Json::Str(level.name.to_string())).collect()),
         ),
+        // Where the ladder stops being clearable bare-handed. Zero based, so
+        // this many levels from the bottom ask for nothing and everything
+        // above wants a special. Written out rather than known on both sides,
+        // for the same reason every other number here is.
+        ("first_gated_level", Json::Num(FIRST_GATED_LEVEL as u32)),
         ("shortest_chain", Json::Num(SHORTEST_CHAIN)),
         ("longest_chain", Json::Num(LONGEST_CHAIN)),
         ("reliable_chain", Json::Num(RELIABLE_CHAIN)),

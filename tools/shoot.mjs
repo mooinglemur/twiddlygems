@@ -33,7 +33,16 @@ const DEBUG_PORT = Number(process.env.SHOT_DEBUG_PORT ?? 9333);
 // a level out by following hints, which is no way to solve a puzzle. The
 // second level is an ordinary board with room on it, which is what most of the
 // game looks like.
-const LEVEL = Number(process.env.SHOT_LEVEL ?? 1);
+// Which level the shots are taken on.
+//
+// Pillars rather than one of the early ones, and it is a practical choice
+// rather than an aesthetic one: these shots include the end-of-level run down,
+// so the level has to be one this tool can actually finish. It plays by
+// following the engine's hints, which is a poor player, and the ladder is now
+// tuned so that an *attentive* one clears about half the time. Holding
+// everything the save below grants, a hint follower takes this one almost
+// every attempt and most of the ladder hardly ever.
+const LEVEL = Number(process.env.SHOT_LEVEL ?? 8);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 await mkdir(OUT, { recursive: true });
@@ -334,20 +343,43 @@ for (const [name, metrics] of [
   // swipes is a minute of screenshot run time.
   const cashingIn = await evaluate(`
     (async () => {
-      const { engine, Phase } = { ...window.twiddlygems, Phase: { CASHING_IN: 7 } };
-      // Room for the beat a beaten level holds while its goals finish showing
-      // themselves met, which sits between the winning move and the flourish.
-      for (let i = 0; i < 700; i += 1) {
+      const { engine, Phase, Status } = {
+        ...window.twiddlygems,
+        Phase: { CASHING_IN: 7 },
+        Status: { LOST: 2 },
+      };
+      // Retried the way a player would, through the page's own button so the
+      // board and the HUD are reset together. One attempt was enough when the
+      // budgets were loose; measured, even a level this bot is good at is not
+      // a certainty, and a screenshot run that falls over one time in twenty
+      // is a build that falls over one time in twenty.
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        // A safety net rather than a budget: the loop leaves as soon as the
+        // attempt resolves either way, so this only has to be longer than the
+        // longest a level can take. Wide, because that is now a level with
+        // fifty-odd moves rather than the eight this was first sized for, and
+        // a cap shorter than the level does not fail an attempt, it abandons
+        // every attempt unfinished.
+        for (let i = 0; i < 4000; i += 1) {
+          if (engine.phase === Phase.CASHING_IN) {
+            return true;
+          }
+          if (engine.status === Status.LOST) {
+            break;
+          }
+          if (engine.acceptsInput) {
+            const move = engine.hint();
+            if (move) { engine.swap(...move); }
+          }
+          await new Promise((done) => requestAnimationFrame(done));
+        }
         if (engine.phase === Phase.CASHING_IN) {
           return true;
         }
-        if (engine.acceptsInput) {
-          const move = engine.hint();
-          if (move) { engine.swap(...move); }
-        }
+        document.getElementById('retry-button').click();
         await new Promise((done) => requestAnimationFrame(done));
       }
-      return engine.phase === Phase.CASHING_IN;
+      return false;
     })()
   `);
   if (!cashingIn) {

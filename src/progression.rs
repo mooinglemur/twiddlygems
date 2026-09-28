@@ -474,6 +474,19 @@ const CONSUMABLE_ID_BASE: u32 = 3_000;
 /// progressive item progressive.
 const LEVEL_UNLOCK_ID: u32 = 4_000;
 
+/// The first level that cannot be cleared bare-handed.
+///
+/// Zero based, so this is level six. Below it is the teaching half of the
+/// ladder: those levels are built to go down with nothing in hand, which is
+/// what leaves a run somewhere to find its first few items. From here on a run
+/// needs something to make, which is what turns the specials from a pleasant
+/// surprise into the thing the middle of the game is played with.
+///
+/// The rule is any one of the five rather than a named one, so the balance
+/// tool has to satisfy itself that each of them is enough on its own: see
+/// [`requirement`].
+pub const FIRST_GATED_LEVEL: usize = 5;
+
 /// What Archipelago's own numbers are offset by.
 ///
 /// Its ids only have to be unique within one game, so the engine's own
@@ -693,20 +706,42 @@ fn can_play(index: usize) -> Requirement {
     ])
 }
 
-pub fn requirement(location: Location, _levels: usize) -> Requirement {
-    let tools = || {
-        Requirement::All(
-            UNLOCKABLE
-                .iter()
-                .map(|special| Requirement::Has {
-                    item: Item::Unlock(*special),
-                    count: Count::Exactly(1),
-                })
-                .collect(),
-        )
+pub fn requirement(location: Location, levels: usize) -> Requirement {
+    let each_tool = || {
+        UNLOCKABLE
+            .iter()
+            .map(|special| Requirement::Has {
+                item: Item::Unlock(*special),
+                count: Count::Exactly(1),
+            })
+            .collect::<Vec<_>>()
     };
+    let tools = || Requirement::All(each_tool());
+    // Any one of the five. What a level past the teaching run asks to be
+    // cleared at all, and deliberately not a particular one: which special a
+    // run finds first is the seed's business, so naming one would make the
+    // rule true for some seeds and false for others.
+    //
+    // It follows that every such level has to go down with *whichever* one
+    // turned up, not merely with the best of them. That is what the balance
+    // tool measures, one special at a time, and it is why the weakest reading
+    // is the one that counts.
+    let some_tool = || Requirement::Any(each_tool());
+    let last = levels.saturating_sub(1);
     match location {
         Location::LevelClear(0) => Requirement::Always,
+        // The top of the ladder asks for the whole set. Not because reaching
+        // it implies holding them: with the ladder opening by item, a run can
+        // arrive at the last level having found fifteen unlocks and one
+        // special. If the level is built to be beaten with everything, the
+        // rule has to say so, or that run is stranded somewhere the logic
+        // believes it can finish.
+        Location::LevelClear(index) if index == last && last > FIRST_GATED_LEVEL => {
+            Requirement::All(vec![can_play(index), tools()])
+        }
+        Location::LevelClear(index) if index >= FIRST_GATED_LEVEL => {
+            Requirement::All(vec![can_play(index), some_tool()])
+        }
         Location::LevelClear(index) => can_play(index),
         Location::LevelSilver(index) => Requirement::All(vec![
             Requirement::Reached(Location::LevelClear(index)),
@@ -1244,8 +1279,22 @@ pub fn item_pool(levels: usize, seed: u64, options: &Options) -> Vec<Item> {
     // opens nothing at all.
     let all = level_unlocks(levels, options) as usize;
     let ladder = all.min(levels.saturating_sub(1));
-    std::iter::repeat_n(Item::LevelUnlock, ladder)
-        .chain(UNLOCKS.iter().map(|special| Item::Unlock(*special)))
+    // The specials go in first, ahead of even the ladder's own unlocks, and it
+    // has to be this way round since [`FIRST_GATED_LEVEL`]. A level unlock
+    // opens a level; it does not make that level *checkable*, because from the
+    // sixth on a level cannot be cleared without something to make. So a fill
+    // that spent the opening level's handful of places on ladder unlocks would
+    // open six levels it still could not check anything on, run out of room,
+    // and never place a special at all.
+    //
+    // Which is exactly what happened: a thirty level ladder deadlocked with
+    // every unlock placed and no special anywhere. The rule now is that
+    // whatever the rest of the game waits on goes down first, and everything
+    // waits on these.
+    UNLOCKS
+        .iter()
+        .map(|special| Item::Unlock(*special))
+        .chain(std::iter::repeat_n(Item::LevelUnlock, ladder))
         .chain(
             // Top of the ladder downward. A level's gold cannot be filled
             // until that level's own upgrade is placed somewhere else, so
@@ -1650,18 +1699,29 @@ mod tests {
         // fill that fails, and it did.
         let on = Options { spare_unlocks: 100, ..Options::default() };
         let pool = item_pool(13, 7, &on);
-        let ladder = 12;
+        // The specials come before everything, including the ladder's own
+        // unlocks. A level past the fifth cannot be cleared without one, so an
+        // unlock placed first opens a level that still owes nobody a location.
         assert!(
-            pool[..ladder].iter().all(|item| *item == Item::LevelUnlock),
-            "the ladder's own unlocks do not come first",
+            pool[..UNLOCKS.len()].iter().all(|item| matches!(item, Item::Unlock(_))),
+            "the specials are not dealt first, so the ladder can open onto nothing",
         );
+        // Then the ladder's own, ahead of the moves and the spares.
+        let ladder = UNLOCKS.len() + 12;
+        assert!(
+            pool[UNLOCKS.len()..ladder].iter().all(|item| *item == Item::LevelUnlock),
+            "the ladder's own unlocks do not follow the specials",
+        );
+        // And the spares behind everything the fill has to place carefully.
         let last_unlock =
             pool.iter().rposition(|item| *item == Item::LevelUnlock).expect("there are some");
-        let first_special =
-            pool.iter().position(|item| matches!(item, Item::Unlock(_))).expect("there are some");
+        let last_moves = pool
+            .iter()
+            .rposition(|item| matches!(item, Item::Moves { .. }))
+            .expect("there are some");
         assert!(
-            last_unlock > first_special,
-            "every level unlock was dealt before the specials, spares and all",
+            last_unlock > last_moves,
+            "a spare unlock was dealt before the move upgrades, which wait on nothing else",
         );
     }
 
@@ -2280,50 +2340,96 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_asked_to_clear_a_level_beyond_reaching_it() {
-        // Every level has to be beatable on its own move budget, which is what
-        // lets the ladder be climbed by someone who finds nothing optional. So
-        // clearing one asks for the ladder and for nothing else, under either
-        // of the two ways the ladder opens.
+    fn a_level_asks_for_its_place_in_the_ladder_and_whatever_its_band_wants() {
+        // Three bands, and between them the whole of what clearing a level
+        // asks for.
+        //
+        // Below `FIRST_GATED_LEVEL` a clear is owed to a run holding nothing,
+        // which is what leaves a fresh seed somewhere to find its first items.
+        // From there to the level below the top it asks for any one of the
+        // five specials. The top asks for all five.
+        //
+        // All of it under both ways the ladder opens, because which of those a
+        // run is playing changes what "reaching" a level means and nothing
+        // else.
         let by_clearing = Options { progressive_levels: 0, ..Options::default() };
         let by_item = Options::default();
 
+        let holding = |specials: &[Special], unlocks: usize| {
+            let mut held = Inventory::empty();
+            for special in specials {
+                held.receive(Item::Unlock(*special));
+            }
+            for _ in 0..unlocks {
+                held.receive(Item::LevelUnlock);
+            }
+            held
+        };
+
         for levels in LADDERS {
+            let last = levels - 1;
             for index in 0..levels {
                 let asked = requirement(Location::LevelClear(index), levels);
-                let empty = Inventory::empty();
-
-                // Opening by clearing: the level below, and nothing in hand.
+                let nowhere = Reached::none(levels);
                 let mut below = Reached::none(levels);
                 if index > 0 {
                     below.add(Location::LevelClear(index - 1));
                 }
+
+                // What this level's band asks for over and above the ladder.
+                let band: &[Special] = if index == last && last > FIRST_GATED_LEVEL {
+                    &UNLOCKS[..]
+                } else if index >= FIRST_GATED_LEVEL {
+                    &UNLOCKS[..1]
+                } else {
+                    &[]
+                };
+
                 assert!(
-                    asked.met(&empty, &below, &by_clearing),
-                    "clearing level {} asks for more than the level below it",
+                    asked.met(&holding(band, 0), &below, &by_clearing),
+                    "level {} asks for more than the level below it and {} special(s)",
                     index + 1,
+                    band.len(),
+                );
+                assert!(
+                    asked.met(&holding(band, index), &nowhere, &by_item),
+                    "level {} asks for more than {index} unlocks and {} special(s)",
+                    index + 1,
+                    band.len(),
                 );
 
-                // Opening by item: that many unlocks, and nowhere reached at
-                // all, because clearing opens nothing when a run plays this
-                // way.
-                let nowhere = Reached::none(levels);
-                let mut held = Inventory::empty();
-                for _ in 0..index {
-                    held.receive(Item::LevelUnlock);
-                }
-                assert!(
-                    asked.met(&held, &nowhere, &by_item),
-                    "clearing level {} asks for more than {index} level unlocks",
-                    index + 1,
-                );
-                if index > 0 {
-                    let mut short = Inventory::empty();
-                    for _ in 0..index - 1 {
-                        short.receive(Item::LevelUnlock);
-                    }
+                // The band is a real gate rather than a decoration: one short
+                // of what it asks for is a refusal.
+                if index >= FIRST_GATED_LEVEL {
                     assert!(
-                        !asked.met(&short, &nowhere, &by_item),
+                        !asked.met(&holding(&[], index), &below, &by_item),
+                        "level {} went down bare-handed, past where the ladder asks for a tool",
+                        index + 1,
+                    );
+                }
+                if index == last && last > FIRST_GATED_LEVEL {
+                    assert!(
+                        !asked.met(&holding(&UNLOCKS[..4], index), &below, &by_item),
+                        "the top of the ladder went down one special short of the set",
+                    );
+                }
+                // And in the middle band, every one of the five on its own is
+                // enough. The rule says any; a rule that held for only some of
+                // them would be true on some seeds and false on others, which
+                // is the shape of bug that strands a player.
+                if index >= FIRST_GATED_LEVEL && index != last {
+                    for special in UNLOCKS {
+                        assert!(
+                            asked.met(&holding(&[special], index), &nowhere, &by_item),
+                            "level {} will not go down holding only {special:?}",
+                            index + 1,
+                        );
+                    }
+                }
+
+                if index > 0 {
+                    assert!(
+                        !asked.met(&holding(band, index - 1), &nowhere, &by_item),
                         "level {} opened one unlock short of its place in the ladder",
                         index + 1,
                     );
@@ -2331,7 +2437,7 @@ mod tests {
                     // is worth nothing here, which is the whole of what the
                     // setting changes.
                     assert!(
-                        !asked.met(&empty, &below, &by_item),
+                        !asked.met(&holding(band, 0), &below, &by_item),
                         "level {} opened by clearing the one below it, with the ladder \
                          set to open by item",
                         index + 1,

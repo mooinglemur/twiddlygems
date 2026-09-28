@@ -278,7 +278,22 @@ globalThis.fetch = async (url) => {
 // world's.
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SEED = 11;
-const LEVEL = 1;
+// Which level the page is driven through.
+//
+// Pillars, because it is one of the two a bot following hints can actually
+// clear bare. With the budgets measured rather than guessed, the attentive bot
+// wins about half of everything and this bot is well short of attentive: it
+// takes this one about one attempt in seven and most of the ladder not at all.
+//
+// One in seven is fine because the seed below is pinned. The boards it is
+// dealt are the same every run, so the retry loop further down either gets
+// there or never does; it is not a gamble that comes out differently on
+// somebody else's machine.
+//
+// Mid-ladder rather than the opener, which is the other candidate: a save
+// sitting on the first level with nothing unlocked is a fresh run, and the
+// page would rightly offer to set it up rather than resume it.
+const LEVEL = 8;
 store.set(
   SAVE_KEY,
   JSON.stringify({
@@ -433,22 +448,34 @@ const objectives = elements.get('objectives');
 assert.ok(objectives.children.length > 0, 'the objective chips were never built');
 
 // A goal chip carries a picture of what it wants and how much of it is left,
-// and nothing else. This level's only goal is a score, which names the number
-// to reach: the score itself is already on screen a few inches away, and a
-// chip repeating it only invited the player to work out which copy was right.
+// and nothing else.
+//
+// Read off the engine rather than written down here. This used to name the
+// level's goals in the test, which made it a test of which level sat at
+// `LEVEL` as much as of the chips, and it went stale the moment the ladder was
+// redesigned around it.
 {
-  const [chip] = objectives.children;
-  assert.equal(chip.children.length, 2, 'the score chip has more on it than a mark and a number');
-  assert.match(
-    chip.children[1].textContent,
-    /^[\d,]+$/,
-    `the score goal reads ${JSON.stringify(chip.children[1].textContent)}`,
-  );
-  assert.ok(!chip.classList.contains('met'), 'the score goal is met before a point was scored');
+  const { ObjectiveKind } = await import(path.resolve('web/js/engine.js'));
+  const goals = window.twiddlygems.engine.objectives();
+  assert.ok(goals.length > 0, 'the level has nothing to do');
+  assert.equal(objectives.children.length, goals.length, 'a goal has no chip, or a chip no goal');
+  for (const chip of objectives.children) {
+    assert.equal(chip.children.length, 2, 'a goal chip has more on it than a mark and a number');
+    assert.match(
+      chip.children[1].textContent,
+      /^[\d,]+$/,
+      `a goal chip reads ${JSON.stringify(chip.children[1].textContent)}`,
+    );
+    assert.ok(!chip.classList.contains('met'), 'a goal is met before a move was made');
+  }
+  // A score goal is not somewhere a clear can fly to: everything on the board
+  // feeds the score, so a mote landing there would say nothing about which
+  // clear did what, and the score is not in that row anyway. Every other kind
+  // of goal gets one.
   assert.equal(
     window.twiddlygems.renderer.goals.length,
-    0,
-    'a score goal was offered as somewhere for a clear to fly to',
+    goals.filter((goal) => goal.kind !== ObjectiveKind.SCORE).length,
+    'a score goal was offered as somewhere for a clear to fly to, or another kind was not',
   );
 }
 assert.equal(elements.get('level-number').textContent, `Level ${LEVEL + 1}`);
@@ -807,7 +834,23 @@ click(overlayButton('Close'), 'the level picker has no way out');
     realSparkle(burst);
   };
 
-  for (let i = 0; i < 4000 && engine.status === Status.PLAYING; i += 1) {
+  // Played until it goes down, rather than in a single attempt.
+  //
+  // The ladder is tuned so an attentive player clears a level about half the
+  // time. This bot follows the hints, which is a good deal worse than
+  // attentive, so one attempt was a coin flip the moment the budgets were
+  // measured rather than guessed. It retries the way a player would, through
+  // the page's own button, so the reset is the real one. What this is here to
+  // exercise is the winning flow and not the odds of reaching it.
+  let attempts = 1;
+  for (let i = 0; i < 60_000 && engine.status !== Status.WON; i += 1) {
+    if (engine.status === Status.LOST) {
+      if (attempts >= 40) {
+        break;
+      }
+      attempts += 1;
+      dispatch('retry-button', 'click');
+    }
     if (engine.acceptsInput) {
       const move = engine.hint();
       if (move) {
@@ -833,10 +876,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
       }
     }
   }
-  assert.equal(engine.status, Status.WON, 'following the hints never finished level one');
-  // A met goal goes green. Worth saying on this level in particular: its only
-  // goal is a score, whose chip says the same words all the way through, so
-  // nothing about the chip changing is what can be relied on to notice.
+  assert.equal(
+    engine.status,
+    Status.WON,
+    `following the hints never finished the level in ${attempts} attempts`,
+  );
+  // A met goal goes green, which is the only thing that says so on a chip
+  // whose words do not change: a score goal names its target once and counts
+  // nothing down, so the color is all there is to read.
   assert.ok(
     objectives.children.every((chip) => chip.classList.contains('met')),
     'the level was won with a goal still unmet on screen',
@@ -1144,14 +1191,19 @@ click(overlayButton('Close'), 'the level picker has no way out');
 // and goes back to the title screen.
 {
   const { engine } = window.twiddlygems;
-  engine.setUnlocked(5);
+  // However far the run has got by now, read rather than set. `setUnlocked`
+  // only ever raises, so a number written in here would have to be above
+  // wherever the level above happened to leave it, and this is checking that
+  // backing out changes nothing rather than any particular number.
+  const opened = engine.unlocked;
+  assert.ok(opened > 1, 'the run has opened nothing, so there is no progress to keep or lose');
 
   // The retry closed the panel, so the menu is opened afresh.
   dispatch('levels-button', 'click', {});
   click(overlayButton('Quit game'), 'the level menu offers no way back to the title');
   click(overlayButton('Keep playing'), 'ending a run is not confirmed first');
   assert.ok(elements.get('title').classList.contains('hidden'), 'backing out still quit the run');
-  assert.equal(engine.unlocked, 5, 'backing out still threw the progress away');
+  assert.equal(engine.unlocked, opened, 'backing out still threw the progress away');
 
   // Backing out returns to the level list, so the way in is open again.
   click(overlayButton('Quit game'), 'backing out closed the menu instead of reopening it');
@@ -1271,6 +1323,29 @@ click(overlayButton('Close'), 'the level picker has no way out');
     renderer.goalFlash.fill(0);
   };
 
+  /// Moves to the first level that satisfies `wanted`, and stays there.
+  ///
+  /// By what a level is rather than by where it sits. Every one of these used
+  /// to be a written-down index, and the ladder has since been reordered and
+  /// grown: an index that goes stale does not fail, it quietly exercises a
+  /// different level than the one the assertions below are about, which is
+  /// worse than failing. `Sticky Middle has no single jelly` was that,
+  /// complaining about a level called Donowall.
+  const pickLevelWhere = (wanted, why) => {
+    for (let index = 0; index < engine.levelCount; index += 1) {
+      pickLevel(index, why);
+      if (wanted(engine.objectives(), renderer.goals)) {
+        return index;
+      }
+    }
+    assert.fail(`no level on the ladder is ${why}`);
+    return -1;
+  };
+
+  const asks = (kind) => (goals) => goals.some((goal) => goal.kind === kind);
+  const onlyAsks = (kind) => (goals) =>
+    goals.length === 1 && goals[0].kind === kind;
+
   /// A cell carrying exactly this much jelly, as the board last stood.
   const jellyCell = (layers) => {
     const at = renderer.jellySeen.findIndex((depth) => depth === layers);
@@ -1284,9 +1359,15 @@ click(overlayButton('Close'), 'the level picker has no way out');
     pump(1);
   };
 
-  pickLevel(0, 'which asks for two colors');
+  // A level with two color goals, so a renderer that sent every clear to the
+  // first goal it had would not pass by accident.
+  pickLevelWhere(
+    (objectives) =>
+      objectives.length === 2 && objectives.every((it) => it.kind === ObjectiveKind.COLOR),
+    'a level asking for exactly two colors',
+  );
   const goals = renderer.goals;
-  assert.equal(goals.length, 2, `the opening level's two goals did not reach the renderer: ${goals.length}`);
+  assert.equal(goals.length, 2, `two color goals did not reach the renderer: ${goals.length}`);
   assert.ok(
     goals.every((goal) => goal.kind === ObjectiveKind.COLOR && goal.el && goal.icon),
     'a goal reached the renderer without a chip to fly to',
@@ -1357,8 +1438,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // that takes the last layer off a cell and not one that only softens it.
   // Sticky Middle is a patch of single layers, so a gem cleared on it finishes
   // it and a gem cleared beside it does nothing.
-  pickLevel(4, 'which is the jelly one');
-  assert.equal(renderer.goals.length, 1, 'Sticky Middle did not get its jelly goal');
+  const jellyLevel = pickLevelWhere(onlyAsks(ObjectiveKind.JELLY), 'a level whose only goal is jelly');
+  assert.equal(renderer.goals.length, 1, 'the jelly level did not get its jelly goal');
   // A patch of jelly runs to two digits, which the opening level's goals do
   // not: a chip that always reserved one digit would look right there and
   // narrow here on the way from ten to nine.
@@ -1425,7 +1506,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
         before = shown();
       }
       if (sent === 0) {
-        pickLevel(4, 'to try the jelly again');
+        pickLevel(jellyLevel, 'to try the jelly again');
       }
     }
     renderer.tribute = realTribute;
@@ -1460,7 +1541,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   }
 
   // A clean board again for the rest, since that one was played on.
-  pickLevel(4, 'which is the jelly one');
+  pickLevel(jellyLevel, 'which is the jelly one');
   const sticky = jellyCell(1);
   const bare = jellyCell(0);
   assert.ok(sticky && bare, 'Sticky Middle has no single jelly, or no cell without any');
@@ -1475,9 +1556,12 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
   // The other side of that: Hourglass is laid out in double layers, so the
   // first clear on one leaves the cell still jellied and the count unmoved.
-  pickLevel(8, 'which is laid out in double jelly');
+  pickLevelWhere(
+    (objectives) => asks(ObjectiveKind.JELLY)(objectives) && jellyCell(2) !== null,
+    'a level laid out in double jelly',
+  );
   const doubled = jellyCell(2);
-  assert.ok(doubled, 'Hourglass has no double jelly left to soften');
+  assert.ok(doubled, 'no level has double jelly left to soften');
   clear({ kind: EventKind.CLEAR, ...doubled, color: 0 });
   assert.equal(
     renderer.tributes.length,
@@ -1487,8 +1571,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
   // Bricks go the same way: cracking one leaves it in the way, and only the
   // hit that breaks it moves the count.
-  pickLevel(10, 'which is the brick one');
-  assert.equal(renderer.goals.length, 1, 'Landslide did not get its brick goal');
+  pickLevelWhere(onlyAsks(ObjectiveKind.BRICK), 'a level whose only goal is brick');
+  assert.equal(renderer.goals.length, 1, 'the brick level did not get its brick goal');
   clear({ kind: EventKind.BRICK, r: 5, c: 4, color: 255, value: 1 });
   assert.equal(renderer.tributes.length, 0, 'a brick that only cracked paid the brick goal');
   clear({ kind: EventKind.BRICK, r: 5, c: 4, color: 255, value: 0 });
@@ -1497,8 +1581,12 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // And a seal pays the goal for its own color, of which The Vault has four:
   // the level is about bringing each color to its own seals, so a mote going
   // to the wrong one would be telling the player the opposite of the truth.
-  pickLevel(11, 'which asks for a color of seal at a time');
-  assert.equal(renderer.goals.length, 4, 'The Vault did not get a goal per seal color');
+  pickLevelWhere(
+    (objectives) =>
+      objectives.length === 4 && objectives.every((it) => it.kind === ObjectiveKind.SEAL),
+    'a level asking for four colors of seal',
+  );
+  assert.equal(renderer.goals.length, 4, 'the seal level did not get a goal per seal color');
   const seal = 2;
   clear({ kind: EventKind.BRICK, r: 1, c: 1, color: renderer.goals[seal].color, value: 0 });
   assert.ok(renderer.tributes.length > 0, 'a broken seal sent nothing to the goal counting it');
@@ -1516,8 +1604,14 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // not a destination, so the two lists stop agreeing here, and a renderer
   // reading its own index into the engine's objectives would be watching the
   // score to decide whether the color goal was done.
-  pickLevel(5, 'whose first goal is a score and whose second is a color');
-  assert.equal(renderer.goals.length, 1, 'Crowded House offered its score goal as a destination');
+  const scoreThenColor = pickLevelWhere(
+    (objectives) =>
+      objectives.length === 2 &&
+      objectives[0].kind === ObjectiveKind.SCORE &&
+      objectives[1].kind === ObjectiveKind.COLOR,
+    'a level whose first goal is a score and whose second is a color',
+  );
+  assert.equal(renderer.goals.length, 1, 'the score goal was offered as a destination');
   assert.equal(
     renderer.goals[0].at,
     1,
@@ -1546,7 +1640,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // Set rather than played to: following hints does not meet a goal on any
   // level in the ladder, so a test that waited for one would never run. What
   // the line above checks is that the number is read off the engine at all.
-  pickLevel(5, 'again, for a board with moves left on it');
+  pickLevel(scoreThenColor, 'again, for a board with moves left on it');
   assert.ok(renderer.goalsLeft[0] > 1, 'a fresh level starts with its goal all but done');
   const asked = renderer.goals[0].color;
   clear({ kind: EventKind.CLEAR, r: 3, c: 3, color: asked });
@@ -1582,7 +1676,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // at the total, so clearing three of a color it wanted two more of counts as
   // two: a third cell paying anyway would leave the chip owed three against a
   // goal with two outstanding, and it would climb to three before falling.
-  pickLevel(5, 'once more, for a goal with a known amount left');
+  pickLevel(scoreThenColor, 'once more, for a goal with a known amount left');
   renderer.goalsLeft[0] = 2;
   renderer.owedThisFrame[0] = 0;
   renderer.tributes.length = 0;

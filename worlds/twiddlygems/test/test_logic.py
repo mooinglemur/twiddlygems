@@ -18,6 +18,11 @@ SHARED = [
 #: The ladder's own item, which the pool holds many of on purpose.
 LADDER = "Progressive Level Unlock"
 
+#: How many levels from the bottom go down bare-handed. Read from the engine
+#: rather than written here, because it is the engine's decision and a second
+#: copy would be one to keep in step.
+FIRST_GATED_LEVEL = GAME_DATA["first_gated_level"]
+
 UNLOCKS = [
     "Horizontal Line Clear",
     "Vertical Line Clear",
@@ -40,22 +45,63 @@ class TestDefault(TwiddlyGemsTestBase):
 
     def test_the_ladder_is_shut_past_the_level_a_run_has_reached(self) -> None:
         # The default opens the ladder by item, so the clears are a real chain
-        # of spheres rather than all sitting in the first one. What a level
-        # asks for is its place in the ladder and nothing else: no level asks
-        # for a special or a moves upgrade to be cleared, which is what keeps
-        # every level beatable on its own move budget.
+        # of spheres rather than all sitting in the first one.
         self.assertTrue(self.can_reach_location("Level 1 Clear"))
         for index in range(2, len(LEVELS) + 1):
             self.assertFalse(
                 self.can_reach_location(f"Level {index} Clear"),
                 f"level {index} is open to a run that has found nothing",
             )
-        self.collect_by_name("Progressive Level Unlock")
-        for index in range(1, len(LEVELS) + 1):
+
+        # The whole ladder in hand opens the teaching half and no further: from
+        # the sixth level on, a clear wants something to make as well as
+        # somewhere to make it.
+        self.collect_by_name(LADDER)
+        for index in range(1, FIRST_GATED_LEVEL + 1):
             self.assertTrue(
                 self.can_reach_location(f"Level {index} Clear"),
                 f"level {index} asks for more than its place in the ladder",
             )
+        for index in range(FIRST_GATED_LEVEL + 1, len(LEVELS) + 1):
+            self.assertFalse(
+                self.can_reach_location(f"Level {index} Clear"),
+                f"level {index} goes down bare-handed, past where a tool is asked for",
+            )
+
+        # Any one of them is enough for the middle of the ladder. The top is
+        # not in that band: it wants the set, and is checked on its own below.
+        self.collect_by_name(UNLOCKS[0])
+        for index in range(FIRST_GATED_LEVEL + 1, len(LEVELS)):
+            self.assertTrue(
+                self.can_reach_location(f"Level {index} Clear"),
+                f"level {index} wants more than one special, where the rule says any",
+            )
+        self.assertFalse(
+            self.can_reach_location(f"Level {len(LEVELS)} Clear"),
+            "the top of the ladder went down one special short of the set",
+        )
+        self.collect_by_name(UNLOCKS[1:])
+        self.assertTrue(
+            self.can_reach_location(f"Level {len(LEVELS)} Clear"),
+            "the top of the ladder will not go down holding every special",
+        )
+
+    def test_each_special_on_its_own_opens_the_middle_of_the_ladder(self) -> None:
+        # The rule says *any* of the five, so it has to hold for each of them
+        # one at a time. A rule that were true of only some would be true on
+        # some seeds and false on others, which is the shape of thing that
+        # strands a player halfway up with no way to say why.
+        for special in UNLOCKS:
+            state = self.multiworld.get_all_state(False)
+            for _ in range(len(LEVELS)):
+                state.collect(self.world.create_item(LADDER), prevent_sweep=True)
+            state.collect(self.world.create_item(special), prevent_sweep=True)
+            for index in range(FIRST_GATED_LEVEL + 1, len(LEVELS)):
+                self.assertTrue(
+                    self.multiworld.get_location(f"Level {index} Clear", self.player)
+                    .can_reach(state),
+                    f"level {index} will not go down holding only {special}",
+                )
 
     def test_a_score_mark_wants_the_specials(self) -> None:
         # Nearly all of a good score comes from the flourish at the end of a
@@ -400,26 +446,40 @@ class TestFalseIsAWayToSayOff(TwiddlyGemsTestBase):
     def test_it_reads_as_off(self) -> None:
         self.assertEqual(self.world.options.progressive_levels.value, 0)
         self.assertEqual(self.world._count(ITEMS_BY_NAME[LADDER]), 0)
-        # And every level is open to a run holding nothing, which is what off
-        # means and is not true of the default.
-        for index in range(1, len(LEVELS) + 1):
+        # And the ladder opens by clearing, which shows as the teaching half
+        # being open to a run holding nothing. That is what off means, and it
+        # is not true of the default.
+        #
+        # Only the teaching half: what the setting changes is how a level is
+        # reached, not what clearing it takes, so the gate above the fifth
+        # level is untouched by it.
+        for index in range(1, FIRST_GATED_LEVEL + 1):
             self.assertTrue(self.can_reach_location(f"Level {index} Clear"))
+        self.assertFalse(
+            self.can_reach_location(f"Level {FIRST_GATED_LEVEL + 1} Clear"),
+            "turning the ladder setting off also opened the levels that want a special",
+        )
 
 
 class TestClearingIsTheGoal(TwiddlyGemsTestBase):
     """The goal that asks for the least, on a ladder that opens by clearing.
 
-    Both settings together are what makes a world with nothing to find:
-    clearing a level needs no items, and a ladder that opens by clearing needs
-    none either, so a run set this way is beatable the moment it starts and
-    the generator treats every item in the world as optional. Somebody who
-    wants a relaxed slot should be able to ask for that, and should have to
-    ask for both halves of it.
+    These two settings together used to make a world with nothing at all to
+    find: clearing asked for no items and the ladder asked for none either, so
+    a run was beatable the moment it started and every item in it was optional.
+
+    It is not that any more, and this is where that shows. The top of the
+    ladder wants all five specials whatever else is turned down, so the most
+    relaxed slot anybody can ask for still has five things in it that have to
+    be found. Which is the point of the gate: there is no longer a way to
+    configure this game into having no progression.
     """
 
     options = {"goal": "clear_last_level", "progressive_levels": "off"}
 
-    def test_it_is_beatable_out_of_an_empty_inventory(self) -> None:
+    def test_the_specials_are_the_floor_under_every_other_setting(self) -> None:
+        self.assertBeatable(False)
+        self.collect_by_name(UNLOCKS)
         self.assertBeatable(True)
 
 
@@ -433,9 +493,12 @@ class TestClearingIsTheGoalOnAnItemLadder(TwiddlyGemsTestBase):
 
     options = {"goal": "clear_last_level"}
 
-    def test_the_ladder_is_what_it_asks_for(self) -> None:
+    def test_the_ladder_and_the_specials_are_both_what_it_asks_for(self) -> None:
         self.assertBeatable(False)
+        # The ladder alone reaches the top level and cannot clear it.
         self.collect_by_name(LADDER)
+        self.assertBeatable(False)
+        self.collect_by_name(UNLOCKS)
         self.assertBeatable(True)
 
 

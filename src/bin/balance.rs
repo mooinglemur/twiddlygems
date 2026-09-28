@@ -24,7 +24,8 @@ use twiddlygems::game::{Game, Phase, Status, EV_CLEAR, EV_SPECIAL_MADE};
 use twiddlygems::level::{levels, LevelSpec, Objective};
 use twiddlygems::matching;
 use twiddlygems::progression::{
-    Inventory, Item, LONGEST_CHAIN, LONGEST_MATCH, SHORTEST_CHAIN, SHORTEST_MATCH, UNLOCKS,
+    Inventory, Item, FIRST_GATED_LEVEL, LONGEST_CHAIN, LONGEST_MATCH, SHORTEST_CHAIN,
+    SHORTEST_MATCH, UNLOCKS,
 };
 
 /// The ladder as the unluckiest run meets it: nothing in hand at all.
@@ -89,6 +90,20 @@ fn first_move(game: &Game) -> Option<(Pos, Pos)> {
 }
 
 fn main() {
+    // A second mode, and a different job from the rest of this file. Everything
+    // below reports whether the numbers in `level.rs` hold; this proposes what
+    // they should be. Run when the ladder changes, read, and copied in by hand:
+    // it is an instrument, not a generator, and a level's numbers are a design
+    // decision that happens to want measuring first.
+    //
+    //     cargo run --release --bin balance -- tune [seeds]
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "tune") {
+        let seeds = args.last().and_then(|last| last.parse().ok()).unwrap_or(40);
+        tune(seeds);
+        return;
+    }
+
     specials_made(Bot::First, 60);
     println!();
     // The greedy bot plays every candidate move out before choosing, so it gets
@@ -442,13 +457,20 @@ fn marks(seeds: u64) -> bool {
             nothing.iter().filter(|score| **score >= mark).count()
         };
         let (bare_silver, bare_gold) = (hits(spec.silver), hits(spec.gold));
-        // One run in a hundred, not none. Three moves on a narrow board has a
+        // One run in a hundred, not none. A few moves on a narrow board has a
         // long tail: a bare run occasionally cascades into something enormous,
         // and a mark set above that would be one no supplied run could reach
         // either. What this is looking for is a mark a bare run reaches
         // routinely, which is a mark that pays for nothing.
+        //
+        // Gold only, and only on the opener. Silver there is deliberately let
+        // alone: the opener is dealt to bare runs and supplied ones alike, its
+        // tail overlaps both, and holding silver clear of that tail means
+        // setting it somewhere no bot reading produced. One of the two marks
+        // being honest about the unlocks is enough on the one level where the
+        // two distributions cannot be told apart.
         let allowance = nothing.len() / 100;
-        if index == 0 && (bare_silver > allowance || bare_gold > allowance) {
+        if index == 0 && bare_gold > allowance {
             opener_holds = false;
         }
         let at = |values: &mut Vec<u64>, p: usize| {
@@ -466,11 +488,7 @@ fn marks(seeds: u64) -> bool {
             format!(
                 "{bare_silver} / {bare_gold} of {}{}",
                 nothing.len(),
-                if index == 0 && (bare_silver > allowance || bare_gold > allowance) {
-                    "   TOO EASY"
-                } else {
-                    ""
-                },
+                if index == 0 && bare_gold > allowance { "   TOO EASY" } else { "" },
             ),
         );
     }
@@ -961,5 +979,227 @@ fn label(objective: &Objective) -> &'static str {
         Objective::Jelly => "jelly",
         Objective::Brick => "brick",
         Objective::Seal { .. } => "seal",
+    }
+}
+
+// ---- the tuner -------------------------------------------------------------
+//
+// Everything above reports whether the numbers in `level.rs` hold. What
+// follows proposes what they should be, which is a different job and is why it
+// is a mode rather than another table.
+//
+// The rule it works to: a level must be clearable, by the attentive bot, from
+// the *least* a run could be holding and still be expected to clear it. What
+// that least is comes from `progression.rs` and nowhere else, so this reads it
+// rather than deciding it.
+
+/// Where the budget search starts from. Generous, because it is not a proposal:
+/// it is a budget wide enough that a seed which can be won is won, so that how
+/// many moves it actually took can be read off `moves_spare`.
+const WIDE: u32 = 150;
+
+/// The share of seeds a level owes a clear to, and the share that should reach
+/// each mark.
+///
+/// The opener is the exception and is deliberately generous. It is the first
+/// board anybody sees and the one location every seed hangs off; failing half
+/// of all new players on it would be a poor welcome and a slow start.
+const CLEAR_RATE: usize = 50;
+const OPENER_RATE: usize = 90;
+const GOLD_RATE: usize = 50;
+const SILVER_RATE: usize = 80;
+
+/// The states a level has to be clearable from, by the rules as written.
+///
+/// Past [`FIRST_GATED_LEVEL`] the rule is *any* of the five, so a level owes a
+/// clear to whichever one a run happens to hold and the binding case is the
+/// worst of them, not the best. Measuring one chosen special would be
+/// measuring a rule nobody wrote.
+fn demands(index: usize, last: usize) -> Vec<(&'static str, Vec<Special>)> {
+    if index < FIRST_GATED_LEVEL {
+        return vec![("nothing", Vec::new())];
+    }
+    if index == last {
+        // The top asks for the whole set, so it is measured holding it.
+        return vec![("all five", UNLOCKS.to_vec())];
+    }
+    UNLOCKS.iter().map(|special| (special_name(*special), vec![*special])).collect()
+}
+
+fn special_name(special: Special) -> &'static str {
+    match special {
+        Special::LineH => "lineH",
+        Special::LineV => "lineV",
+        Special::Cross => "cross",
+        Special::Rainbow => "rainbow",
+        Special::Rocket => "rocket",
+        _ => "none",
+    }
+}
+
+/// A level as one of its demands meets it, at a stated budget.
+///
+/// The budget is set after the inventory is applied, so it is exactly what was
+/// asked for rather than the level's own number plus whatever the upgrade
+/// would have added.
+fn fitted(index: usize, specials: &[Special], moves: u32) -> LevelSpec {
+    let mut spec = levels()[index].clone();
+    let mut held = Inventory::empty();
+    for special in specials {
+        held.receive(Item::Unlock(*special));
+    }
+    held.apply(index, &mut spec);
+    spec.moves = moves;
+    spec
+}
+
+/// How many moves the bot needed on each seed, or nothing where it never got
+/// there.
+///
+/// One pass at a wide budget rather than a search over budgets. The bot reads
+/// the board and nothing else, so a wider budget does not change what it
+/// plays, only how long it may go on playing: the move it won on is the move
+/// it would have won on at any budget that reached it. That turns what would
+/// have been a binary search per level into a single measurement.
+fn moves_needed(index: usize, specials: &[Special], seeds: u64) -> Vec<Option<u32>> {
+    let spec = fitted(index, specials, WIDE);
+    (0..seeds)
+        .map(|seed| {
+            let game = play(&spec, seed * 7919 + index as u64, Bot::Greedy);
+            (game.status() == Status::Won).then(|| WIDE - game.progress.moves_spare)
+        })
+        .collect()
+}
+
+/// The smallest budget at which `rate` per cent of the seeds get there.
+fn budget_for(needed: &[Option<u32>], rate: usize) -> Option<u32> {
+    // A seed that never won needs more than any budget, so it sorts above
+    // every real answer rather than below it, which is where `Option`'s own
+    // ordering would have put it.
+    let mut sorted: Vec<u32> = needed.iter().map(|when| when.unwrap_or(u32::MAX)).collect();
+    sorted.sort_unstable();
+    let at = (sorted.len() - 1) * rate / 100;
+    (sorted[at] != u32::MAX).then_some(sorted[at])
+}
+
+/// What the bot scored on the seeds it won, at a stated budget.
+fn won_scores(index: usize, specials: &[Special], seeds: u64, moves: u32) -> Vec<u64> {
+    let spec = fitted(index, specials, moves);
+    (0..seeds)
+        .filter_map(|seed| {
+            let game = play(&spec, seed * 7919 + index as u64, Bot::Greedy);
+            (game.status() == Status::Won).then_some(game.progress.score)
+        })
+        .collect()
+}
+
+/// A mark reached by `rate` per cent of winning runs.
+///
+/// The higher the share that should reach it, the lower it sits: a mark
+/// everybody passes is at the bottom of the distribution, not the top.
+fn mark_at(scores: &mut Vec<u64>, rate: usize) -> u64 {
+    percentile(scores, 100 - rate).map_or(0, |score| round_mark(score))
+}
+
+/// Marks are read by people and chased by people, so they are round.
+fn round_mark(score: u64) -> u64 {
+    let step = if score >= 100_000 { 5_000 } else { 500 };
+    ((score + step / 2) / step).max(1) * step
+}
+
+fn tune(seeds: u64) {
+    let ladder = levels();
+    let last = ladder.len() - 1;
+    println!("what the ladder wants ({seeds} seeds a reading, attentive bot)");
+    println!(
+        "a clear owed to {CLEAR_RATE}% of seeds ({OPENER_RATE}% on the opener), \
+         silver to {SILVER_RATE}% of wins, gold to {GOLD_RATE}%"
+    );
+    println!();
+    println!(
+        "{:<19}{:>7}{:>9}{:>10}{:>10}  {:<10}{:>7}{:>7}",
+        "level", "moves", "upgrade", "silver", "gold", "binding", "was", "check",
+    );
+
+    for index in 0..ladder.len() {
+        let wanted = if index == 0 { OPENER_RATE } else { CLEAR_RATE };
+        let cases = demands(index, last);
+
+        // The budget is the worst demand's, because every one of them is a
+        // state the rules say this level can be cleared from.
+        let mut moves = 0;
+        let mut binding = "-";
+        let mut beyond = Vec::new();
+        for (name, specials) in &cases {
+            let needed = moves_needed(index, specials, seeds);
+            match budget_for(&needed, wanted) {
+                Some(wants) if wants > moves => {
+                    moves = wants;
+                    binding = name;
+                }
+                None => beyond.push(*name),
+                _ => {}
+            }
+        }
+
+        // Half again, which is the ratio the ladder already used and keeps an
+        // upgrade worth finding without making the base budget meaningless.
+        let upgrade = (moves / 2).max(2);
+
+        // And the marks, which are measured against something else entirely:
+        // what a *mark's* rule asks for, which is all five specials and the
+        // level's own upgrade, whatever the clear band allows.
+        //
+        // Measuring these against the clear band instead is wrong in a way
+        // that shows: on the opening level the band is "nothing", the marks
+        // come out where a bare run already scores, and a rule saying they
+        // want all five unlocks becomes decorative. The balance gate calls
+        // that one out by name, and it was right to.
+        let mut scores = won_scores(index, &UNLOCKS, seeds, moves + upgrade);
+        let (silver, gold) = if scores.is_empty() {
+            (0, 0)
+        } else {
+            (mark_at(&mut scores, SILVER_RATE), mark_at(&mut scores, GOLD_RATE))
+        };
+
+        // The budget above was read off a wider one, on the argument that the
+        // bot plays the same moves either way and only stops sooner. Rather
+        // than trust that, play it at the budget being proposed and count.
+        // A reading far from the target means the argument is wrong somewhere
+        // and the rest of the row is not to be believed.
+        let checked = cases
+            .iter()
+            .find(|(name, _)| *name == binding)
+            .map(|(_, specials)| {
+                let spec = fitted(index, specials, moves);
+                let won = (0..seeds)
+                    .filter(|seed| {
+                        play(&spec, seed * 7919 + index as u64, Bot::Greedy).status() == Status::Won
+                    })
+                    .count();
+                won * 100 / seeds.max(1) as usize
+            })
+            .unwrap_or(0);
+
+        let spec = &ladder[index];
+        let mut note = String::new();
+        if !beyond.is_empty() {
+            note.push_str(&format!("  NEVER with: {}", beyond.join(" ")));
+        }
+        if checked.abs_diff(wanted) > 15 {
+            note.push_str("  <- the budget does not read back");
+        }
+        println!(
+            "{:<19}{:>7}{:>9}{:>10}{:>10}  {:<10}{:>7}{:>6}%{}",
+            spec.name,
+            moves,
+            upgrade,
+            if silver == u64::MAX { 0 } else { silver },
+            if gold == u64::MAX { 0 } else { gold },
+            binding,
+            spec.moves,
+            checked,
+            note,
+        );
     }
 }
