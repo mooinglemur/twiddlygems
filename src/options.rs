@@ -52,7 +52,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Options {
-            goal: Goal::GoldOnLastLevel,
+            goal: Goal::ClearEveryLevel,
             ap_gems: 1,
             ap_gem_odds: 100,
             inventory_items: 10,
@@ -65,19 +65,22 @@ impl Default for Options {
 /// What finishing means.
 ///
 /// Worth choosing rather than fixing, because the two ends of this are very
-/// different games. Clearing the last level asks for no items at all, so a
-/// generator sees a run already beatable and places accordingly; gold on every
-/// level asks for everything the world has. The default sits between them.
+/// different games. The order is how much each asks for, easiest first, and
+/// the numbers follow it: they are what a save records and what the generated
+/// rules switch on, so they and the choices in [`SETTINGS`] are one list said
+/// twice and have to stay in step.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Goal {
-    /// Beat the last level as well as it can be beaten. The default: it wants
-    /// the five unlocks and that level's moves, so a run has to find things.
-    GoldOnLastLevel,
-    /// Simply get to the end of the ladder. Asks for nothing, so every
-    /// location in the world is open from the start.
+    /// Simply get to the end of the ladder. On a ladder that opens by
+    /// clearing this asks for nothing at all, and every location in the world
+    /// is open from the start; on one that opens by item it asks for the
+    /// ladder.
     ClearLastLevel,
-    /// Clear every level on the ladder, not just the last.
+    /// Clear every level, not just the last. The default.
     ClearEveryLevel,
+    /// Beat the last level as well as it can be beaten: it wants the five
+    /// unlocks and that level's moves, so a run has to find things.
+    GoldOnLastLevel,
     /// Gold on every level, which is the whole game.
     GoldOnEveryLevel,
 }
@@ -85,18 +88,18 @@ pub enum Goal {
 impl Goal {
     pub fn value(self) -> u32 {
         match self {
-            Goal::GoldOnLastLevel => 0,
-            Goal::ClearLastLevel => 1,
-            Goal::ClearEveryLevel => 2,
+            Goal::ClearLastLevel => 0,
+            Goal::ClearEveryLevel => 1,
+            Goal::GoldOnLastLevel => 2,
             Goal::GoldOnEveryLevel => 3,
         }
     }
 
     pub fn from_value(value: u32) -> Option<Goal> {
         match value {
-            0 => Some(Goal::GoldOnLastLevel),
-            1 => Some(Goal::ClearLastLevel),
-            2 => Some(Goal::ClearEveryLevel),
+            0 => Some(Goal::ClearLastLevel),
+            1 => Some(Goal::ClearEveryLevel),
+            2 => Some(Goal::GoldOnLastLevel),
             3 => Some(Goal::GoldOnEveryLevel),
             _ => None,
         }
@@ -177,6 +180,7 @@ impl Setting {
         match self.kind {
             Kind::Range { low, high, .. } => (low..=high).contains(&value),
             Kind::Choice(choices) => choices.iter().any(|choice| choice.value == value),
+            Kind::Toggle => value <= 1,
         }
     }
 
@@ -198,6 +202,9 @@ impl Setting {
                 let moved = (at as i64 + by as i64).rem_euclid(count) as usize;
                 choices[moved].value
             }
+            // Wraps, like the choice it looks like on screen: a step either
+            // way off one of two values lands on the other.
+            Kind::Toggle => u32::from(value == 0),
         }
     }
 }
@@ -212,7 +219,20 @@ pub enum Kind {
     Range { low: u32, high: u32, step: u32 },
     /// One of a list.
     Choice(&'static [Choice]),
+    /// Off or on: 0 or 1, and nothing else.
+    ///
+    /// A choice of two would look the same on the solo screen, and on the
+    /// screen it is treated as one. What it buys is the yaml: Archipelago has
+    /// a type for this, and a player writing `true` into a file means it. A
+    /// two-value choice would only take the words somebody wrote down here,
+    /// so `on` would generate and `true` would be an error on a line nobody
+    /// could see the fault in.
+    Toggle,
 }
+
+/// What a toggle's two values are called on screen, since it carries no
+/// choices of its own to name them.
+pub const TOGGLE_LABELS: [&str; 2] = ["Off", "On"];
 
 /// One of the values a [`Kind::Choice`] setting can take.
 pub struct Choice {
@@ -233,20 +253,22 @@ pub static SETTINGS: &[Setting] = &[
     Setting {
         key: GOAL,
         label: "Goal",
-        about: "What finishing the game means.",
+        about: "What is necessary to finish the game",
         kind: Kind::Choice(&[
-            Choice { key: "gold_on_last_level", label: "Gold on the last level", value: 0 },
-            Choice { key: "clear_last_level", label: "Clear the last level", value: 1 },
-            Choice { key: "clear_every_level", label: "Clear every level", value: 2 },
+            Choice { key: "clear_last_level", label: "Clear the last level", value: 0 },
+            Choice { key: "clear_every_level", label: "Clear every level", value: 1 },
+            Choice { key: "gold_on_last_level", label: "Gold on the last level", value: 2 },
             Choice { key: "gold_on_every_level", label: "Gold on every level", value: 3 },
         ]),
-        default: 0,
+        default: 1,
     },
     Setting {
         key: AP_GEMS,
-        label: "AP gems per level",
-        about: "The fewest checks hidden in the gems that fall on each level. \
-                A run needing more room for its items gets more of them.",
+        label: "Minimum AP gems per level",
+        about: "The minimum number of AP gems that will appear in each level. \
+                This is a floor. Options which create too many items in the pool \
+                will create more of these locations in order to match the item \
+                count.",
         // A floor, not a count, which is why zero is allowed: somebody who
         // wants none should get none unless their own options demand them.
         // Ten is the ceiling because ten is what the location table holds, and
@@ -256,9 +278,10 @@ pub static SETTINGS: &[Setting] = &[
     },
     Setting {
         key: AP_GEM_ODDS,
-        label: "How often a gem falls",
-        about: "One refilled gem in this many is an AP gem, while the level \
-                still has checks waiting in them.",
+        label: "AP gem likelihood",
+        about: "Expressed as 1/n chance of dropping in instead of a gem. \
+                AP gems are never dealt to a fresh board, but will drop in \
+                from the top as other gems are cleared.",
         // A range in tens rather than the doubling list this used to be. The
         // useful band turned out to be narrow enough to walk: outside 50 to
         // 200 a gem is either on every board or on hardly any, and neither end
@@ -274,50 +297,42 @@ pub static SETTINGS: &[Setting] = &[
     Setting {
         key: INVENTORY_ITEMS,
         label: "Inventory items",
-        about: "How many bonus items to spend are hidden in the world, over \
-                all four kinds. Which kind each one is comes out at equal \
-                chance, so a run leans one way or another on its own.",
+        about: "How many total single-use items are placed in the world.",
         // A total and nothing more. Four counts, or four weights beside the
         // total, would put five controls on the setup screen for one idea; an
         // even chance says the same thing in one, and a run still comes out
         // with a mix of its own because the draw is a draw.
         //
-        // Fifteen at the top because these have to fit somewhere, and the
-        // ceiling is set by the leanest run rather than by the usual one. The
-        // shortest ladder the tests sweep is eight levels, and asking for no
-        // Archipelago gems leaves that run thirty-three places its fill will
-        // use; five unlocks and eight moves upgrades take thirteen of them.
-        // Twenty is therefore the most that fits exactly, and exactly is no
-        // place to put a ceiling, so this stops five short of it. Room to
-        // raise when the ladder grows: `the_pool_fits_in_the_locations_there_are`
-        // and `the_solo_placement_finds_a_home_for_the_whole_pool` sweep this
+        // The ceiling is what the leanest run has room for rather than what
+        // the usual one does: the shortest ladder the tests sweep is eight
+        // levels, and a run asking for no AP gems leaves that fill a fixed
+        // number of places for everything it has to put down.
+        // `the_pool_fits_in_the_locations_there_are` and
+        // `the_solo_placement_finds_a_home_for_the_whole_pool` sweep this
         // setting at its ends and are what would say so.
-        kind: Kind::Range { low: 0, high: 15, step: 1 },
+        kind: Kind::Range { low: 0, high: 20, step: 1 },
         default: 10,
     },
     Setting {
         key: PROGRESSIVE_LEVELS,
         label: "Progressive level unlock",
-        about: "Off, clearing a level opens the next one. On, the ladder is \
-                shut past the first level and each Progressive Level Unlock \
-                found opens one more.",
+        about: "Off: clearing a level opens the next one. On: each level \
+                beyond the first one is unlocked by a Progressive Level \
+                Unlock item from the item pool.",
         // On by default, which is the game this is meant to be: a ladder that
         // opens by clearing is a game where nothing in the world is needed to
         // finish it, and a run that finds its way up by items is what makes
         // both a solo run and a multiworld worth playing. Off is kept for
         // somebody who wants to play it straight through.
-        kind: Kind::Choice(&[
-            Choice { key: "off", label: "Off", value: 0 },
-            Choice { key: "on", label: "On", value: 1 },
-        ]),
+        kind: Kind::Toggle,
         default: 1,
     },
     Setting {
         key: SPARE_UNLOCKS,
-        label: "Spare level unlocks",
-        about: "How many more Progressive Level Unlocks the world holds than \
-                the ladder needs, as a percentage. Nothing while the setting \
-                above is off.",
+        label: "Surplus level unlocks",
+        about: "A percentage beyond those which are necessary to open every \
+                level. 0 means exactly as many that are needed (the level \
+                count minus 1)",
         // A percentage rather than a count, because what it is a percentage of
         // is the ladder, and the ladder grows. Rounded to the nearest whole
         // item: thirteen levels want twelve unlocks, and a fifth of twelve is

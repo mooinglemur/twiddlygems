@@ -7,7 +7,7 @@
 use crate::board::Pos;
 use crate::game::{Event, Game, Status, EV_AP_CLEAR, EV_ITEM};
 use crate::level::{levels, LevelSpec};
-use crate::options::{Kind, Options, SETTINGS};
+use crate::options::{Kind, Options, SETTINGS, TOGGLE_LABELS};
 use crate::progression::{
     ap_gems_per_level, fill_seed, item_index, item_name, item_pool, items, location_index,
     location_name, locations, solo_placement, Class, Consumable, Inventory, Item, Location, Tier,
@@ -96,6 +96,18 @@ fn option_table_text() -> Vec<u8> {
                 fields.push(setting.default.to_string());
                 fields.push(low.to_string());
                 fields.push(high.to_string());
+            }
+            // Handed over as a choice of two, because on the screen it is one:
+            // a row that says Off and On and cycles between them. Its own word
+            // all the same, so the page could tell them apart if it ever had a
+            // reason to. What the difference is really for is the yaml, which
+            // is the apworld's end of the table rather than this one.
+            Kind::Toggle => {
+                fields.push("toggle".to_string());
+                fields.push(setting.default.to_string());
+                for (value, label) in TOGGLE_LABELS.iter().enumerate() {
+                    fields.push(format!("{value}={label}"));
+                }
             }
             Kind::Choice(choices) => {
                 fields.push("choice".to_string());

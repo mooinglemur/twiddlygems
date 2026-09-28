@@ -26,7 +26,7 @@ import pkgutil
 from typing import Any
 
 from BaseClasses import Item, ItemClassification, Location, Region
-from Options import Choice, PerGameCommonOptions, Range
+from Options import Choice, PerGameCommonOptions, Range, Toggle
 from rule_builder.field_resolvers import FromOption
 from worlds.AutoWorld import World
 
@@ -92,6 +92,12 @@ def _build_options() -> type[PerGameCommonOptions]:
             body["range_start"] = setting["low"]
             body["range_end"] = setting["high"]
             base: type = Range
+        elif setting["kind"] == "toggle":
+            # Archipelago's own two-value type, which takes true, on, yes and
+            # 1 alike, and their opposites. A two-value Choice would take only
+            # the words the engine wrote down, so `true` in a player's file
+            # would be an error on a line that looks perfectly reasonable.
+            base = Toggle
         else:
             for choice in setting["choices"]:
                 body[f"option_{choice['key']}"] = choice["value"]

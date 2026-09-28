@@ -315,16 +315,33 @@ class TestTheLadderOpensByItem(TwiddlyGemsTestBase):
 
 
 class TestTheLadderOpensByClearing(TwiddlyGemsTestBase):
-    """The default way round, which holds none of that item at all."""
+    """The other way round, which holds none of that item at all."""
 
     options = {"progressive_levels": "off"}
 
     def test_nothing_is_dealt_an_item_it_cannot_use(self) -> None:
-        self.assertEqual(self.world._count(ITEMS_BY_NAME["Progressive Level Unlock"]), 0)
-        self.assertNotIn(
-            "Progressive Level Unlock",
-            [item.name for item in self.multiworld.itempool],
-        )
+        self.assertEqual(self.world._count(ITEMS_BY_NAME[LADDER]), 0)
+        self.assertNotIn(LADDER, [item.name for item in self.multiworld.itempool])
+
+
+class TestFalseIsAWayToSayOff(TwiddlyGemsTestBase):
+    """A two-value setting written the way a player would write it.
+
+    It is a Toggle rather than a Choice of two for exactly this: a yaml that
+    says `false` should mean off, and so should `no` and `0`. A Choice would
+    take only the words the engine happened to write down, and `false` would
+    be an error on a line nobody can see the fault in.
+    """
+
+    options = {"progressive_levels": False}
+
+    def test_it_reads_as_off(self) -> None:
+        self.assertEqual(self.world.options.progressive_levels.value, 0)
+        self.assertEqual(self.world._count(ITEMS_BY_NAME[LADDER]), 0)
+        # And every level is open to a run holding nothing, which is what off
+        # means and is not true of the default.
+        for index in range(1, len(LEVELS) + 1):
+            self.assertTrue(self.can_reach_location(f"Level {index} Clear"))
 
 
 class TestClearingIsTheGoal(TwiddlyGemsTestBase):

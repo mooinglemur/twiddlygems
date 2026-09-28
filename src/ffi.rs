@@ -1003,6 +1003,11 @@ mod tests {
                 match fields[3] {
                     "range" => assert_eq!(fields.len(), 7, "a range wants two bounds"),
                     "choice" => assert!(fields.len() > 5, "a choice wants values"),
+                    // A toggle is a choice of two as far as the screen is
+                    // concerned, and comes through carrying both of them. The
+                    // word is its own because the yaml side does treat it
+                    // differently: see `Kind::Toggle`.
+                    "toggle" => assert_eq!(fields.len(), 7, "a toggle wants an off and an on"),
                     other => panic!("{} is a {other}, which the screen cannot draw", fields[0]),
                 }
                 assert_eq!(fields[4].parse::<u32>().unwrap(), SETTINGS[at].default);

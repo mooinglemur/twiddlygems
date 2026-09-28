@@ -87,6 +87,12 @@ fn option_table() -> Json {
                         fields.push(("low", Json::Num(low)));
                         fields.push(("high", Json::Num(high)));
                     }
+                    // Archipelago's own type for a two-value setting, which is
+                    // what lets a yaml say `true` as well as `on`. A choice of
+                    // two would only take the words written down here.
+                    Kind::Toggle => {
+                        fields.push(("kind", Json::Str("toggle".to_string())));
+                    }
                     Kind::Choice(choices) => {
                         fields.push(("kind", Json::Str("choice".to_string())));
                         fields.push((

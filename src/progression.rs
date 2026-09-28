@@ -686,10 +686,11 @@ pub fn goal(levels: usize) -> Requirement {
         is: goal.value(),
         then: Box::new(then),
     };
+    // In the order the setting offers them, which is how much each asks for.
     Requirement::Any(vec![
-        when(Goal::GoldOnLastLevel, Requirement::Reached(Location::LevelGold(last))),
         when(Goal::ClearLastLevel, Requirement::Reached(Location::LevelClear(last))),
         when(Goal::ClearEveryLevel, every(Location::LevelClear)),
+        when(Goal::GoldOnLastLevel, Requirement::Reached(Location::LevelGold(last))),
         when(Goal::GoldOnEveryLevel, every(Location::LevelGold)),
     ])
 }
@@ -1777,6 +1778,8 @@ mod tests {
             // be walked.
             let mut values: Vec<u32> = match setting.kind {
                 Kind::Range { low, high, .. } => vec![low, setting.default, high],
+                // Both of them, always: two is a handful.
+                Kind::Toggle => vec![0, 1],
                 Kind::Choice(choices) if choices.len() <= SWEPT_WHOLE => {
                     choices.iter().map(|choice| choice.value).collect()
                 }

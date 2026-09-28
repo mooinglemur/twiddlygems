@@ -11,5 +11,8 @@ name: Tester
 game: Twiddly Gems
 Twiddly Gems:
   inventory_items: 15
-  progressive_levels: on
+  # `true` rather than `on`, so a real generation proves the setting takes the
+  # word a player would reach for. It is an Archipelago Toggle, not a choice
+  # of two, which is what makes that work.
+  progressive_levels: true
   spare_unlocks: 20
