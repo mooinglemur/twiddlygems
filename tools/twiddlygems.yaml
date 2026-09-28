@@ -4,8 +4,12 @@
 # Set away from the defaults on purpose. A generation at the defaults proves
 # the ordinary case, which is the case a bug is least likely to be hiding in:
 # the bonus items are asked for at their ceiling, which is the pool at its
-# fullest and the hardest thing for the world to find room for.
+# fullest and the hardest thing for the world to find room for, and the ladder
+# opens by item, which is the only setting that gives the fill a real ladder to
+# work along rather than a world open from the start.
 name: Tester
 game: Twiddly Gems
 Twiddly Gems:
   inventory_items: 15
+  progressive_levels: on
+  spare_unlocks: 20

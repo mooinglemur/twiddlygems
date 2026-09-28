@@ -35,6 +35,18 @@ pub struct Options {
     /// drawn as it is added to the pool, at equal chance, so a run leans one
     /// way or another without anybody having to say how.
     pub inventory_items: u32,
+    /// Whether the ladder opens by item rather than by clearing.
+    ///
+    /// Off, clearing a level opens the next one, which is how the game has
+    /// always worked. On, nothing past the first level is open until a
+    /// Progressive Level Unlock arrives, and each one opens the next.
+    pub progressive_levels: u32,
+    /// How many spare level unlocks the pool carries, as a percentage.
+    ///
+    /// On top of the one per level the ladder actually needs. Only counts
+    /// while [`Options::progressive_levels`] is on: with the ladder opening by
+    /// clearing there is no such item to have spares of.
+    pub spare_unlocks: u32,
 }
 
 impl Default for Options {
@@ -44,6 +56,8 @@ impl Default for Options {
             ap_gems: 1,
             ap_gem_odds: 64,
             inventory_items: 10,
+            progressive_levels: 0,
+            spare_unlocks: 20,
         }
     }
 }
@@ -102,6 +116,8 @@ impl Options {
             AP_GEMS => Some(self.ap_gems),
             AP_GEM_ODDS => Some(self.ap_gem_odds),
             INVENTORY_ITEMS => Some(self.inventory_items),
+            PROGRESSIVE_LEVELS => Some(self.progressive_levels),
+            SPARE_UNLOCKS => Some(self.spare_unlocks),
             _ => None,
         }
     }
@@ -117,6 +133,8 @@ impl Options {
             AP_GEMS => self.ap_gems = value,
             AP_GEM_ODDS => self.ap_gem_odds = value,
             INVENTORY_ITEMS => self.inventory_items = value,
+            PROGRESSIVE_LEVELS => self.progressive_levels = value,
+            SPARE_UNLOCKS => self.spare_unlocks = value,
             GOAL => match Goal::from_value(value) {
                 Some(goal) => self.goal = goal,
                 None => return false,
@@ -135,6 +153,10 @@ pub const AP_GEM_ODDS: &str = "ap_gem_odds";
 pub const GOAL: &str = "goal";
 /// The key of the setting that decides [`Options::inventory_items`].
 pub const INVENTORY_ITEMS: &str = "inventory_items";
+/// The key of the setting that decides [`Options::progressive_levels`].
+pub const PROGRESSIVE_LEVELS: &str = "progressive_levels";
+/// The key of the setting that decides [`Options::spare_unlocks`].
+pub const SPARE_UNLOCKS: &str = "spare_unlocks";
 
 /// One setting: everything needed to show it, check it and write it down.
 pub struct Setting {
@@ -277,6 +299,43 @@ pub static SETTINGS: &[Setting] = &[
         // setting at its ends and are what would say so.
         kind: Kind::Range { low: 0, high: 15 },
         default: 10,
+    },
+    Setting {
+        key: PROGRESSIVE_LEVELS,
+        label: "Progressive level unlock",
+        about: "Off, clearing a level opens the next one. On, the ladder is \
+                shut past the first level and each Progressive Level Unlock \
+                found opens one more.",
+        // Off by default because it is the larger change of the two: a run
+        // with it on cannot be played straight through, and somebody opening
+        // the solo screen for the first time should get the game they expect.
+        // It is also the one that makes a multiworld of this game interesting,
+        // which is a reason to offer it, not a reason to assume it.
+        kind: Kind::Choice(&[
+            Choice { key: "off", label: "Off", value: 0 },
+            Choice { key: "on", label: "On", value: 1 },
+        ]),
+        default: 0,
+    },
+    Setting {
+        key: SPARE_UNLOCKS,
+        label: "Spare level unlocks",
+        about: "How many more Progressive Level Unlocks the world holds than \
+                the ladder needs, as a percentage. Nothing while the setting \
+                above is off.",
+        // A percentage rather than a count, because what it is a percentage of
+        // is the ladder, and the ladder grows. Rounded to the nearest whole
+        // item: thirteen levels want twelve unlocks, and a fifth of twelve is
+        // 2.4, which is two spares.
+        //
+        // Why have spares at all: the last unlock is the deepest thing in the
+        // world, so a fill that has to place exactly as many as the ladder
+        // needs has no slack at the bottom of it. Spares also mean a hint
+        // pointing at "Progressive Level Unlock" is worth acting on more than
+        // once. The ceiling is a doubling, which is past useful and cheap to
+        // allow.
+        kind: Kind::Range { low: 0, high: 100 },
+        default: 20,
     },
     // A level's moves upgrade has no setting of its own yet. Each level
     // declares what its upgrade is worth and one item carries the whole of it,

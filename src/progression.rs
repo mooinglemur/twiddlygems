@@ -15,7 +15,7 @@
 
 use crate::board::Special;
 use crate::level::LevelSpec;
-use crate::options::{Goal, Options, GOAL as GOAL_SETTING};
+use crate::options::{Goal, Options, GOAL as GOAL_SETTING, PROGRESSIVE_LEVELS};
 use crate::rng::Rng;
 use crate::rules::SpecialSet;
 
@@ -68,6 +68,14 @@ pub enum Item {
     /// put them anywhere. What they buy is a better run at a level, on any
     /// level, whenever the player likes.
     Consumable(Consumable),
+    /// One more level of the ladder, from the second one on.
+    ///
+    /// Only in the pool while [`crate::options::Options::progressive_levels`]
+    /// is on, and the whole of the ladder's gating when it is: the levels open
+    /// in order, one per copy, and clearing a level opens nothing. Progression
+    /// in the strongest sense here, since everything the world holds past the
+    /// opening level sits behind some number of these.
+    LevelUnlock,
 }
 
 /// The kinds of thing a run can be given to spend. See [`Item::Consumable`].
@@ -126,6 +134,7 @@ impl Item {
             Item::Moves { level } => MOVES_ID_BASE + level as u32,
             Item::Filler => FILLER_ID,
             Item::Consumable(kind) => CONSUMABLE_ID_BASE + kind.code(),
+            Item::LevelUnlock => LEVEL_UNLOCK_ID,
         }
     }
 
@@ -139,7 +148,7 @@ impl Item {
     /// anywhere.
     pub fn class(self) -> Class {
         match self {
-            Item::Unlock(_) | Item::Moves { .. } => Class::Progression,
+            Item::Unlock(_) | Item::Moves { .. } | Item::LevelUnlock => Class::Progression,
             Item::Filler => Class::Filler,
             Item::Consumable(_) => Class::Useful,
         }
@@ -153,6 +162,7 @@ impl Item {
             Item::Moves { .. } => 1,
             Item::Filler => 2,
             Item::Consumable(_) => 3,
+            Item::LevelUnlock => 4,
         }
     }
 
@@ -164,6 +174,9 @@ impl Item {
             // Nothing to say about it; there is only the one.
             Item::Filler => 0,
             Item::Consumable(kind) => kind.code() as u16,
+            // Nor this: every copy is the same item, and which level it opens
+            // is a matter of how many have arrived rather than of the item.
+            Item::LevelUnlock => 0,
         }
     }
 }
@@ -420,6 +433,11 @@ const FILLER_ID: u32 = 2_000;
 /// every other kind.
 const CONSUMABLE_ID_BASE: u32 = 3_000;
 
+/// The progressive level unlock's own number, in a thousand of its own. One
+/// number for every copy: they are copies of one item, which is what makes a
+/// progressive item progressive.
+const LEVEL_UNLOCK_ID: u32 = 4_000;
+
 /// What Archipelago's own numbers are offset by.
 ///
 /// Its ids only have to be unique within one game, so the engine's own
@@ -569,6 +587,36 @@ impl Reached {
 /// gold, and that is a constraint on the placement rather than on the rule.
 /// See [`solo_placement`], which fills by reachability for exactly this
 /// reason.
+/// What being able to play the level at `index` comes to, which is the one
+/// thing in these rules the run's settings change.
+///
+/// A switch rather than two rule sets, because the rules are generated once
+/// and read by everybody: the apworld ships both branches and each is false
+/// under the other's setting. Off, the ladder opens by clearing, and reaching
+/// a level means having cleared the one below it. On, clearing opens nothing
+/// and reaching the level at `index` means holding `index` of the unlocks,
+/// which is also why the count is the index: the first level asks for none.
+fn can_play(index: usize) -> Requirement {
+    if index == 0 {
+        return Requirement::Always;
+    }
+    Requirement::Any(vec![
+        Requirement::When {
+            setting: PROGRESSIVE_LEVELS,
+            is: 0,
+            then: Box::new(Requirement::Reached(Location::LevelClear(index - 1))),
+        },
+        Requirement::When {
+            setting: PROGRESSIVE_LEVELS,
+            is: 1,
+            then: Box::new(Requirement::Has {
+                item: Item::LevelUnlock,
+                count: Count::Exactly(index as u32),
+            }),
+        },
+    ])
+}
+
 pub fn requirement(location: Location, _levels: usize) -> Requirement {
     let tools = || {
         Requirement::All(
@@ -583,7 +631,7 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
     };
     match location {
         Location::LevelClear(0) => Requirement::Always,
-        Location::LevelClear(index) => Requirement::Reached(Location::LevelClear(index - 1)),
+        Location::LevelClear(index) => can_play(index),
         Location::LevelSilver(index) => Requirement::All(vec![
             Requirement::Reached(Location::LevelClear(index)),
             tools(),
@@ -613,9 +661,7 @@ pub fn requirement(location: Location, _levels: usize) -> Requirement {
         // a level they go in order, because clearing one checks the lowest
         // still unchecked: the second cannot be taken before the first.
         Location::ApGem { level: 0, index: 0 } => Requirement::Always,
-        Location::ApGem { level, index: 0 } => {
-            Requirement::Reached(Location::LevelClear(level - 1))
-        }
+        Location::ApGem { level, index: 0 } => can_play(level),
         Location::ApGem { level, index } => {
             Requirement::Reached(Location::ApGem { level, index: index - 1 })
         }
@@ -663,6 +709,11 @@ pub fn items(levels: usize) -> Vec<Item> {
         // leftover locations hold.
         .chain(std::iter::once(Item::Filler))
         .chain(CONSUMABLES.iter().map(|kind| Item::Consumable(*kind)))
+        // Also in the table whatever a run asked for, because the table is the
+        // datapackage: a run playing the ladder the old way simply holds none
+        // of these, the way a run asking for one gem still knows the names of
+        // all ten.
+        .chain(std::iter::once(Item::LevelUnlock))
         .collect()
 }
 
@@ -699,6 +750,10 @@ pub fn item_name(item: Item) -> String {
                 Consumable::RocketCluster => "Rocket Cluster",
             }
         ),
+        // Archipelago's own word for an item whose copies stack into a ladder,
+        // so a player who has seen one in another game knows what to do with
+        // this one: find more of them.
+        Item::LevelUnlock => "Progressive Level Unlock".to_string(),
     }
 }
 
@@ -778,17 +833,26 @@ pub fn ap_gems_needed(levels: usize, pool: usize) -> u32 {
     if levels == 0 {
         return 0;
     }
-    // Everywhere but the gems, which is what they are there to top up.
+    // Everywhere a fill will actually put something: not the gems, which are
+    // what this is topping up with, and not the chains too deep to ask anybody
+    // for, which the solo fill refuses to use.
     //
-    // Every one of them, including the deep chains the solo fill will not use.
-    // This number decides which locations a world has at all, and the solo
-    // side and the Archipelago side have to arrive at the same one or a seed's
-    // locations and the game's would not match. That the solo fill then
-    // declines to put its own items down a twelve-deep chain is a separate
-    // matter, and `the_solo_placement_finds_a_home_for_the_whole_pool` is
-    // what catches it if that ever leaves the fill short.
-    let elsewhere =
-        locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
+    // The deep ones were counted here once, on the grounds that they are real
+    // locations and a multiworld may fill them. They are, and it may, but
+    // counting them here says the pool has six more places than a solo run
+    // will find for it, and the day the pool grew past the rest that is
+    // exactly how many items ended up homeless. Progressive level unlock grew
+    // it past the rest. One count for both sides, and the conservative one, so
+    // a seed's locations and the game's still match: the cost is a gem or two
+    // more than a multiworld strictly needs, and a spare location is a place
+    // for somebody else's item.
+    //
+    // `worth_using` is the same judgement, made per run rather than per world.
+    let elsewhere = locations(levels)
+        .iter()
+        .filter(|at| !matches!(at, Location::ApGem { .. }))
+        .filter(|at| !matches!(at, Location::Chain(length) if *length > RELIABLE_CHAIN))
+        .count();
     // Round up: half a location is no location.
     let short = pool.saturating_sub(elsewhere);
     (short.div_ceil(levels) as u32).min(AP_GEMS_PER_LEVEL)
@@ -822,6 +886,7 @@ pub fn item_index(item: Item, levels: usize) -> Option<usize> {
         // name, and everything already numbered has to keep its number.
         Item::Filler => Some(UNLOCKABLE.len() + levels),
         Item::Consumable(kind) => Some(UNLOCKABLE.len() + levels + 1 + kind.code() as usize),
+        Item::LevelUnlock => Some(UNLOCKABLE.len() + levels + 1 + CONSUMABLES.len()),
     }
 }
 
@@ -883,6 +948,9 @@ pub struct Inventory {
     /// are the only ones the player spends. Everything else here is something
     /// the run learned, and a run does not unlearn.
     consumables: [u32; CONSUMABLES.len()],
+    /// How many progressive level unlocks have arrived. How far up the ladder
+    /// a run may play, when it is playing that way.
+    unlocks: u32,
 }
 
 impl Inventory {
@@ -893,6 +961,7 @@ impl Inventory {
             moves: Vec::new(),
             filler: 0,
             consumables: [0; CONSUMABLES.len()],
+            unlocks: 0,
         }
     }
 
@@ -941,6 +1010,13 @@ impl Inventory {
                 self.consumables[kind.code() as usize] += 1;
                 true
             }
+            // Stacks too, and every copy opens another level, so every copy is
+            // news even once the ladder is fully open: the spares are still
+            // somebody's item turning up.
+            Item::LevelUnlock => {
+                self.unlocks += 1;
+                true
+            }
         }
     }
 
@@ -982,6 +1058,7 @@ impl Inventory {
             Item::Moves { level } => self.moves.get(level).copied().unwrap_or(0) > 0,
             Item::Filler => self.filler > 0,
             Item::Consumable(kind) => self.consumables(kind) > 0,
+            Item::LevelUnlock => self.unlocks > 0,
         }
     }
 
@@ -1007,6 +1084,9 @@ impl Inventory {
             // Held now rather than ever found, which is the answer a rule
             // would want and is also the only honest one: these are spent.
             Item::Consumable(kind) => self.consumables(kind),
+            // The one count a rule really is built on: reaching the level at
+            // `index` asks for `index` of these.
+            Item::LevelUnlock => self.unlocks,
         }
     }
 
@@ -1077,12 +1157,18 @@ pub fn solo_item_at(
 }
 
 /// The whole pool a run has to find, in the order a solo placement lays it
-/// out: the unlocks first, because everything else waits on them, then one
-/// moves upgrade per level.
+/// out: the level unlocks first when a run is using them, because the whole
+/// ladder waits on those, then the special unlocks, because everything else
+/// waits on them, then one moves upgrade per level.
 pub fn item_pool(levels: usize, seed: u64, options: &Options) -> Vec<Item> {
-    UNLOCKS
-        .iter()
-        .map(|special| Item::Unlock(*special))
+    // How many of the level unlocks are the ladder and how many are spares.
+    // They go in at opposite ends of the pool, because they are opposite kinds
+    // of item however alike they look: one opens the next level and the other
+    // opens nothing at all.
+    let all = level_unlocks(levels, options) as usize;
+    let ladder = all.min(levels.saturating_sub(1));
+    std::iter::repeat_n(Item::LevelUnlock, ladder)
+        .chain(UNLOCKS.iter().map(|special| Item::Unlock(*special)))
         .chain(
             // Top of the ladder downward. A level's gold cannot be filled
             // until that level's own upgrade is placed somewhere else, so
@@ -1091,12 +1177,46 @@ pub fn item_pool(levels: usize, seed: u64, options: &Options) -> Vec<Item> {
             // few items with nowhere but the chains.
             (0..levels).rev().map(|level| Item::Moves { level }),
         )
-        // Last, because nothing waits on one. They are worth having and
+        // Last, because nothing waits on either. They are worth having and
         // needed by nothing, so they go down into whatever the progression
         // left over rather than taking a place something else was going to
         // want.
+        //
+        // The spare unlocks are in that company rather than with the ladder's
+        // own: a copy past what the ladder takes opens nothing, and a fill
+        // that spent the first level's handful of places on them would strand
+        // the things that do open something. It nearly did: at a hundred
+        // percent spares on the shortest ladder, five specials had nowhere
+        // left to go.
+        .chain(std::iter::repeat_n(Item::LevelUnlock, all - ladder))
         .chain(inventory_pool(seed, options))
         .collect()
+}
+
+/// How many progressive level unlocks the pool carries.
+///
+/// None at all unless the run is opening the ladder that way. When it is: one
+/// per level past the first, which is what the ladder actually needs, plus the
+/// spares the setting asks for as a percentage of that, rounded to the nearest
+/// whole item. Thirteen levels want twelve, and a fifth of twelve is 2.4,
+/// which is two spares and fourteen items.
+///
+/// The Python side works the same number out from the world's data, because a
+/// multiworld builds its own pool. `_count` in `worlds/twiddlygems` is the
+/// other half of this, and the two have to land on the same number or a seed's
+/// items and its locations do not match.
+pub fn level_unlocks(levels: usize, options: &Options) -> u32 {
+    if options.progressive_levels == 0 || levels < 2 {
+        return 0;
+    }
+    let needed = levels as u32 - 1;
+    needed + spare_unlocks(needed, options.spare_unlocks)
+}
+
+/// The percentage on top, rounded to the nearest whole item. Split out so the
+/// rounding is one line to read and one line to test.
+pub fn spare_unlocks(needed: u32, percent: u32) -> u32 {
+    (needed * percent + 50) / 100
 }
 
 /// The bonus items a run is given, and which kind each one turns out to be.
@@ -1157,13 +1277,18 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     // them on every round of every item is most of what this used to cost.
     let usable: Vec<Location> =
         places.iter().copied().filter(|at| worth_using(*at, gems)).collect();
+    // Each one's rule, built once. They do not change while a fill runs, and
+    // building them where they are asked for meant rebuilding every rule in
+    // the world on every round of every item.
+    let rules: Vec<(Location, Requirement)> =
+        usable.iter().map(|at| (*at, requirement(*at, levels))).collect();
     let mut held: Vec<Option<Item>> = vec![None; places.len()];
     let mut reached = Reached::none(levels);
     let mut inventory = Inventory::empty();
 
     let mut rng = Rng::new(seed);
     for item in item_pool(levels, seed, options) {
-        expand(&usable, levels, &inventory, &mut reached, options);
+        expand(&rules, &inventory, &mut reached, options);
         let open: Vec<usize> = usable
             .iter()
             .filter_map(|at| location_index(*at, levels))
@@ -1188,7 +1313,7 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     // on one level. They do not any more, so a second copy would change
     // nothing at all: the player would be handed an item they already had the
     // whole of, and told they had found something. Filler says what it is.
-    expand(&usable, levels, &inventory, &mut reached, options);
+    expand(&rules, &inventory, &mut reached, options);
     for at in &usable {
         let Some(index) = location_index(*at, levels) else { continue };
         if held[index].is_none() && reached.has(*at) {
@@ -1229,19 +1354,24 @@ fn worth_using(location: Location, gems: u32) -> bool {
 
 /// Adds every location the run can now reach, and everything that opens in
 /// turn, until nothing more does.
+///
+/// Takes the rules already built rather than asking for each one as it goes.
+/// This is the innermost loop of a fill: every location, every round, every
+/// item, every setup, every ladder. A rule that allocates when it is built,
+/// which the ladder's own now does, costs more here than everything else put
+/// together.
 fn expand(
-    places: &[Location],
-    levels: usize,
+    rules: &[(Location, Requirement)],
     inventory: &Inventory,
     reached: &mut Reached,
     options: &Options,
 ) {
     loop {
-        let opened: Vec<Location> = places
+        let opened: Vec<Location> = rules
             .iter()
-            .copied()
-            .filter(|at| !reached.has(*at))
-            .filter(|at| requirement(*at, levels).met(inventory, reached, options))
+            .filter(|(at, _)| !reached.has(*at))
+            .filter(|(_, rule)| rule.met(inventory, reached, options))
+            .map(|(at, _)| *at)
             .collect();
         if opened.is_empty() {
             return;
@@ -1356,6 +1486,85 @@ mod tests {
             let held = pool.iter().filter(|item| matches!(item, Item::Consumable(_))).count();
             assert_eq!(held as u32, wanted, "asked for {wanted} bonus items and got {held}");
         }
+    }
+
+    /// What lets `every_run` hold the goal at its default.
+    #[test]
+    fn the_goal_cannot_change_where_an_item_goes() {
+        // A fill reads the pool, the rules and how much room there is, and the
+        // goal is in none of the three: it says when a run is over, which is a
+        // question asked after everything has been placed. If that ever stops
+        // being true, the sweeps have to start walking it again.
+        let ladder = 13;
+        let seed = fill_seed(3);
+        let base = solo_placement(ladder, seed, &Options::default());
+        for goal in [Goal::ClearLastLevel, Goal::ClearEveryLevel, Goal::GoldOnEveryLevel] {
+            let options = Options { goal, ..Options::default() };
+            assert_eq!(
+                solo_placement(ladder, seed, &options),
+                base,
+                "the goal moved an item, so a placement sweep has to walk every goal",
+            );
+        }
+    }
+
+    #[test]
+    fn the_pool_carries_a_level_unlock_per_level_and_the_spares_on_top() {
+        // The ladder's own length is what it takes to reach the top, and the
+        // setting says how many more than that the world holds.
+        let off = Options::default();
+        assert_eq!(off.progressive_levels, 0, "the ladder no longer opens by clearing by default");
+        assert_eq!(
+            item_pool(13, 7, &off).iter().filter(|item| **item == Item::LevelUnlock).count(),
+            0,
+            "a run opening the ladder by clearing was dealt unlocks it can do nothing with",
+        );
+
+        let mut on = Options::default();
+        on.progressive_levels = 1;
+        // Twelve to climb a thirteen level ladder, and a fifth of twelve is
+        // 2.4, which rounds to two spares.
+        assert_eq!(level_unlocks(13, &on), 14);
+        assert_eq!(
+            item_pool(13, 7, &on).iter().filter(|item| **item == Item::LevelUnlock).count(),
+            14,
+        );
+
+        // The rounding, at both ends of where it turns over.
+        assert_eq!(spare_unlocks(12, 0), 0);
+        assert_eq!(spare_unlocks(12, 20), 2, "2.4 spares is two");
+        assert_eq!(spare_unlocks(12, 25), 3, "exactly three is three");
+        assert_eq!(spare_unlocks(12, 30), 4, "3.6 spares is four");
+        assert_eq!(spare_unlocks(12, 100), 12, "a doubling is a doubling");
+        // And a ladder with nothing above its first level asks for none, which
+        // is the guard against an empty ladder underflowing.
+        assert_eq!(level_unlocks(1, &on), 0);
+        assert_eq!(level_unlocks(0, &on), 0);
+    }
+
+    #[test]
+    fn the_spare_unlocks_go_in_behind_the_ones_that_open_something() {
+        // A copy past what the ladder takes opens nothing, so it belongs with
+        // the items nothing waits on. In front, they spend the first level's
+        // handful of places on themselves and strand the specials: that is a
+        // fill that fails, and it did.
+        let mut on = Options::default();
+        on.progressive_levels = 1;
+        on.spare_unlocks = 100;
+        let pool = item_pool(13, 7, &on);
+        let ladder = 12;
+        assert!(
+            pool[..ladder].iter().all(|item| *item == Item::LevelUnlock),
+            "the ladder's own unlocks do not come first",
+        );
+        let last_unlock =
+            pool.iter().rposition(|item| *item == Item::LevelUnlock).expect("there are some");
+        let first_special =
+            pool.iter().position(|item| matches!(item, Item::Unlock(_))).expect("there are some");
+        assert!(
+            last_unlock > first_special,
+            "every level unlock was dealt before the specials, spares and all",
+        );
     }
 
     #[test]
@@ -1538,10 +1747,19 @@ mod tests {
     /// One iterator rather than three nested loops in every test, because the
     /// three multiply and the nesting was already two deep. A failure names
     /// all three, which is what makes a case out of a sweep.
+    /// The goal is held at its default here rather than swept, and
+    /// `the_goal_cannot_change_where_an_item_goes` is what says that is
+    /// allowed: nothing a fill consults reads it. Sweeping it anyway means
+    /// walking every placement four times for four identical answers, and
+    /// these sweeps are minutes rather than seconds.
     fn every_run() -> impl Iterator<Item = (usize, u64, Options)> {
-        LADDERS.into_iter().flat_map(|levels| {
+        let goal = Options::default().goal;
+        LADDERS.into_iter().flat_map(move |levels| {
             fills().flat_map(move |seed| {
-                setups().into_iter().map(move |options| (levels, seed, options))
+                setups()
+                    .into_iter()
+                    .filter(move |options| options.goal == goal)
+                    .map(move |options| (levels, seed, options))
             })
         })
     }
@@ -1584,6 +1802,15 @@ mod tests {
                 })
                 .collect();
         }
+        // A setting that does nothing under another setting's value is not
+        // worth three runs of the same pool. Spare level unlocks are spares of
+        // an item that is only in the pool while the ladder opens by item, so
+        // with that off they are swept at their default and no further. This
+        // is a third of the work, which on these sweeps is minutes.
+        all.retain(|options| {
+            options.progressive_levels == 1
+                || options.spare_unlocks == Options::default().spare_unlocks
+        });
         all
     }
 
@@ -1693,7 +1920,7 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 Item::Unlock(special) => Some(*special),
-                Item::Moves { .. } | Item::Filler | Item::Consumable(_) => None,
+                Item::Moves { .. } | Item::Filler | Item::Consumable(_) | Item::LevelUnlock => None,
             })
             .collect();
         let mut by_code = unlocks.clone();
@@ -1868,15 +2095,62 @@ mod tests {
     #[test]
     fn nothing_is_asked_to_clear_a_level_beyond_reaching_it() {
         // Every level has to be beatable on its own move budget, which is what
-        // lets the ladder be climbed by someone who finds nothing optional.
+        // lets the ladder be climbed by someone who finds nothing optional. So
+        // clearing one asks for the ladder and for nothing else, under either
+        // of the two ways the ladder opens.
+        let by_clearing = Options::default();
+        let mut by_item = Options::default();
+        by_item.progressive_levels = 1;
+
         for levels in LADDERS {
             for index in 0..levels {
                 let asked = requirement(Location::LevelClear(index), levels);
-                let ladder_only = match index {
-                    0 => asked == Requirement::Always,
-                    _ => asked == Requirement::Reached(Location::LevelClear(index - 1)),
-                };
-                assert!(ladder_only, "clearing level {} asks for more than the ladder", index + 1);
+                let empty = Inventory::empty();
+
+                // Opening by clearing: the level below, and nothing in hand.
+                let mut below = Reached::none(levels);
+                if index > 0 {
+                    below.add(Location::LevelClear(index - 1));
+                }
+                assert!(
+                    asked.met(&empty, &below, &by_clearing),
+                    "clearing level {} asks for more than the level below it",
+                    index + 1,
+                );
+
+                // Opening by item: that many unlocks, and nowhere reached at
+                // all, because clearing opens nothing when a run plays this
+                // way.
+                let nowhere = Reached::none(levels);
+                let mut held = Inventory::empty();
+                for _ in 0..index {
+                    held.receive(Item::LevelUnlock);
+                }
+                assert!(
+                    asked.met(&held, &nowhere, &by_item),
+                    "clearing level {} asks for more than {index} level unlocks",
+                    index + 1,
+                );
+                if index > 0 {
+                    let mut short = Inventory::empty();
+                    for _ in 0..index - 1 {
+                        short.receive(Item::LevelUnlock);
+                    }
+                    assert!(
+                        !asked.met(&short, &nowhere, &by_item),
+                        "level {} opened one unlock short of its place in the ladder",
+                        index + 1,
+                    );
+                    // And the other way round: the level below being cleared
+                    // is worth nothing here, which is the whole of what the
+                    // setting changes.
+                    assert!(
+                        !asked.met(&empty, &below, &by_item),
+                        "level {} opened by clearing the one below it, with the ladder \
+                         set to open by item",
+                        index + 1,
+                    );
+                }
             }
         }
     }
@@ -1952,11 +2226,14 @@ mod tests {
         // A pool too big for everywhere else has to be met with gems. Sized
         // off the real tables rather than a number written here, so this keeps
         // meaning the same thing as the ladder grows. Counted the way the
-        // function counts: every location that is not a gem, deep chains
-        // included, because this number decides what locations a world has
-        // and both sides of it have to agree exactly.
-        let elsewhere =
-            locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
+        // function counts: every location that is not a gem and not a chain
+        // too deep to ask anybody for, because a place no fill will use is not
+        // room the pool has.
+        let elsewhere = locations(levels)
+            .iter()
+            .filter(|at| !matches!(at, Location::ApGem { .. }))
+            .filter(|at| !matches!(at, Location::Chain(length) if *length > RELIABLE_CHAIN))
+            .count();
         let over = elsewhere + levels * 3 + 1;
         assert_eq!(
             ap_gems_needed(levels, over),
@@ -2108,6 +2385,7 @@ mod tests {
                 Item::Consumable(_) => (CONSUMABLE_ID_BASE
                     ..CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32)
                     .contains(&item.id()),
+                Item::LevelUnlock => item.id() == LEVEL_UNLOCK_ID,
             }),
             "an item is numbered outside its own range",
         );

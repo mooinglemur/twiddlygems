@@ -235,6 +235,79 @@ class TestNoGems(TwiddlyGemsTestBase):
         self.assertBeatable(True)
 
 
+class TestTheLadderOpensByItem(TwiddlyGemsTestBase):
+    """Progressive level unlock, which is the other way to climb the ladder.
+
+    The setting that changes the shape of the world most: with it on, every
+    level past the first is behind a count of one item, so a generator has a
+    real ladder to fill along instead of a game that is open from the start.
+    """
+
+    options = {"progressive_levels": "on"}
+
+    def _unlocks(self) -> list:
+        """The copies in the pool, to be collected one at a time.
+
+        `collect_by_name` takes every copy of a name at once, which is the
+        wrong tool for a progressive item: it would open the whole ladder in
+        one call and every assertion below would pass whatever the rules said.
+        """
+        return [
+            item
+            for item in self.multiworld.itempool
+            if item.name == "Progressive Level Unlock"
+        ]
+
+    def test_a_level_is_shut_until_its_unlocks_turn_up(self) -> None:
+        copies = self._unlocks()
+        self.assertTrue(self.can_reach_location("Level 1 Clear"))
+        self.assertFalse(self.can_reach_location("Level 2 Clear"))
+        self.collect(copies[0])
+        self.assertTrue(self.can_reach_location("Level 2 Clear"))
+        self.assertFalse(self.can_reach_location("Level 3 Clear"))
+        self.collect(copies[1])
+        self.assertTrue(self.can_reach_location("Level 3 Clear"))
+
+    def test_the_gems_on_a_level_are_shut_with_it(self) -> None:
+        # A gem is collected by playing its level, so it asks for what playing
+        # that level asks for. A run that could reach one on a level it cannot
+        # play would be a seed with an item nobody can take.
+        self.assertFalse(self.can_reach_location("Level 2 AP Gem 1"))
+        self.collect(self._unlocks()[0])
+        self.assertTrue(self.can_reach_location("Level 2 AP Gem 1"))
+
+    def test_the_pool_holds_the_ladder_and_its_spares(self) -> None:
+        # One per level past the first, plus the spares the setting asks for:
+        # a fifth of twelve is 2.4, which is two.
+        item = ITEMS_BY_NAME["Progressive Level Unlock"]
+        needed = len(LEVELS) - 1
+        self.assertEqual(self.world._count(item), needed + round(needed * 0.2))
+        held = [
+            name
+            for name in self.multiworld.itempool
+            if name.name == "Progressive Level Unlock"
+        ]
+        self.assertEqual(len(held), self.world._count(item))
+
+    def test_a_seed_is_still_finishable(self) -> None:
+        self.assertBeatable(False)
+        self.collect_all_but([])
+        self.assertBeatable(True)
+
+
+class TestTheLadderOpensByClearing(TwiddlyGemsTestBase):
+    """The default way round, which holds none of that item at all."""
+
+    options = {"progressive_levels": "off"}
+
+    def test_nothing_is_dealt_an_item_it_cannot_use(self) -> None:
+        self.assertEqual(self.world._count(ITEMS_BY_NAME["Progressive Level Unlock"]), 0)
+        self.assertNotIn(
+            "Progressive Level Unlock",
+            [item.name for item in self.multiworld.itempool],
+        )
+
+
 class TestClearingIsTheGoal(TwiddlyGemsTestBase):
     """The goal that asks for nothing, chosen on purpose.
 

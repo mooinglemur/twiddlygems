@@ -21,11 +21,11 @@ use std::path::Path;
 
 use twiddlygems::level::levels;
 use twiddlygems::options::{
-    Kind, Options, Setting, INVENTORY_ITEMS, SETTINGS,
+    Kind, Options, Setting, INVENTORY_ITEMS, PROGRESSIVE_LEVELS, SETTINGS, SPARE_UNLOCKS,
 };
 use twiddlygems::progression::{
-    goal, item_name, item_pool, items, location_name, locations, requirement, Count, Item,
-    Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, LONGEST_CHAIN, RELIABLE_CHAIN,
+    goal, item_name, item_pool, items, location_name, locations, requirement, spare_unlocks, Count,
+    Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, LONGEST_CHAIN, RELIABLE_CHAIN,
     SHORTEST_CHAIN,
 };
 
@@ -171,11 +171,19 @@ fn item_table(levels: usize) -> Json {
             .into_iter()
             .map(|item| {
                 let counted = pool.iter().filter(|other| **other == item).count() as u32;
-                match copies(item) {
+                match copies(item, levels) {
                     // How many of a shared item there are is a roll rather
                     // than a number, so there is nothing to compare one
                     // against. They are added up instead, below.
                     Copies::Share { .. } => shared += counted,
+                    // The default settings have the ladder opening by
+                    // clearing, so the pool holds none of these. What it holds
+                    // when it is switched on is checked below, where both
+                    // settings can be moved at once.
+                    Copies::Ladder { .. } => assert_eq!(
+                        0, counted,
+                        "the pool holds level unlocks at the default settings, which do not use them",
+                    ),
                     Copies::Fixed(count) => assert_eq!(
                         count.resolve(&fresh),
                         counted,
@@ -188,7 +196,7 @@ fn item_table(levels: usize) -> Json {
                     ("name", Json::Str(item_name(item))),
                     ("id", Json::Num(AP_ID_BASE + item.id())),
                     ("classification", Json::Str(item.class().name().to_string())),
-                    ("count", count_json(copies(item))),
+                    ("count", count_json(copies(item, levels))),
                     ("top_up", Json::Bool(tops_up(item))),
                 ])
             })
@@ -205,6 +213,26 @@ fn item_table(levels: usize) -> Json {
          {} the setting asks for",
         fresh.inventory_items,
     );
+    // And the ladder's own item, which the default settings do not use, so it
+    // is checked with them switched on. The arithmetic is written twice on
+    // purpose: `level_unlocks` is what the engine builds a pool from, and the
+    // three numbers in the table are what a multiworld builds one from, so
+    // this is the place the two are held together.
+    {
+        let mut using = Options::default();
+        using.progressive_levels = 1;
+        let counted = item_pool(levels, 0, &using)
+            .iter()
+            .filter(|item| **item == Item::LevelUnlock)
+            .count() as u32;
+        let needed = levels.saturating_sub(1) as u32;
+        assert_eq!(
+            counted,
+            needed + spare_unlocks(needed, using.spare_unlocks),
+            "the pool holds {counted} level unlocks, which is not the ladder's length plus \
+             the spares the setting asks for",
+        );
+    }
     table
 }
 
@@ -228,6 +256,16 @@ fn location_table(levels: usize) -> Json {
                 if let Location::ApGem { index, .. } = at {
                     fields.push(("gem_index", Json::Num(index)));
                 }
+                // Whether this place counts toward the room the pool needs.
+                // A chain too deep to ask anybody for is a real location and
+                // a multiworld may put anything it likes there; what it may
+                // not do is be counted on when working out whether the items
+                // fit, because the solo fill will not use it and the two
+                // sides have to size a world the same way. See
+                // `ap_gems_needed`.
+                if matches!(at, Location::Chain(length) if length > RELIABLE_CHAIN) {
+                    fields.push(("counts_as_room", Json::Bool(false)));
+                }
                 Json::Obj(fields)
             })
             .collect(),
@@ -241,7 +279,7 @@ fn location_table(levels: usize) -> Json {
 /// item per move this becomes a setting rather than a number, because the
 /// apworld is generated once and read by everybody, so a count baked in here
 /// would be whatever the engine happened to be built with.
-fn copies(item: Item) -> Copies {
+fn copies(item: Item, levels: usize) -> Copies {
     match item {
         Item::Unlock(_) => Copies::Fixed(Count::Exactly(1)),
         Item::Moves { .. } => Copies::Fixed(Count::Exactly(1)),
@@ -254,6 +292,16 @@ fn copies(item: Item) -> Copies {
         // down: the setting says how many bonus items there are and the kinds
         // are drawn at equal chance, so it is a roll.
         Item::Consumable(_) => Copies::Share { of: INVENTORY_ITEMS },
+        // The ladder itself, when a run is opening it this way: one per level
+        // past the first is what it takes to reach the top, and the setting
+        // says how many more than that the world holds. A count neither
+        // written down nor read straight off a setting, because it is the
+        // ladder's own length with a percentage on top.
+        Item::LevelUnlock => Copies::Ladder {
+            needed: levels.saturating_sub(1) as u32,
+            spare_percent: SPARE_UNLOCKS,
+            only_when: PROGRESSIVE_LEVELS,
+        },
     }
 }
 
@@ -274,6 +322,10 @@ enum Copies {
     Fixed(Count),
     /// One of the kinds sharing the total that setting names.
     Share { of: &'static str },
+    /// One per level past the first, plus a percentage of that on top, and
+    /// none at all unless the named setting is on. The progressive level
+    /// unlock and nothing else.
+    Ladder { needed: u32, spare_percent: &'static str, only_when: &'static str },
 }
 
 /// Whether more of this item may be made up to fill the world's empty
@@ -296,6 +348,10 @@ fn tops_up(item: Item) -> bool {
         // in the yaml, and a leftover location quietly making more of them
         // would answer that question a second time.
         Item::Consumable(_) => false,
+        // Least of all this one. How many there are is the shape of the
+        // ladder, and a leftover location making one more would hand out a
+        // level nobody's settings called for.
+        Item::LevelUnlock => false,
     }
 }
 
@@ -367,6 +423,24 @@ fn count_json(copies: Copies) -> Json {
             "share_of",
             Json::Obj(vec![("option", Json::Str(class_of(of)))]),
         )]),
+        // Nor is this one: what it comes to is arithmetic on the ladder's
+        // length, which the world cannot read off a setting because the
+        // ladder is not a setting. So the table hands over the three numbers
+        // it takes to do the sum.
+        Copies::Ladder { needed, spare_percent, only_when } => Json::Obj(vec![
+            ("needed", Json::Num(needed)),
+            (
+                "spare_percent",
+                Json::Obj(vec![("option", Json::Str(class_of(spare_percent)))]),
+            ),
+            (
+                "only_when",
+                Json::Obj(vec![
+                    ("option", Json::Str(class_of(only_when))),
+                    ("is", Json::Num(1)),
+                ]),
+            ),
+        ]),
     }
 }
 

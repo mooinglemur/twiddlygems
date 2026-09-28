@@ -122,10 +122,11 @@ class TwiddlyGemsWorld(World):
     """A match-3 game where the specials themselves are the progression.
 
     A new run matches and clears normally and leaves nothing behind: the line
-    clearers, the cross, the rainbow and the rocket are all items. Levels are
-    found by clearing the one below, and each one is worth three checks, for
-    clearing it and for clearing it past two score marks. Long chains are
-    checks of their own.
+    clearers, the cross, the rainbow and the rocket are all items. Each level
+    is worth three checks, for clearing it and for clearing it past two score
+    marks. Long chains are checks of their own. The ladder opens by clearing
+    the level below, or, with progressive level unlock on, by finding the
+    items that open it.
     """
 
     game = GAME_DATA["game"]
@@ -158,7 +159,14 @@ class TwiddlyGemsWorld(World):
         """
         levels = len(GAME_DATA["levels"])
         pool = sum(self._count(item) for item in ITEMS)
-        elsewhere = sum(1 for at in LOCATIONS if "gem_index" not in at)
+        # Everywhere a fill will actually put something. `counts_as_room` is
+        # how the engine marks the places that do not qualify: a chain too deep
+        # to ask a player for is a real location and this world may put
+        # anything in it, but it cannot be counted on when working out whether
+        # the items fit, or the two sides size the world differently.
+        elsewhere = sum(
+            1 for at in LOCATIONS if "gem_index" not in at and at.get("counts_as_room", True)
+        )
         needed = max(0, -(-(pool - elsewhere) // levels)) if levels else 0
         return min(
             max(self.options.ap_gems.value, needed), GAME_DATA["ap_gems_per_level"]
@@ -258,8 +266,30 @@ class TwiddlyGemsWorld(World):
         if isinstance(count, dict):
             if "share_of" in count:
                 return self._shares()[item["name"]]
+            if "spare_percent" in count:
+                return self._ladder(count)
             return int(FromOption.from_dict(count).resolve(self))
         return int(count)
+
+    def _ladder(self, count: dict[str, Any]) -> int:
+        """How many progressive level unlocks this run's pool holds.
+
+        One per level past the first, which is what it takes to reach the top,
+        plus the spares the setting asks for as a percentage of that, rounded
+        to the nearest whole item. None at all when the run is not opening the
+        ladder that way, and then nothing gates on them either.
+
+        The engine works the same number out in `level_unlocks`. Neither side
+        can read the other, so the table hands over the three numbers and both
+        do the sum: they have to land on the same answer or this world submits
+        a different number of items than it has places to put them.
+        """
+        switch = count["only_when"]
+        if self._option(switch["option"]) != int(switch["is"]):
+            return 0
+        needed = int(count["needed"])
+        percent = self._option(count["spare_percent"]["option"])
+        return needed + (needed * percent + 50) // 100
 
     def create_items(self) -> None:
         pool = [

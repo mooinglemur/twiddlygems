@@ -3751,6 +3751,55 @@ mod tests {
     }
 
     #[test]
+    fn a_hint_survives_the_board_changing_somewhere_else() {
+        // The case the rule is really about: a player takes a different move
+        // than the one they were shown, gems fall, and the cells the hint was
+        // pointing at still make a swap worth making. That is the same hint,
+        // not a new draw that happens to be allowed: rerolling there would
+        // move the nudge around the board while the player was looking at it.
+        //
+        // A whole clear and refill rather than a poke at the board, because
+        // what this is about is everything that happens in between.
+        // Over a spread of boards, because whether the hinted pair is still
+        // worth swapping afterwards is the refill's business: a single board
+        // that happened to spoil it would check nothing and say so by passing.
+        let mut survived = 0;
+        for seed in 0..40 {
+            let mut game = Game::new(spec(9, 9, 5, 60), seed);
+            let offered = game.hint().expect("a fresh board has a move");
+
+            // Somewhere else: a move touching neither of the hinted cells.
+            let Some(elsewhere) = matching::legal_moves(&game.board, game.rules())
+                .into_iter()
+                .find(|(a, b)| [*a, *b].iter().all(|p| !p_touches(*p, offered)))
+            else {
+                continue;
+            };
+            assert!(game.try_swap(elsewhere.0, elsewhere.1), "the move picked was refused");
+            settle(&mut game);
+
+            if !matching::is_useful_swap(&game.board, game.rules(), offered.0, offered.1) {
+                // The refill spoiled it, so the hint is owed a new draw and
+                // there is nothing here to check.
+                continue;
+            }
+            survived += 1;
+            assert_eq!(
+                game.hint(),
+                Some(offered),
+                "on seed {seed}, a clear somewhere else moved a hint that was still a move",
+            );
+        }
+        assert!(survived > 0, "no board kept its hinted move, so nothing above was checked");
+    }
+
+    /// Whether `p` is one of the two cells a hint names, or next to either.
+    /// A clear around the hint is a different question from a clear on it.
+    fn p_touches(p: Pos, hint: (Pos, Pos)) -> bool {
+        [hint.0, hint.1].iter().any(|at| p == *at || p.is_adjacent(*at))
+    }
+
+    #[test]
     fn asking_for_a_hint_changes_nothing_else_about_the_run() {
         // The draw comes from a stream of its own. Sharing the deal's would
         // make every gem that falls afterwards depend on how often the player

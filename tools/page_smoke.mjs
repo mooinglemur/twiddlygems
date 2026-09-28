@@ -1022,6 +1022,57 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.equal(rebuilt.levelBestScore(LEVEL), beaten, 'a reloaded run forgot its best score');
 }
 
+// A level beaten with the next one still shut offers no way on to it. Only a
+// run opening the ladder by item can be in that state, and the panel is what
+// decides: it asks the engine how far the ladder is open rather than assuming
+// that clearing a level opened something.
+{
+  const { hud } = window.twiddlygems;
+  const { Status } = await import(path.resolve('web/js/engine.js'));
+  const real = hud.engine;
+  // A stand-in rather than the run itself. The engine never takes a level
+  // back, so a run this far in cannot be put into the state being checked,
+  // and what is being checked is the panel's own decision: this is everything
+  // it reads to make it.
+  const stub = {
+    levelIndex: 3,
+    levelCount: 13,
+    unlocked: 4,
+    score: 9_000,
+    tiers: { silver: 0, gold: 0 },
+    levelName: 'Test Level',
+  };
+  const nothing = { onNext() {}, onRetry() {}, onLevels() {} };
+  hud.engine = stub;
+
+  hud.showResult(Status.WON, nothing, null);
+  assert.ok(
+    !overlayButton('Next level'),
+    'a level beaten with the next one still shut offered a way on to it anyway',
+  );
+  assert.match(
+    elements.get('overlay-body').textContent,
+    /Progressive Level Unlock/,
+    'a stuck run was left to work out for itself why it cannot go on',
+  );
+
+  // And with the next level open it is offered, which is every other run.
+  stub.unlocked = 5;
+  hud.showResult(Status.WON, nothing, null);
+  assert.ok(
+    overlayButton('Next level'),
+    'a level beaten with the next one open offers no way on to it',
+  );
+  assert.doesNotMatch(
+    elements.get('overlay-body').textContent,
+    /Progressive Level Unlock/,
+    'a run that can go on was told it was stuck',
+  );
+
+  hud.engine = real;
+  hud.hideOverlay();
+}
+
 // Ending a run from that same menu asks first, then throws the progress away
 // and goes back to the title screen.
 {

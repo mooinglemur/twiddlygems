@@ -231,8 +231,21 @@ impl Session {
         self.index
     }
 
+    /// How many levels the player may pick from, counting from the first.
+    ///
+    /// Two different answers, because there are two ways to open the ladder. A
+    /// run opening it by clearing keeps the count as it goes and this reports
+    /// it. A run opening it by item does not keep a count at all: what it
+    /// holds is the answer, and one more level is open for each Progressive
+    /// Level Unlock it has been handed. Worked out rather than recorded so the
+    /// two can never disagree, the way [`Session::best_tier`] is read off the
+    /// checked locations rather than kept alongside them.
     pub fn unlocked(&self) -> usize {
-        self.unlocked
+        if self.options.progressive_levels == 0 {
+            return self.unlocked;
+        }
+        let held = self.inventory.count(Item::LevelUnlock) as usize;
+        (1 + held).min(self.levels.len())
     }
 
     pub fn level_name(&self) -> &[u8] {
@@ -272,7 +285,7 @@ impl Session {
     /// Switches to a level the player has unlocked. Returns false for one they
     /// have not, or for an index off the end of the ladder.
     pub fn load(&mut self, index: usize) -> bool {
-        if index >= self.levels.len() || index >= self.unlocked {
+        if index >= self.levels.len() || index >= self.unlocked() {
             return false;
         }
         self.index = index;
@@ -280,18 +293,28 @@ impl Session {
         true
     }
 
-    /// Moves on after a win. Returns false when the ladder is finished.
+    /// Moves on after a win. Returns false when the ladder is finished, and
+    /// also when the next level is not open: a run unlocking by item can beat
+    /// a level and have nowhere to go until one turns up.
     pub fn next_level(&mut self) -> bool {
         let next = self.index + 1;
         if next >= self.levels.len() {
             return false;
         }
+        // Only the count a clear keeps. A run opening the ladder by item
+        // ignores this, and `load` will refuse the level it has not been
+        // handed.
         self.unlocked = self.unlocked.max(next + 1);
         self.load(next)
     }
 
     /// Restores how far a returning player had got. Clamped to the ladder, and
     /// never used to lock something already unlocked this run.
+    ///
+    /// A run opening the ladder by item writes this down and then ignores it
+    /// on the way back in: the unlocks come back with the checked locations,
+    /// and what the run holds is the answer. A save that claimed more levels
+    /// than its items account for cannot open them.
     pub fn set_unlocked(&mut self, count: usize) {
         self.unlocked = self.unlocked.max(count.clamp(1, self.levels.len()));
     }
@@ -646,6 +669,8 @@ impl Session {
         self.events.clear();
         self.game.update(dt_ms);
         if self.game.status() == Status::Won {
+            // What clearing a level opens. A run unlocking by item reads none
+            // of this: see `unlocked`.
             self.unlocked = self.unlocked.max((self.index + 2).min(self.levels.len()));
         }
         self.check_reached();
@@ -1545,6 +1570,52 @@ mod tests {
         assert!(session.load(last));
         assert!(!session.next_level(), "there is nothing after the last level");
         assert_eq!(session.index(), last);
+    }
+
+    /// The whole of what the setting changes, from the player's side.
+    #[test]
+    fn a_ladder_that_opens_by_item_does_not_open_by_clearing() {
+        let mut options = Options::default();
+        options.progressive_levels = 1;
+        let mut session = Session::set_up(7, options);
+        assert_eq!(session.unlocked(), 1, "a fresh run opened more than the first level");
+
+        // Clearing the level it is on opens nothing, which is the difference.
+        // Said to the session the way winning says it, since what is being
+        // checked is that the count does not follow the win.
+        session.unlocked = 9;
+        assert_eq!(session.unlocked(), 1, "a clear opened a level the run was not handed");
+        assert!(!session.load(1), "a level nobody has been handed can be played");
+
+        // The item is what opens them, one each, in order.
+        assert!(session.receive(Item::LevelUnlock));
+        assert_eq!(session.unlocked(), 2);
+        assert!(session.load(1), "the level the unlock opened cannot be played");
+        assert!(!session.load(2), "one unlock opened two levels");
+
+        assert!(session.receive(Item::LevelUnlock));
+        assert_eq!(session.unlocked(), 3);
+
+        // And the spares stop at the top of the ladder rather than counting
+        // past it.
+        for _ in 0..session.level_count() + 5 {
+            session.receive(Item::LevelUnlock);
+        }
+        assert_eq!(session.unlocked(), session.level_count());
+    }
+
+    #[test]
+    fn a_ladder_that_opens_by_clearing_ignores_the_item() {
+        // The default way round: the count a clear keeps is the answer, and an
+        // unlock arriving from somewhere changes nothing. It cannot arrive in
+        // a solo run set up this way, because none are in the pool, but a
+        // multiworld can send anything.
+        let mut session = Session::new(7);
+        assert_eq!(session.unlocked(), 1);
+        session.receive(Item::LevelUnlock);
+        assert_eq!(session.unlocked(), 1, "an unlock opened a level in a run not using them");
+        session.unlocked = 3;
+        assert_eq!(session.unlocked(), 3);
     }
 
     #[test]

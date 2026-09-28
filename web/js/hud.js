@@ -508,6 +508,11 @@ export class Hud {
     const { engine, dom } = this;
     const won = status === Status.WON;
     const lastLevel = engine.levelIndex + 1 >= engine.levelCount;
+    // A run opening the ladder by item can beat a level and have nowhere to
+    // go: the next one is shut until a Progressive Level Unlock turns up. The
+    // ladder opening by clearing never sees this, because clearing this level
+    // is what opened the next one.
+    const nextOpen = engine.levelIndex + 1 < engine.unlocked;
 
     dom.overlayTitle.textContent = won
       ? lastLevel
@@ -539,13 +544,19 @@ export class Hud {
       if (found) {
         lines.push(found.where ? `${found.said}${found.what} (${found.where}).` : `${found.said}${found.what}.`);
       }
+      // Said rather than left to be worked out from a missing button: a level
+      // beaten with nothing to move on to is a state worth explaining, and the
+      // thing to do about it is play something else and wait.
+      if (!lastLevel && !nextOpen) {
+        lines.push('The next level is shut until a Progressive Level Unlock turns up.');
+      }
     } else {
       lines.push(unmetSummary(engine));
     }
     dom.overlayBody.textContent = lines.join(' ');
 
     const buttons = [];
-    if (won && !lastLevel) {
+    if (won && !lastLevel && nextOpen) {
       buttons.push(button('Next level', actions.onNext, true));
     }
     buttons.push(button(won ? 'Play again' : 'Try again', actions.onRetry, !won));
