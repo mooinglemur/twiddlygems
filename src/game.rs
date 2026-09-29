@@ -58,8 +58,38 @@ pub const FALL_HOLD_MS: f32 = 80.0;
 pub const LAUNCH_HOLD_MS: f32 = 260.0;
 
 const SCORE_PER_GEM: u64 = 50;
-const SCORE_PER_SPECIAL_FIRED: u64 = 120;
 const SCORE_PER_SPECIAL_MADE: u64 = 200;
+
+/// What setting a special off is worth on its own, before the gems it takes.
+///
+/// One value each rather than a single flat rate, which is what this was. A
+/// flat rate makes the special itself nearly free and leaves the score as just
+/// the gem count, and the gem count does not know how hard the thing was to
+/// build: a cross asks for an L or a T and a rainbow asks for five in a line,
+/// and both used to pay the same 120 as a line clear made from four.
+///
+/// The order here is the order they are worth making, which is also roughly
+/// the order they are hard to make.
+fn score_for_firing(special: Special) -> u64 {
+    match special {
+        Special::LineH | Special::LineV => 120,
+        Special::Rocket => 180,
+        Special::Cross => 320,
+        Special::Rainbow => 400,
+        _ => 120,
+    }
+}
+
+/// What a rainbow earns for each gem it catches, on top of the flat rate every
+/// cleared gem already pays.
+///
+/// A rainbow is the one special whose size is not fixed by the board: a line
+/// clear always takes a row, a cross always takes a row and a column, but a
+/// rainbow takes however many of one color happen to be lying there, which on
+/// a six color board might be six and on a four color board might be twenty.
+/// Paid flat, the big one was worth barely more than the small one, and the
+/// rarest special in the game could come out behind a cross.
+const SCORE_PER_RAINBOW_HIT: u64 = 40;
 
 /// How many boards to deal looking for one that opens quietly, with no match
 /// already on it. Past this an opening match is accepted: it is untidy rather
@@ -110,6 +140,37 @@ const CLUSTER_MOST: u32 = 5;
 /// boardful of either is a wall of noise rather than a board coming apart in
 /// front of you.
 const CASH_IN_SPECIALS: [Special; 3] = [Special::LineH, Special::LineV, Special::Cross];
+
+/// How many leftover moves are minted onto the board before the flourish sets
+/// them off and lets the board fall again.
+///
+/// The flourish used to mint every remaining move at once and fire the lot.
+/// Two things were wrong with that. Twenty line-and-cross specials take more
+/// cell-hits than a board has cells, so the board is wiped in one go and what
+/// falls into the hole is fresh gems with nothing to chain into: the level
+/// ends on a dud rather than on its biggest moment. And it is one chain, so
+/// the cascade multiplier climbs the whole way and the score compounds on a
+/// random number of links, which made a lucky win worth up to twenty-eight
+/// times an unlucky one on the same level.
+///
+/// In waves, each one lands on a board that still has gems on it, the chain
+/// each wave can climb is bounded by the wave rather than by the move count,
+/// and what a level is worth tracks the moves saved instead of the dice.
+const FLOURISH_BATCH: u32 = 10;
+
+/// What the flourish's clears are multiplied by.
+///
+/// The chain number and the score multiplier used to be the same number, and
+/// they are not the same idea. The chain is what the music climbs and what a
+/// deep-chain location counts, and it should go on climbing through the
+/// flourish, because a chord walking upward is most of what the end of a level
+/// sounds like. The multiplier is the economy, and a flourish that compounds
+/// it pays a player for the board's mood rather than for their own play.
+///
+/// Separating them is what actually fixed the spread. Bounding the wave did
+/// not: it made the flourish *larger*, because a board that is set off in
+/// waves refills between them and so gets cleared several times over.
+const FLOURISH_MULTIPLIER: u64 = 3;
 
 /// Event tags shared with the front end for sound and particles.
 pub const EV_CLEAR: u8 = 1;
@@ -447,6 +508,9 @@ pub struct Game {
     /// The board settles several times during the flourish that follows, and
     /// only the first of those is news.
     announced_clear: bool,
+    /// How many moves the flourish has minted onto the board in the wave it is
+    /// building now; see [`FLOURISH_BATCH`].
+    minted_this_wave: u32,
     /// Whether the level has been declared won from outside, regardless of
     /// what its objectives actually say; see [`Game::force_clear`].
     ///
@@ -522,6 +586,7 @@ impl Game {
             selected: None,
             warned_low_moves: false,
             announced_clear: false,
+            minted_this_wave: 0,
             forced_clear: false,
             swap_match: 0,
             tallied: false,
@@ -567,6 +632,7 @@ impl Game {
         self.selected = None;
         self.warned_low_moves = false;
         self.announced_clear = false;
+        self.minted_this_wave = 0;
         // Deliberately cleared with the rest: a level handed a win from the
         // debug menu and then replayed is an ordinary level again.
         self.forced_clear = false;
@@ -1027,6 +1093,9 @@ impl Game {
     /// shifts under a rocket still in the air.
     fn land_arrivals(&mut self, elapsed: f32) {
         let cascade = self.cascade.max(1);
+        // The chain the events carry and the multiplier the points use, which
+        // are the same everywhere but inside the flourish.
+        let paying = self.score_multiplier();
         for index in 0..self.launches.len() {
             let launch = self.launches[index];
             if launch.landed || elapsed < launch.flight_ms {
@@ -1053,7 +1122,7 @@ impl Game {
                     Special::Rocket,
                     cascade,
                 ));
-                self.progress.score += (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
+                self.progress.score += (SCORE_PER_GEM + score_for_firing(Special::Rocket)) * paying;
                 self.progress.brick_left = self.board.brick_cells();
                 self.progress.seals_now = self.board.seal_cells();
                 continue;
@@ -1088,7 +1157,7 @@ impl Game {
                     Special::Rocket,
                     cascade,
                 ));
-                self.progress.score += SCORE_PER_SPECIAL_FIRED * cascade as u64;
+                self.progress.score += score_for_firing(Special::Rocket) * paying;
                 continue;
             }
 
@@ -1105,8 +1174,7 @@ impl Game {
                 cascade,
             ));
             self.board.set_gem(launch.to, None);
-            self.progress.score +=
-                (SCORE_PER_GEM + SCORE_PER_SPECIAL_FIRED) * cascade as u64;
+            self.progress.score += (SCORE_PER_GEM + score_for_firing(Special::Rocket)) * paying;
         }
         self.progress.jelly_left = self.board.jelly_cells();
     }
@@ -1643,10 +1711,25 @@ impl Game {
         if resolution.steps_the_chain {
             self.events.push(Event::plain(EV_MATCH, cascade.min(65_535) as u16));
         }
+        // Each special pays its own rate, and a rainbow pays again for every
+        // gem it caught, so a rainbow that takes the board is worth more than
+        // one that finds six of its color lying about.
+        let specials: u64 = blast
+            .fired
+            .iter()
+            .map(|(_, special, hits)| {
+                let extra = if *special == Special::Rainbow {
+                    *hits as u64 * SCORE_PER_RAINBOW_HIT
+                } else {
+                    0
+                };
+                score_for_firing(*special) + extra
+            })
+            .sum();
         let points = (blast.cleared.len() as u64 * SCORE_PER_GEM
-            + blast.fired.len() as u64 * SCORE_PER_SPECIAL_FIRED
+            + specials
             + resolution.creations.len() as u64 * SCORE_PER_SPECIAL_MADE)
-            * cascade as u64;
+            * self.score_multiplier();
         self.progress.score += points;
 
         for (p, delay) in blast.cleared.iter().zip(blast.delays.iter()) {
@@ -1686,7 +1769,7 @@ impl Game {
         // for a check that is no longer there.
         self.ap_gems_wanted = self.ap_gems_wanted.saturating_sub(collected);
 
-        for (p, special) in &blast.fired {
+        for (p, special, _hits) in &blast.fired {
             self.events.push(Event::at(EV_SPECIAL_FIRED, *p, 255, *special, cascade));
         }
         // A new special belongs to the match that made it rather than to what
@@ -1738,6 +1821,9 @@ impl Game {
             // Said once, the moment the level is won, rather than again on
             // every round of what follows.
             if !self.announced_clear {
+                // Before the flourish, like the spare moves above: this is the
+                // half of the final score the player actually played for.
+                self.progress.score_at_clear = self.progress.score;
                 self.announced_clear = true;
                 self.events.push(Event::plain(EV_CLEARED, self.moves_left.min(65_535) as u16));
             }
@@ -1753,9 +1839,17 @@ impl Game {
                 }
             }
             // Leftover moves are spent one at a time so the counter can be
-            // watched running down; only once it reaches zero does the board
-            // go off.
+            // watched running down, a wave at a time so the board is still
+            // there to spend them on.
             if self.moves_left > 0 {
+                // Each wave is its own chain. Without this the multiplier
+                // climbs from the first wave to the last and the score
+                // compounds over however many links the dice handed out, which
+                // is the whole reason a lucky win could be worth twenty-eight
+                // times an unlucky one. Batching alone would not fix it: it
+                // bounds how long a wave is, not what the wave before it left
+                // the multiplier sitting at.
+                self.cascade = 0;
                 self.phase = Phase::CashingIn { elapsed: 0.0 };
                 return;
             }
@@ -1843,13 +1937,27 @@ impl Game {
     fn finish_cash_in_step(&mut self) {
         if self.moves_left > 0 {
             self.moves_left -= 1;
+            self.minted_this_wave += 1;
             self.mint_one();
         }
-        if self.moves_left > 0 {
+        // Keep minting until the wave is full or the moves run out, then set
+        // what has been laid down off. The board falls back in afterwards and
+        // `settle` comes back here for the next wave, which is the whole of
+        // the loop: see [`FLOURISH_BATCH`].
+        if self.moves_left > 0 && self.minted_this_wave < FLOURISH_BATCH {
             self.phase = Phase::CashingIn { elapsed: 0.0 };
             return;
         }
+        self.minted_this_wave = 0;
         if self.begin_finale() {
+            return;
+        }
+        // Nothing to set off, which happens when the board had no plain gem
+        // left to mint onto. Moves still in hand are spent on the next wave
+        // rather than silently kept, or the flourish would stop here with the
+        // counter still showing moves the player earned.
+        if self.moves_left > 0 {
+            self.phase = Phase::CashingIn { elapsed: 0.0 };
             return;
         }
         self.phase = Phase::Finishing { elapsed: 0.0 };
@@ -1938,6 +2046,15 @@ impl Game {
                 })
             })
             .collect()
+    }
+
+    /// What a clear's points are multiplied by, which is the chain it is part
+    /// of everywhere except inside the flourish. See [`FLOURISH_MULTIPLIER`].
+    fn score_multiplier(&self) -> u64 {
+        if self.announced_clear {
+            return FLOURISH_MULTIPLIER;
+        }
+        self.cascade.max(1) as u64
     }
 
     pub fn objectives_met(&self) -> bool {
@@ -5194,9 +5311,14 @@ mod tests {
         let mut frames = run_to_cash_in(&mut game);
         assert_eq!(game.moves_left, 29, "nothing should be spent before the run down starts");
 
+        // To the end of the level rather than to the end of one stretch of
+        // cashing in. The flourish spends its moves in waves now, setting off
+        // what it has minted and coming back for more once the board has
+        // fallen, so the phase leaves `CashingIn` and returns to it several
+        // times before the counter reaches zero.
         let mut prev = game.moves_left;
         let mut steps = 0;
-        while matches!(game.phase(), Phase::CashingIn { .. }) && frames < 4000 {
+        while game.phase() != Phase::Finished && frames < 8000 {
             game.update(16.0);
             frames += 1;
             if game.moves_left != prev {
@@ -5212,12 +5334,59 @@ mod tests {
     }
 
     #[test]
-    fn the_flourish_is_one_chain_of_its_own() {
-        // It starts over once, where the player's last chain ended and the
-        // flourish begins, so the music opens at the bottom of its
-        // progression. From there it climbs through every round: nobody moves
-        // between them, and restarting on each would drop the music back to
-        // that first chord over and over.
+    fn the_flourish_spends_its_moves_a_wave_at_a_time() {
+        // Minting every leftover move at once takes more cell-hits than the
+        // board has cells, so it is wiped in one go and the level ends on
+        // whatever falls into the hole, which is nothing. A wave at a time
+        // lands each one on a board that still has gems on it.
+        let mut level = spec(9, 9, 6, 30);
+        level.objectives = vec![Objective::Score(1)];
+        let mut game = Game::new(level, 506);
+        let (a, b) = game.hint().expect("a fresh board has a move");
+        game.try_swap(a, b);
+
+        let mut frames = run_to_cash_in(&mut game);
+        let mut waves = 0;
+        let mut minted_in_wave = 0;
+        let mut widest = 0;
+        let mut prev = game.moves_left;
+        let mut cashing = true;
+        while game.phase() != Phase::Finished && frames < 8000 {
+            game.update(16.0);
+            frames += 1;
+            if game.moves_left != prev {
+                prev = game.moves_left;
+                minted_in_wave += 1;
+            }
+            // Leaving the run down is a wave being set off.
+            let now_cashing = matches!(game.phase(), Phase::CashingIn { .. });
+            if cashing && !now_cashing && minted_in_wave > 0 {
+                waves += 1;
+                widest = widest.max(minted_in_wave);
+                minted_in_wave = 0;
+            }
+            cashing = now_cashing;
+        }
+        assert_eq!(game.moves_left, 0, "the flourish did not spend every move");
+        assert!(waves >= 3, "29 moves went off in {waves} waves rather than in several");
+        assert!(
+            widest <= FLOURISH_BATCH,
+            "a wave minted {widest} moves, over the {FLOURISH_BATCH} it is allowed",
+        );
+    }
+
+    #[test]
+    fn each_wave_of_the_flourish_is_a_chain_of_its_own() {
+        // A wave opens at the bottom of the progression and climbs through its
+        // own rounds, and the next wave opens at the bottom again.
+        //
+        // It used to be one chain for the whole flourish, climbing from the
+        // first move spent to the last. That is what made the score compound
+        // on a random number of links: the multiplier a wave ends on is what
+        // the next one would have started from, so a level with thirty spare
+        // moves multiplied its last clears by thirty. Bounding the wave
+        // without bounding the multiplier would have fixed the look of it and
+        // none of the arithmetic.
         //
         // The seed is picked for taking three rounds to finish. Most take
         // one, and on those this passes whatever the rule is, which is how an
@@ -5239,16 +5408,36 @@ mod tests {
             .map(|e| e.value)
             .collect();
 
-        // Enough links to span the rounds, or the checks below say nothing.
-        assert!(flourish.len() >= 8, "the flourish resolved only {} matches", flourish.len());
+        // Enough links to span more than one wave, or the checks below say
+        // nothing. Thirty moves is three waves at least, so three links is the
+        // floor even if every wave resolves in a single round.
+        assert!(flourish.len() >= 4, "the flourish resolved only {flourish:?}");
         assert_eq!(
             flourish.first().copied(),
             Some(1),
             "the flourish should open at the bottom of the progression: {flourish:?}",
         );
+        // Within a wave it only climbs, and a wave boundary is the only place
+        // it may drop, where it drops all the way back to the bottom rather
+        // than to somewhere in the middle.
+        for pair in flourish.windows(2) {
+            assert!(
+                pair[1] > pair[0] || pair[1] == 1,
+                "a link neither climbed nor opened a new wave: {flourish:?}",
+            );
+        }
+        // And there really is more than one wave here, or the rule above is
+        // being checked against a flourish that never had a boundary in it.
         assert!(
-            flourish.windows(2).all(|pair| pair[1] > pair[0]),
-            "and climb from there without starting over: {flourish:?}",
+            flourish.iter().skip(1).any(|link| *link == 1),
+            "30 moves went off without the chain ever starting over: {flourish:?}",
+        );
+        // The whole point of the bound: no link may be multiplied by the
+        // number of moves the level happened to have left.
+        let highest = flourish.iter().copied().max().unwrap_or(0);
+        assert!(
+            u32::from(highest) < 30,
+            "a flourish link reached x{highest}, which is the old compounding back again",
         );
     }
 

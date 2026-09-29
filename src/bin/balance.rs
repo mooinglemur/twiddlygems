@@ -104,6 +104,18 @@ fn main() {
         return;
     }
 
+    //     cargo run --release --bin balance -- score [seeds]
+    //
+    // A third mode, asking one question the others do not: where does a
+    // winning score come from? Everything the tables above measure is the
+    // total, which cannot tell a level beaten briskly from a level beaten
+    // luckily.
+    if args.iter().any(|arg| arg == "score") {
+        let seeds = args.last().and_then(|last| last.parse().ok()).unwrap_or(60);
+        score_report(seeds);
+        return;
+    }
+
     specials_made(Bot::First, 60);
     println!();
     // The greedy bot plays every candidate move out before choosing, so it gets
@@ -957,6 +969,104 @@ fn busiest_window(delays: &mut Vec<u32>, window: u32) -> u32 {
         best = best.max((end - start + 1) as u32);
     }
     best
+}
+
+/// Where a winning score comes from: what the player played for, and what the
+/// end-of-level flourish added on top.
+///
+/// The question none of the other tables can answer. They measure the total,
+/// and a total cannot tell a level beaten briskly from a level beaten luckily.
+/// If the flourish is most of the score and its spread is wide, then the number
+/// a player chases is mostly the board's mood, and the moves they saved are
+/// only the ticket to the raffle.
+///
+/// Read equipped, because that is what a score mark's rule asks for and the
+/// marks are what these numbers are chased against.
+fn score_report(seeds: u64) {
+    let ladder = equipped();
+    println!("where a winning score comes from ({seeds} seeds a level, attentive bot)");
+    println!("played: scored before the goals were met. flourish: what cashing in added.");
+    println!();
+    println!(
+        "{:<20} {:>5} {:>10} {:>8} {:>10} {:>8} {:>6} {:>8}",
+        "level", "wins", "played p50", "spread", "final p50", "spread", "flour%", "brisk/slow"
+    );
+
+    let mut worst = 0.0_f64;
+    let mut worst_played = 0.0_f64;
+    for (index, spec) in ladder.iter().enumerate() {
+        let mut played = Vec::new();
+        let mut finals = Vec::new();
+        // Paired with the moves each win had left over, so the table can say
+        // whether finishing early is actually what pays. That is the whole
+        // point of the exercise and the one thing a spread cannot show: a
+        // perfectly consistent score that ignores how briskly a level was
+        // beaten would look excellent here and reward nothing.
+        let mut by_spare: Vec<(u32, u64)> = Vec::new();
+        for seed in 0..seeds {
+            let game = play(spec, seed * 7919 + index as u64, Bot::Greedy);
+            if game.status() != Status::Won {
+                continue;
+            }
+            played.push(game.progress.score_at_clear);
+            finals.push(game.progress.score);
+            by_spare.push((game.progress.moves_spare, game.progress.score));
+        }
+        if finals.is_empty() {
+            println!("{:<20} {:>5}", spec.name, 0);
+            continue;
+        }
+        let wins = finals.len();
+        let played_mid = median(&mut played).unwrap_or(0);
+        let final_mid = median(&mut finals).unwrap_or(0);
+        let low = percentile(&mut finals, 10).unwrap_or(0);
+        let high = percentile(&mut finals, 90).unwrap_or(0);
+        // The same spread for the half the player actually played, which is
+        // the control: if that one is tight and the total is not, the noise is
+        // all coming from the end of the level.
+        let played_low = percentile(&mut played, 10).unwrap_or(0);
+        let played_high = percentile(&mut played, 90).unwrap_or(0);
+        let played_spread =
+            if played_low == 0 { 0.0 } else { played_high as f64 / played_low as f64 };
+        worst_played = worst_played.max(played_spread);
+        // How much of the median winning score the player did not play for.
+        let flourish = if final_mid == 0 {
+            0.0
+        } else {
+            (final_mid.saturating_sub(played_mid)) as f64 * 100.0 / final_mid as f64
+        };
+        // The spread of the total, as a ratio. A level where the ninetieth
+        // percentile is several times the tenth is a level whose score is
+        // mostly luck, however well it is played.
+        let spread = if low == 0 { 0.0 } else { high as f64 / low as f64 };
+        worst = worst.max(spread);
+        // What the briskest third of wins scored against the slowest third.
+        // Above one means saving moves pays; at one it does not matter how
+        // quickly the level was beaten, which is the thing being fixed.
+        by_spare.sort_by_key(|(spare, _)| *spare);
+        let third = by_spare.len() / 3;
+        let pays = if third == 0 {
+            0.0
+        } else {
+            let mut slow: Vec<u64> = by_spare[..third].iter().map(|(_, s)| *s).collect();
+            let mut brisk: Vec<u64> = by_spare[by_spare.len() - third..]
+                .iter()
+                .map(|(_, s)| *s)
+                .collect();
+            let slow_mid = median(&mut slow).unwrap_or(0);
+            let brisk_mid = median(&mut brisk).unwrap_or(0);
+            if slow_mid == 0 { 0.0 } else { brisk_mid as f64 / slow_mid as f64 }
+        };
+        println!(
+            "{:<20} {:>5} {:>10} {:>7.1}x {:>10} {:>7.1}x {:>5.0}% {:>7.2}x",
+            spec.name, wins, played_mid, played_spread, final_mid, spread, flourish, pays,
+        );
+    }
+    println!();
+    println!(
+        "widest spread between a lucky win and an unlucky one: {worst:.1}x on the total, \
+         {worst_played:.1}x on the half that was played for"
+    );
 }
 
 fn percentile<T: Copy + Ord>(values: &mut Vec<T>, p: usize) -> Option<T> {

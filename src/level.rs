@@ -97,6 +97,14 @@ pub struct Progress {
     /// briskly a level was beaten would be lost. What a score tier is chased
     /// with, and the honest read on how hard a level asked.
     pub moves_spare: u32,
+    /// What the score was at that same moment: everything the player scored by
+    /// playing, before the flourish added anything.
+    ///
+    /// Recorded for the same reason `moves_spare` is, and it answers the
+    /// question that one cannot: how much of a final score was earned and how
+    /// much was the end-of-level fireworks. Zero on a level that was never
+    /// won, which is also what `moves_spare` reads there.
+    pub score_at_clear: u64,
 }
 
 impl Progress {
@@ -441,18 +449,24 @@ pub fn levels() -> Vec<LevelSpec> {
             // and the location every seed hangs off: failing half of all new
             // players on their first swipe is a bad welcome and a slow start.
             //
-            // Its silver is read straight off the bot like every other mark on
-            // the ladder, and unlike every other mark it is inside the reach
-            // of a run holding nothing: five moves on a narrow board has a
-            // long tail, and a bare run passes 23,000 about once in seventy.
-            // That is allowed here and nowhere else, which the balance gate
-            // knows about. Gold is not: it stays clear of the tail.
-            .tiers(23_000, 36_500)
+            // Its silver is allowed to sit inside the reach of a run holding
+            // nothing, which is true of no other mark on the ladder: five
+            // moves on a narrow board has a long tail, and the opener is where
+            // a tail is worth indulging. The balance gate knows about the
+            // permission and checks only the gold here.
+            //
+            // It is not being used at the moment. Since the flourish stopped
+            // paying a bare run anything (with no unlocks there is nothing to
+            // mint, so there is no flourish at all) the bare tail fell well
+            // under the silver, and no bare run in 138 has reached it. The
+            // permission stays because it is Troy's call rather than the
+            // measurement's, and the tail is what it always was.
+            .tiers(29_000, 41_500)
             .upgrade(2),
         LevelSpec::new("Ruby Hunt", 8, vec![Objective::Color { color: 0, count: 30 }])
             .with_layout(EIGHT_BY_EIGHT)
             .colors(5)
-            .tiers(45_000, 59_000)
+            .tiers(52_000, 65_500)
             .upgrade(4),
         LevelSpec::new(
             "Two Tastes",
@@ -463,12 +477,12 @@ pub fn levels() -> Vec<LevelSpec> {
             ],
         )
         .with_layout(EIGHT_BY_EIGHT)
-        .tiers(33_000, 41_000)
+        .tiers(50_000, 61_000)
         .upgrade(9),
         // Jelly arrives: now position matters, not just volume.
         LevelSpec::new("Sticky Middle", 8, vec![Objective::Jelly])
             .with_layout(JELLY_PATCH)
-            .tiers(15_500, 26_500)
+            .tiers(25_500, 34_000)
             .upgrade(4),
         // The last level a run can be asked to clear with nothing in hand, and
         // it is the one that asks most of a bare run: bricks take two hits
@@ -476,7 +490,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // time. Hence a budget well past its neighbours'.
         LevelSpec::new("Donowall", 41, vec![Objective::Brick])
             .with_layout(BRICK_COLUMNS)
-            .tiers(45_000, 53_500)
+            .tiers(115_000, 130_000)
             .upgrade(20),
         LevelSpec::new(
             "Tetromino Torture",
@@ -494,14 +508,14 @@ pub fn levels() -> Vec<LevelSpec> {
         // Four colors and four seal colors, so every clear is on top of a
         // seal and the cascades never stop. The marks are an order up on the
         // levels either side of it for that reason and not by mistake.
-        .tiers(395_000, 890_000)
+        .tiers(475_000, 630_000)
         .upgrade(20),
         LevelSpec::new(
             "Crowded House",
             12,
             vec![Objective::Score(13_000), Objective::Color { color: 4, count: 26 }],
         )
-        .tiers(29_000, 40_500)
+        .tiers(40_500, 55_500)
         .upgrade(6),
         // Its own score objective pins where a bare win lands, so these sat on
         // top of each other until they were measured the way a mark's rule
@@ -510,23 +524,23 @@ pub fn levels() -> Vec<LevelSpec> {
         // the ladder even so.
         LevelSpec::new("Crossroads", 12, vec![Objective::Jelly, Objective::Score(12_000)])
             .with_layout(CROSS)
-            .tiers(19_000, 22_000)
+            .tiers(29_000, 34_500)
             .upgrade(6),
         LevelSpec::new("Pillars", 54, vec![Objective::Jelly])
             .with_layout(PILLARS)
-            .tiers(41_000, 46_500)
+            .tiers(140_000, 155_000)
             .upgrade(27),
         LevelSpec::new("Hourglass", 59, vec![Objective::Jelly])
             .with_layout(HOURGLASS)
-            .tiers(63_000, 73_500)
+            .tiers(185_000, 200_000)
             .upgrade(29),
         LevelSpec::new("Quarry", 23, vec![Objective::Jelly])
             .with_layout(QUARRY)
-            .tiers(36_500, 45_500)
+            .tiers(66_000, 76_500)
             .upgrade(11),
         LevelSpec::new("Landslide", 36, vec![Objective::Brick])
             .with_layout(SLOPE)
-            .tiers(49_000, 59_500)
+            .tiers(87_500, 100_000)
             .upgrade(18),
         // Four colors rather than three, and the third is not a number this
         // level can have.
@@ -545,7 +559,7 @@ pub fn levels() -> Vec<LevelSpec> {
         LevelSpec::new("Refresher", 17, vec![Objective::Seal { color: 2 } ])
             .colors(4)
             .with_layout(EMERALD_ISLES)
-            .tiers(155_000, 250_000)
+            .tiers(160_000, 205_000)
             .upgrade(8),
         LevelSpec::new(
             "Tetromino Tease",
@@ -565,7 +579,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // quarter of the draw landing on each piece instead of a fifth, over
         // and over, for forty hits. The marks went up by as much as the budget
         // came down, and for the same reason.
-        .tiers(295_000, 760_000)
+        .tiers(390_000, 525_000)
         .upgrade(11),
         LevelSpec::new(
             "The Vault",
@@ -579,7 +593,7 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(VAULT)
         .palette(&[0, 1, 2, 3])
-        .tiers(355_000, 1_005_000)
+        .tiers(280_000, 435_000)
         .upgrade(5),
         // The top of the ladder, and the only level measured holding all five
         // specials, because it is the only one whose rule asks for all five.
@@ -598,7 +612,7 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(GAUNTLET)
         .palette(&[0, 1, 2, 3])
-        .tiers(495_000, 1_315_000)
+        .tiers(380_000, 565_000)
         .upgrade(5),
     ]
 }

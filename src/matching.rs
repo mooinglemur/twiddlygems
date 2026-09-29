@@ -466,7 +466,15 @@ pub struct Detonation {
     /// up, false for whatever a beam ran over on its way across the board.
     pub cracks: Vec<bool>,
     /// The specials that went off, in firing order.
-    pub fired: Vec<(Pos, Special)>,
+    /// Every special that went off, where it was, and how many cells it
+    /// actually took.
+    ///
+    /// The count is what that blast added to the wave, so a cell another
+    /// special had already claimed is not counted twice. It is there because a
+    /// rainbow is paid by what it catches: one that takes sixteen gems is a
+    /// different event from one that takes six, and the wave as a whole cannot
+    /// tell them apart once everything has been added together.
+    pub fired: Vec<(Pos, Special, u32)>,
     /// Bricks a clearing gem's beam passed through.
     ///
     /// A beam does not stop at a brick, it goes through it and marks it on the
@@ -614,7 +622,7 @@ pub fn detonate(
     seed_jitter_ms: f32,
 ) -> Detonation {
     let mut wave = Wave::new(board);
-    let mut fired: Vec<(Pos, Special)> = Vec::new();
+    let mut fired: Vec<(Pos, Special, u32)> = Vec::new();
     let mut struck: Vec<Pos> = Vec::new();
 
     for seed in seeds {
@@ -638,8 +646,9 @@ pub fn detonate(
     // color rather than before, so a clear with none of these draws from the
     // generator exactly as it always did.
     for (p, special) in fires {
-        fired.push((*p, *special));
+        let before = wave.cleared.len();
         lay_blast(board, &mut wave, &mut struck, &mut hits, rng, *p, *special, 0.0, fallback);
+        fired.push((*p, *special, (wave.cleared.len() - before) as u32));
     }
 
     let mut head = 0;
@@ -656,8 +665,9 @@ pub fn detonate(
         if spent.contains(&p) {
             continue;
         }
-        fired.push((p, special));
+        let before = wave.cleared.len();
         lay_blast(board, &mut wave, &mut struck, &mut hits, rng, p, special, delay, fallback);
+        fired.push((p, special, (wave.cleared.len() - before) as u32));
     }
 
     Detonation { cleared: wave.cleared, delays: wave.delays, cracks: wave.cracks, fired, struck }
