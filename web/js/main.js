@@ -24,6 +24,16 @@ const WASM_URL = new URL('../twiddlygems.wasm', import.meta.url).href;
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SOUND_KEY = 'twiddlygems.sound.v1';
 /**
+ * What the player has turned on or off, as one JSON object.
+ *
+ * One key for all of them rather than a key apiece, so a setting can be added
+ * without a new entry here and without a migration for the people who have
+ * none of it written down yet. Sound is deliberately not in here: it has its
+ * own button in the bar and its own key, written long before this, and moving
+ * it would silently un-mute everybody who had muted the game.
+ */
+const SETTINGS_KEY = 'twiddlygems.settings.v1';
+/**
  * Where the last room was, so a returning player types nothing but a password.
  *
  * The only thing about a multiworld this browser writes down. Everything else
@@ -131,7 +141,7 @@ const dom = {
   overlayTitle: document.getElementById('overlay-title'),
   overlayBody: document.getElementById('overlay-body'),
   overlayButtons: document.getElementById('overlay-buttons'),
-  debugOptions: document.getElementById('debug-options'),
+  overlaySwitches: document.getElementById('overlay-switches'),
   tracker: document.getElementById('tracker'),
   trackerItems: document.getElementById('tracker-items'),
   levelList: document.getElementById('level-list'),
@@ -169,6 +179,82 @@ function writeRoom({ host, port, slot }) {
     window.localStorage.setItem(ROOM_KEY, JSON.stringify({ host, port, slot }));
   } catch (error) {
     console.warn('could not remember the room', error);
+  }
+}
+
+/**
+ * Whether this browser can buzz.
+ *
+ * The Vibration API, which Android has and iOS does not, in any browser: on an
+ * iPhone this is simply absent. It decides whether the setting is offered at
+ * all, because a switch for something the device cannot do is not a setting,
+ * it is a lie with a switch on it.
+ *
+ * Asked each time rather than answered once at load. It costs nothing, and a
+ * constant settled before the page has finished starting is the sort of thing
+ * that is only ever wrong in the environment nobody tested in.
+ */
+function canBuzz() {
+  return typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function';
+}
+
+/**
+ * How long the buzz on a swap is, in milliseconds.
+ *
+ * Short enough to read as a click rather than a buzz. This fires on every
+ * swap, which on a good board is several a second, so anything long enough to
+ * feel like a vibration would be a nuisance within one level.
+ */
+const BUZZ_MS = 12;
+
+/// What the settings are and what they default to, for somebody who has never
+/// opened the menu.
+///
+/// Hints on, because a player who does not know hints exist should still be
+/// offered them and one who does not want them will go and say so. Haptics
+/// off, because a phone buzzing without being asked is a surprise, and this
+/// one fires on every swap rather than once in a while.
+const SETTING_DEFAULTS = { hints: true, haptics: false };
+
+/// The settings menu's rows. Only offered where the device can honor them.
+const SETTING_CHOICES = [
+  { key: 'hints', label: 'Hints', hint: 'Shows a move if you pause for a few seconds' },
+  {
+    key: 'haptics',
+    label: 'Haptic feedback',
+    hint: 'A small click when gems swap, if supported by your device'
+  },
+];
+
+function readSettings() {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    const saved = raw ? JSON.parse(raw) : null;
+    if (!saved || typeof saved !== 'object') {
+      return { ...SETTING_DEFAULTS };
+    }
+    // Read key by key against the defaults rather than spread over them, so a
+    // stored file from an older version is missing settings rather than
+    // carrying junk into this one, and a value that is not a boolean falls
+    // back instead of making a switch that shows one state and means another.
+    const settings = { ...SETTING_DEFAULTS };
+    for (const key of Object.keys(SETTING_DEFAULTS)) {
+      if (typeof saved[key] === 'boolean') {
+        settings[key] = saved[key];
+      }
+    }
+    return settings;
+  } catch (error) {
+    console.warn('could not read the settings', error);
+    return { ...SETTING_DEFAULTS };
+  }
+}
+
+function writeSettings(settings) {
+  try {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn('could not remember the settings', error);
   }
 }
 
@@ -346,6 +432,10 @@ async function boot() {
 
   rebuildHud();
 
+  /// What the player has turned on or off, read once and written on each
+  /// change. Read before anything that acts on one.
+  const settings = readSettings();
+
   const audio = new Audio();
   let soundOn = true;
   try {
@@ -473,6 +563,49 @@ async function boot() {
     }
   };
 
+  /**
+   * Whether a swap has been made and its gems have not landed yet.
+   *
+   * Set by `moved` the moment the swipe is accepted, and spent by the buzz
+   * below. Kept here rather than read off the phase because the engine reports
+   * a swap and the revert that undoes it as the same phase, so a run of them
+   * cannot be told apart from the outside.
+   */
+  let swapLanding = false;
+
+  /**
+   * The haptic click, on the frame the swapped gems arrive.
+   *
+   * Not on the swipe, which is where this started and which was too early by
+   * the whole length of the animation: the gems take `SWAP_MS` to slide past
+   * each other, so a click at the gesture is a click at two gems that have not
+   * moved yet. What is waited for is the swap resolving, which is either the
+   * clear it made or the revert that put it back, both raised at the moment
+   * the gems land.
+   *
+   * Armed from the input rather than from an `EV_SWAP`, because that one is
+   * raised outside `update` and thrown away by the next one before the page
+   * ever drains it. Tracked whether or not haptics are on, so turning them on
+   * midway through a swap does not buzz for a swipe made before they were.
+   */
+  const feelEvents = (events) => {
+    for (const event of events) {
+      if (!swapLanding) {
+        continue;
+      }
+      if (event.kind !== EventKind.CLEAR && event.kind !== EventKind.REVERT) {
+        continue;
+      }
+      swapLanding = false;
+      // Nothing is checked beyond the setting: `vibrate` reports a refusal by
+      // returning false rather than by throwing, and a browser that wants a
+      // user gesture has had one a fifth of a second ago.
+      if (settings.haptics && canBuzz()) {
+        navigator.vibrate(BUZZ_MS);
+      }
+    }
+  };
+
   /// Anything the run was given goes in the feed. In solo these come from
   /// clearing levels; under Archipelago the same events will carry what the
   /// multiworld sent, which is why this reads the stream rather than asking
@@ -526,6 +659,7 @@ async function boot() {
     }
     renderer.addEvents(events, now);
     playEvents(events);
+    feelEvents(events);
     logItems(events);
   };
 
@@ -774,9 +908,14 @@ async function boot() {
 
   /// A move was made, so the hint goes and the clock on the next one starts
   /// again.
-  const moved = () => {
+  const moved = (what) => {
     renderer.hint = null;
     hintAt = performance.now() + HINT_DELAY_MS;
+    // Armed here and felt later, by `feelEvents`. Only on a swap: a tap that
+    // selects a gem has not moved anything yet.
+    if (what === 'swap') {
+      swapLanding = true;
+    }
   };
 
   /**
@@ -885,7 +1024,44 @@ async function boot() {
           onCancel: openLevels,
           onConfirm: mode === 'multiworld' ? leaveMultiworld : endRun,
         }),
+      onSettings: openSettings,
     });
+  };
+
+  /**
+   * The settings, from the gear in the levels menu.
+   *
+   * Back returns to the levels menu rather than to the board, because that is
+   * where this was opened from and leaving somebody somewhere they did not ask
+   * to be is worse than one extra tap.
+   *
+   * A setting takes effect the moment it is tapped. Nothing here has to be
+   * handed to the engine: both are read where they are acted on, the hint by
+   * the frame loop and the buzz by the swap that causes it, so writing the new
+   * value down is the whole of applying it.
+   */
+  const openSettings = () => {
+    hud.showSettings(
+      // Only what this device can actually do. A phone that cannot buzz is not
+      // shown a switch for buzzing.
+      SETTING_CHOICES.filter((choice) => choice.key !== 'haptics' || canBuzz()).map((choice) => ({
+        ...choice,
+        on: settings[choice.key],
+      })),
+      {
+        onChange: (key, on) => {
+          settings[key] = on;
+          writeSettings(settings);
+          // Hints turned off should go now rather than at the end of the
+          // countdown that is already running, and one already on the board
+          // has to be taken off it by hand.
+          if (key === 'hints' && !on) {
+            renderer.hint = null;
+          }
+        },
+        onBack: openLevels,
+      },
+    );
   };
 
   /**
@@ -1081,7 +1257,7 @@ async function boot() {
       if (renderer.hint) {
         renderer.hint = null;
       }
-    } else if (!renderer.hint && now >= hintAt && engine.acceptsInput) {
+    } else if (settings.hints && !renderer.hint && now >= hintAt && engine.acceptsInput) {
       renderer.hint = engine.hint();
     }
 

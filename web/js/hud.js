@@ -824,9 +824,16 @@ export class Hud {
 
     dom.levelList.replaceChildren(...rows);
     dom.tracker.classList.remove('hidden');
+    // The gear last and unworded, because it is a way out to somewhere else
+    // rather than one of the two answers this row is asking for. It carries a
+    // label for anything not reading the picture.
+    const gear = button('⚙', actions.onSettings, false);
+    gear.classList.add('icon-button');
+    gear.setAttribute('aria-label', 'Settings');
     dom.overlayButtons.replaceChildren(
       button('Close', actions.onClose, true),
       button('Quit game', actions.onQuit, false),
+      gear,
     );
     this.openOverlay();
     // The level being played is somewhere down a list that scrolls, and on a
@@ -1058,47 +1065,99 @@ export class Hud {
       ? 'This is a real multiworld. Anything checked here is checked for everyone.'
       : 'Pick any of these. They are applied when you close this.';
 
-    dom.debugOptions.replaceChildren(
-      ...choices.map((choice) => {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'debug-option';
-        // A switch, so a screen reader says whether it is on rather than
-        // simply naming it, and says so again each time it is pressed.
-        row.setAttribute('role', 'switch');
-        row.setAttribute('aria-checked', 'false');
-
-        const label = document.createElement('span');
-        label.className = 'debug-label';
-        label.textContent = choice.label;
-        const hint = document.createElement('span');
-        hint.className = 'debug-hint';
-        hint.textContent = choice.hint;
-        row.append(label, hint);
-
-        row.addEventListener('click', () => {
-          const on = !chosen.has(choice.key);
+    this.showSwitches(
+      'Testing shortcuts',
+      choices.map((choice) => ({
+        ...choice,
+        on: false,
+        onToggle: (on) => {
           if (on) {
             chosen.add(choice.key);
           } else {
             chosen.delete(choice.key);
           }
-          row.classList.toggle('on', on);
-          row.setAttribute('aria-checked', String(on));
-        });
-        return row;
-      }),
+        },
+      })),
     );
     // One way out, and it is the one that does the work.
     dom.overlayButtons.replaceChildren(
       button('Close', () => onClose([...chosen]), true),
+    );
+  }
+
+  /**
+   * The settings, opened by the gear in the levels menu.
+   *
+   * These take effect and are written down the moment they are tapped, rather
+   * than being applied on the way out the way the testing menu's are. A
+   * setting is a preference and not a batch of work: someone who turns hints
+   * off wants them off, and a panel that waited until it closed would leave
+   * them wondering whether it had taken.
+   *
+   * `choices` is `[{ key, label, hint, on }]`, built by the page, which is
+   * also what knows which of them this device can honor: a setting for
+   * something the browser cannot do is not a setting, it is a lie with a
+   * switch on it, so the page leaves it out rather than showing it disabled.
+   */
+  showSettings(choices, { onChange, onBack }) {
+    const { dom } = this;
+    dom.overlayTitle.textContent = 'Settings';
+    dom.overlayBody.textContent = 'Kept on this device.';
+
+    this.showSwitches(
+      'Settings',
+      choices.map((choice) => ({ ...choice, onToggle: (on) => onChange(choice.key, on) })),
+    );
+    dom.overlayButtons.replaceChildren(button('Back', onBack, true));
+  }
+
+  /**
+   * Fills the switch list, which the settings and the testing menu share.
+   *
+   * Each row is `{ label, hint, on, onToggle }`. What a switch means is the
+   * caller's business; what it looks like and how it announces itself is this
+   * one's.
+   */
+  showSwitches(label, rows) {
+    const { dom } = this;
+    dom.overlaySwitches.setAttribute('aria-label', label);
+    dom.overlaySwitches.replaceChildren(
+      ...rows.map((entry) => {
+        const row = document.createElement('button');
+        row.type = 'button';
+        row.className = 'switch-row';
+        // A switch, so a screen reader says whether it is on rather than
+        // simply naming it, and says so again each time it is pressed.
+        row.setAttribute('role', 'switch');
+
+        const name = document.createElement('span');
+        name.className = 'switch-label';
+        name.textContent = entry.label;
+        const hint = document.createElement('span');
+        hint.className = 'switch-hint';
+        hint.textContent = entry.hint;
+        row.append(name, hint);
+
+        let on = entry.on === true;
+        const show = () => {
+          row.classList.toggle('on', on);
+          row.setAttribute('aria-checked', String(on));
+        };
+        show();
+        row.addEventListener('click', () => {
+          on = !on;
+          show();
+          entry.onToggle(on);
+        });
+        return row;
+      }),
     );
 
     dom.tracker.classList.add('hidden');
     this.openOverlay();
     // After `openOverlay`, which takes these away again: it is the one way in
     // for every panel, so it is where the dress of the last one comes off.
-    dom.debugOptions.classList.remove('hidden');
+    dom.overlaySwitches.classList.remove('hidden');
   }
 
   /**
@@ -1112,14 +1171,14 @@ export class Hud {
    */
   openOverlay(victory = false) {
     this.dom.overlayCard.classList.toggle('victory', victory);
-    this.dom.debugOptions.classList.add('hidden');
+    this.dom.overlaySwitches.classList.add('hidden');
     this.dom.overlay.classList.remove('hidden');
   }
 
   hideOverlay() {
     this.dom.overlay.classList.add('hidden');
     this.dom.overlayCard.classList.remove('victory');
-    this.dom.debugOptions.classList.add('hidden');
+    this.dom.overlaySwitches.classList.add('hidden');
   }
 
   get overlayVisible() {

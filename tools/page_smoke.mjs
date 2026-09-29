@@ -724,6 +724,150 @@ dispatch('sound-button', 'click', {});
   assert.equal(renderer.toast, null, 'the pop-over outlived its fade');
 }
 
+// The settings, behind the gear in the levels menu.
+//
+// Both of these are read where they are acted on rather than handed to the
+// engine, so what is checked is the behavior and not the flag: hints off has
+// to actually stop a hint arriving, and the buzz has to actually be asked for.
+{
+  const { renderer } = window.twiddlygems;
+  const switches = elements.get('overlay-switches');
+  const rowNamed = (name) =>
+    switches.children.find((row) =>
+      row.children.some((part) => part.textContent === name),
+    );
+
+  dispatch('levels-button', 'click', {});
+  const gear = elements
+    .get('overlay-buttons')
+    .children.find((child) => child.getAttribute?.('aria-label') === 'Settings');
+  assert.ok(gear, 'the levels menu has no way into the settings');
+  click(gear, 'the gear does nothing');
+  assert.equal(elements.get('overlay-title').textContent, 'Settings');
+  assert.ok(!switches.classList.contains('hidden'), 'the settings panel has no switches');
+
+  // Nothing is offered for something this device cannot do. Node has no
+  // `navigator.vibrate`, so the haptics row is absent here, which is the same
+  // answer an iPhone gets.
+  assert.ok(rowNamed('Hints'), 'the settings do not offer the hints switch');
+  assert.ok(
+    !rowNamed('Haptic feedback'),
+    'a device with no vibration API was offered a switch for it anyway',
+  );
+
+  // On by default, and turning it off is written down at once rather than on
+  // the way out.
+  const hints = rowNamed('Hints');
+  assert.equal(hints.getAttribute('aria-checked'), 'true', 'hints did not default to on');
+  click(hints, 'the hints switch does not respond');
+  assert.equal(hints.getAttribute('aria-checked'), 'false');
+  assert.equal(
+    JSON.parse(store.get('twiddlygems.settings.v1')).hints,
+    false,
+    'turning hints off was not remembered',
+  );
+
+  // Back goes where it came from, not to the board.
+  click(overlayButton('Back'), 'the settings have no way back');
+  assert.equal(elements.get('overlay-title').textContent, 'Levels');
+  click(overlayButton('Close'), 'the level picker has no way out');
+
+  // And the behavior, which is the point. Far longer than the wait that
+  // produced one above.
+  renderer.hint = null;
+  for (let waited = 0; waited < 900; waited += 1) {
+    pump(1);
+  }
+  assert.equal(renderer.hint, null, 'a hint arrived with hints turned off');
+
+  // Back on, and they come back.
+  dispatch('levels-button', 'click', {});
+  click(
+    elements
+      .get('overlay-buttons')
+      .children.find((child) => child.getAttribute?.('aria-label') === 'Settings'),
+    'the gear went away',
+  );
+  click(rowNamed('Hints'), 'the hints switch does not respond');
+  click(overlayButton('Back'), 'the settings have no way back');
+  click(overlayButton('Close'), 'the level picker has no way out');
+  for (let waited = 0; waited < 900 && !renderer.hint; waited += 1) {
+    pump(1);
+  }
+  assert.ok(renderer.hint, 'turning hints back on did not bring them back');
+}
+
+// The haptic click, which only exists where the browser can do it.
+//
+// `navigator.vibrate` is asked for at the moment of the swap rather than at
+// load, so a fake can be put in place here. Without that this whole setting
+// would ship untested, because the machine running this has no vibration
+// motor and never will.
+{
+  const buzzes = [];
+  const real = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { vibrate: (ms) => buzzes.push(ms) },
+    configurable: true,
+  });
+  try {
+    const switches = elements.get('overlay-switches');
+    dispatch('levels-button', 'click', {});
+    click(
+      elements
+        .get('overlay-buttons')
+        .children.find((child) => child.getAttribute?.('aria-label') === 'Settings'),
+      'the gear went away',
+    );
+    // Now that the device can buzz, the switch for it is offered.
+    const haptics = switches.children.find((row) =>
+      row.children.some((part) => part.textContent === 'Haptic feedback'),
+    );
+    assert.ok(haptics, 'a device that can vibrate was not offered the setting');
+    // Off unless asked for: a phone buzzing without being asked is a surprise,
+    // and this one fires on every swap rather than once in a while.
+    assert.equal(haptics.getAttribute('aria-checked'), 'false', 'haptics did not default to off');
+    click(haptics, 'the haptics switch does not respond');
+    click(overlayButton('Back'), 'the settings have no way back');
+    click(overlayButton('Close'), 'the level picker has no way out');
+
+    // A tap that only selects a gem has moved nothing, so it must not buzz.
+    dispatch('board', 'pointerdown', { clientX: 40, clientY: 40 });
+    dispatch('board', 'pointerup', { clientX: 40, clientY: 40 });
+    pump(2);
+    assert.equal(buzzes.length, 0, 'selecting a gem buzzed, having moved nothing');
+
+    // A swipe buzzes when the gems land, not when the swipe is accepted.
+    //
+    // The whole point of this timing: the gems take SWAP_MS to slide past each
+    // other, so a click at the gesture is a click at two gems that have not
+    // moved yet. Frames here are 16ms and the slide is 190, so a dozen of them
+    // pass before anything should be felt.
+    const cell = window.twiddlygems.renderer.cell;
+    const x = cell * 0.2 + 2.5 * cell;
+    const y = cell * 0.2 + 2.5 * cell;
+    dispatch('board', 'pointerdown', { clientX: x, clientY: y });
+    dispatch('board', 'pointermove', { clientX: x + cell, clientY: y });
+    dispatch('board', 'pointerup', { clientX: x + cell, clientY: y });
+    assert.equal(buzzes.length, 0, 'the swipe buzzed before a single frame had run');
+    pump(6);
+    assert.equal(
+      buzzes.length,
+      0,
+      'the swipe buzzed while the gems were still sliding, which is what was too early',
+    );
+    pump(30);
+    assert.equal(buzzes.length, 1, 'the gems landed without a buzz');
+    assert.ok(buzzes[0] > 0 && buzzes[0] <= 40, `a ${buzzes[0]}ms buzz is not a click`);
+
+    // And once per swap, not once per gem the clear went on to take.
+    pump(120);
+    assert.equal(buzzes.length, 1, `one swap buzzed ${buzzes.length} times`);
+  } finally {
+    Object.defineProperty(globalThis, 'navigator', real);
+  }
+}
+
 // The level picker builds one row per level, with the locked ones disabled.
 dispatch('levels-button', 'click', {});
 const list = elements.get('level-list');
@@ -1251,7 +1395,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const { engine } = window.twiddlygems;
   const objectives = elements.get('objectives');
   const overlay = elements.get('overlay');
-  const options = elements.get('debug-options');
+  const options = elements.get('overlay-switches');
   // The chips themselves, since the listener asks whether the tap landed
   // inside the list rather than on the list itself.
   const chip = objectives.children[0];

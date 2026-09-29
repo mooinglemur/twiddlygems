@@ -69,11 +69,12 @@
       <div id="tracker-items" role="list" aria-label="Items found"></div>
       <div id="level-list" role="list" aria-label="Levels"></div>
     </div>
-    <!-- The testing menu, reached by tapping an objective twenty times over.
-         Each row is a switch rather than a button: a tester picks whatever
-         combination they want and everything selected is applied on the way
-         out, in an order the page decides. -->
-    <div id="debug-options" class="hidden" role="group" aria-label="Testing shortcuts"></div>
+    <!-- A list of switches, for the two panels that are one: the settings and
+         the testing menu. Each row is a label, a note under it and an on
+         state. The panels differ in what a switch does, not in how it looks:
+         a setting takes effect and is written down the moment it is tapped,
+         while a testing shortcut is armed and applied on the way out. -->
+    <div id="overlay-switches" class="hidden" role="group"></div>
     <div id="overlay-buttons"></div>
   </div>
 </div>

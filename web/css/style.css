@@ -465,9 +465,9 @@ button[disabled] { opacity: 0.4; cursor: default; }
 }
 #overlay-card.victory #overlay-body { color: var(--ink); }
 
-/* ---- the testing menu ---- */
+/* ---- the switch list, shared by the settings and the testing menu ---- */
 
-#debug-options {
+#overlay-switches {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -475,9 +475,9 @@ button[disabled] { opacity: 0.4; cursor: default; }
   min-height: 0;
   overflow-y: auto;
 }
-/* Rows rather than a grid: each one is a sentence and a note under it, and a
-   tester reads down the list once and then aims. */
-.debug-option {
+/* Rows rather than a grid: each one is a sentence and a note under it, read
+   down once and then aimed at. */
+.switch-row {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -491,15 +491,27 @@ button[disabled] { opacity: 0.4; cursor: default; }
   text-align: left;
   cursor: pointer;
 }
-.debug-option.on {
+.switch-row.on {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 16%, var(--socket));
 }
-.debug-label { font-weight: 600; }
-.debug-hint { font-size: 0.8rem; color: var(--ink-dim); }
-/* A mark as well as the color, so which rows are armed does not rest on a
-   tint that a phone in sunlight may not show at all. */
-.debug-option.on .debug-label::after { content: ' [on]'; color: var(--accent); }
+.switch-label { font-weight: 600; }
+.switch-hint { font-size: 0.8rem; color: var(--ink-dim); }
+/* A mark as well as the color, so which rows are on does not rest on a tint
+   that a phone in sunlight may not show at all. */
+.switch-row.on .switch-label::after { content: ' [on]'; color: var(--accent); }
+
+/* The gear that opens the settings, in the levels menu's button row. Square
+   and quiet: it is a way out to somewhere else, not one of the two answers
+   the row is actually asking for. */
+.icon-button {
+  flex: 0 0 auto;
+  min-width: 44px;
+  padding-left: 12px;
+  padding-right: 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
 
 /* ---- tracker ---- */
 
