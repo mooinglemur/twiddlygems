@@ -207,6 +207,31 @@ fn world(ladder: &[twiddlygems::level::LevelSpec], count: usize) -> Json {
         // above wants a special. Written out rather than known on both sides,
         // for the same reason every other number here is.
         ("first_gated_level", Json::Num(FIRST_GATED_LEVEL as u32)),
+        // The levels that ask for one particular special rather than any of
+        // the five, as a name apiece, parallel to `levels` and empty where a
+        // level asks for nothing in particular.
+        //
+        // The world's own logic does not read this: every location already
+        // carries its rule, built from the same source. It is here so the
+        // tests can state the band rule truthfully, since "any one special
+        // opens the middle of the ladder" is no longer the whole of it, and a
+        // test that cannot see the exception can only be written to ignore it.
+        (
+            "level_needs",
+            Json::Arr(
+                ladder
+                    .iter()
+                    .map(|level| {
+                        Json::Str(
+                            level
+                                .needs
+                                .map(|special| item_name(Item::Unlock(special)))
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect(),
+            ),
+        ),
         ("shortest_chain", Json::Num(SHORTEST_CHAIN)),
         ("longest_chain", Json::Num(LONGEST_CHAIN)),
         ("reliable_chain", Json::Num(RELIABLE_CHAIN)),

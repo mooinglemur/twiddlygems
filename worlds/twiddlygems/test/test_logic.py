@@ -1,5 +1,7 @@
 """What the rules promise, asked of Archipelago's own state machine."""
 
+from BaseClasses import CollectionState
+
 from . import TwiddlyGemsTestBase
 from .. import GAME_DATA, ITEMS_BY_NAME, LOCATIONS, SETTINGS
 
@@ -22,6 +24,15 @@ LADDER = "Progressive Level Unlock"
 #: rather than written here, because it is the engine's decision and a second
 #: copy would be one to keep in step.
 FIRST_GATED_LEVEL = GAME_DATA["first_gated_level"]
+
+#: The special each level asks for by name, parallel to ``LEVELS`` and empty
+#: where the level asks for nothing in particular.
+#:
+#: A level with an entry here is outside the band's any-one-of-five rule: it is
+#: not in logic until that one special is found. Read from the engine for the
+#: same reason ``FIRST_GATED_LEVEL`` is, and it is why the band checks below
+#: skip the levels that have one rather than pretending the rule is uniform.
+LEVEL_NEEDS = GAME_DATA["level_needs"]
 
 UNLOCKS = [
     "Horizontal Line Clear",
@@ -68,10 +79,14 @@ class TestDefault(TwiddlyGemsTestBase):
                 f"level {index} goes down bare-handed, past where a tool is asked for",
             )
 
-        # Any one of them is enough for the middle of the ladder. The top is
-        # not in that band: it wants the set, and is checked on its own below.
+        # Any one of them is enough for the middle of the ladder, except where
+        # a level names the special it wants: those are not in the band's rule
+        # at all and are checked on their own, below. The top is not in it
+        # either, for its own reason.
         self.collect_by_name(UNLOCKS[0])
         for index in range(FIRST_GATED_LEVEL + 1, len(LEVELS)):
+            if LEVEL_NEEDS[index - 1]:
+                continue
             self.assertTrue(
                 self.can_reach_location(f"Level {index} Clear"),
                 f"level {index} wants more than one special, where the rule says any",
@@ -91,17 +106,57 @@ class TestDefault(TwiddlyGemsTestBase):
         # one at a time. A rule that were true of only some would be true on
         # some seeds and false on others, which is the shape of thing that
         # strands a player halfway up with no way to say why.
+        #
+        # Levels that name the special they want are not making that promise
+        # and are checked below instead.
         for special in UNLOCKS:
             state = self.multiworld.get_all_state(False)
             for _ in range(len(LEVELS)):
                 state.collect(self.world.create_item(LADDER), prevent_sweep=True)
             state.collect(self.world.create_item(special), prevent_sweep=True)
             for index in range(FIRST_GATED_LEVEL + 1, len(LEVELS)):
+                if LEVEL_NEEDS[index - 1]:
+                    continue
                 self.assertTrue(
                     self.multiworld.get_location(f"Level {index} Clear", self.player)
                     .can_reach(state),
                     f"level {index} will not go down holding only {special}",
                 )
+
+    def test_a_level_that_names_a_special_wants_that_one_and_no_other(self) -> None:
+        # The other side of the exception above. A tall board of jelly is bad
+        # for a line clear and fine for a rocket, so the level says so, and the
+        # logic must hold it shut against the other four rather than merely
+        # open it for the one.
+        wanted = [
+            (index + 1, needs) for index, needs in enumerate(LEVEL_NEEDS) if needs
+        ]
+        if not wanted:
+            self.skipTest("no level names a special, so there is nothing to check")
+        for number, needs in wanted:
+            for special in UNLOCKS:
+                # Built from nothing rather than from `get_all_state`, which
+                # hands back a state holding every item in the world: against
+                # that, "can this be reached" is always yes and a check that
+                # something is *shut* proves nothing at all.
+                state = CollectionState(self.multiworld)
+                for _ in range(len(LEVELS)):
+                    state.collect(self.world.create_item(LADDER), prevent_sweep=True)
+                state.collect(self.world.create_item(special), prevent_sweep=True)
+                reached = (
+                    self.multiworld.get_location(f"Level {number} Clear", self.player)
+                    .can_reach(state)
+                )
+                if special == needs:
+                    self.assertTrue(
+                        reached,
+                        f"level {number} asks for {needs} and will not go down holding it",
+                    )
+                else:
+                    self.assertFalse(
+                        reached,
+                        f"level {number} asks for {needs} but went down holding {special}",
+                    )
 
     def test_a_score_mark_wants_the_specials(self) -> None:
         # Nearly all of a good score comes from the flourish at the end of a

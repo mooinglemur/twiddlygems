@@ -735,6 +735,19 @@ pub fn requirement(location: Location, levels: usize) -> Requirement {
         Location::LevelClear(index) if index == last && last > FIRST_GATED_LEVEL => {
             Requirement::All(vec![can_play(index), tools()])
         }
+        // A level that names the special it wants gets that one instead of
+        // any of the five. Not an exception to the reasoning above but a
+        // consequence of it: the band rule cannot name a special *for* a
+        // level, so a level whose design has an answer says so itself, and the
+        // rule then promises only what that level can actually deliver. See
+        // [`LevelSpec::needs`].
+        Location::LevelClear(index)
+            if index >= FIRST_GATED_LEVEL
+                && crate::level::level_needs(index, levels).is_some() =>
+        {
+            let wanted = crate::level::level_needs(index, levels).expect("just checked");
+            Requirement::All(vec![can_play(index), has(wanted)])
+        }
         Location::LevelClear(index) if index >= FIRST_GATED_LEVEL => {
             Requirement::All(vec![can_play(index), some_tool()])
         }
@@ -1557,6 +1570,7 @@ mod tests {
             silver: 0,
             gold: 0,
             layout: None,
+            needs: None,
         }
     }
 
@@ -2349,6 +2363,82 @@ mod tests {
             locations(levels).len() - survivors,
             "only what asks for nothing should have survived",
         );
+    }
+
+    #[test]
+    fn a_level_that_names_a_special_asks_for_that_one_and_no_other() {
+        // The band rule accepts any one of the five, which means the level has
+        // to be beatable with whichever turned up, which means its budget is
+        // the worst special's. A level whose design has an answer names it and
+        // buys the budget back: Hourglass is a tall board of jelly, and wants
+        // 58 moves with only a vertical clear against 20 with a rocket.
+        //
+        // Found by name rather than by index, because the ladder gets
+        // reordered and an index here would quietly start testing whichever
+        // level landed in the slot.
+        let ladder = crate::level::levels();
+        let levels = ladder.len();
+        let Some(index) = ladder.iter().position(|spec| spec.needs.is_some()) else {
+            // Nothing declares one today, so there is nothing to check. Not a
+            // failure: the mechanism is allowed to go unused.
+            return;
+        };
+        let wanted = ladder[index].needs.expect("just found it");
+        assert!(
+            index >= FIRST_GATED_LEVEL,
+            "{} names a special but sits below the gated band, where nothing is asked for",
+            ladder[index].name,
+        );
+
+        let asked = requirement(Location::LevelClear(index), levels);
+        let options = Options { progressive_levels: 0, ..Options::default() };
+        let mut below = Reached::none(levels);
+        below.add(Location::LevelClear(index - 1));
+
+        let holding = |special: Special| {
+            let mut held = Inventory::empty();
+            held.receive(Item::Unlock(special));
+            held
+        };
+
+        assert!(
+            asked.met(&holding(wanted), &below, &options),
+            "{} does not accept the special it asks for",
+            ladder[index].name,
+        );
+        // And every other special is refused, which is the whole point: under
+        // the band rule any of them would have done.
+        for special in UNLOCKS.iter().filter(|special| **special != wanted) {
+            assert!(
+                !asked.met(&holding(*special), &below, &options),
+                "{} accepts a {special:?}, so it is still on the band's any-one-of-five rule",
+                ladder[index].name,
+            );
+        }
+    }
+
+    #[test]
+    fn a_ladder_of_another_length_inherits_nobody_elses_gates() {
+        // The rules are written against a level count rather than against the
+        // ladder, and are checked at several invented lengths. A level that
+        // names a special must not reach out of the real ladder and gate
+        // whatever sits at that index in an imaginary one.
+        let real = crate::level::levels().len();
+        let Some(index) = crate::level::levels().iter().position(|spec| spec.needs.is_some())
+        else {
+            return;
+        };
+        for levels in LADDERS {
+            assert_ne!(levels, real, "this check needs a length that is not the real one");
+            if index >= levels {
+                continue;
+            }
+            assert_eq!(
+                crate::level::level_needs(index, levels),
+                None,
+                "a ladder of {levels} picked up the real ladder's gate at index {index}",
+            );
+        }
     }
 
     #[test]

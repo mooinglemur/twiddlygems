@@ -348,12 +348,26 @@ for (const [name, metrics] of [
         Phase: { CASHING_IN: 7 },
         Status: { LOST: 2 },
       };
+      // The specials asked for outright rather than hoped for.
+      //
+      // The save injected above hands this run a list of checked locations,
+      // which the fill turns into items, and the fill is dealt from the run's
+      // settings and the shape of the ladder. Reorder the ladder and those
+      // same ids mean different items: this level lost its specials that way
+      // and the shot went from reliable to a coin flip, reported as "never
+      // reached the end-of-level run down" rather than as anything to do with
+      // the fill. What this screenshot needs is a board that can make
+      // specials, so it says so.
+      engine.unlockAllSpecials();
+
       // Retried the way a player would, through the page's own button so the
       // board and the HUD are reset together. One attempt was enough when the
       // budgets were loose; measured, even a level this bot is good at is not
       // a certainty, and a screenshot run that falls over one time in twenty
-      // is a build that falls over one time in twenty.
-      for (let attempt = 0; attempt < 12; attempt += 1) {
+      // is a build that falls over one time in twenty. This plays the engine's
+      // random hint rather than the balance tool's attentive bot, so its win
+      // rate is far below the 50% a level is tuned to.
+      for (let attempt = 0; attempt < 40; attempt += 1) {
         // A safety net rather than a budget: the loop leaves as soon as the
         // attempt resolves either way, so this only has to be longer than the
         // longest a level can take. Wide, because that is now a level with

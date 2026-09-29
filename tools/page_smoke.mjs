@@ -987,7 +987,13 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // the page's own button, so the reset is the real one. What this is here to
   // exercise is the winning flow and not the odds of reaching it.
   let attempts = 1;
-  for (let i = 0; i < 60_000 && engine.status !== Status.WON; i += 1) {
+  // The frame budget has to cover every attempt, not one of them. At forty
+  // attempts on a forty-odd move level it takes well over a hundred thousand
+  // frames, and the old sixty thousand ran out on the seventeenth: the failure
+  // then reads "never finished the level in 17 attempts", which looks like the
+  // bot being unlucky rather than the loop being cut off before it had used
+  // the attempts it was given.
+  for (let i = 0; i < 250_000 && engine.status !== Status.WON; i += 1) {
     if (engine.status === Status.LOST) {
       if (attempts >= 40) {
         break;

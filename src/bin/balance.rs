@@ -99,7 +99,17 @@ fn main() {
     //     cargo run --release --bin balance -- tune [seeds]
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "tune") {
-        let seeds = args.last().and_then(|last| last.parse().ok()).unwrap_or(40);
+        // Forty was the old default and it was far too few, which is not a
+        // guess: measured against 240 on the same seeds, the budgets moved by
+        // up to an eighth, and Hourglass by fifteen per cent. A budget is a
+        // percentile of a long-tailed "moves needed" distribution, and a tail
+        // wants far more samples than a median does. From 240 to 480 most
+        // levels move under two per cent and several do not move at all.
+        //
+        // The high-move jelly levels are the stubborn ones: Hourglass and
+        // Pillars still drift a few moves at 480. Take those two with a pinch
+        // of salt or give them a run of their own at more.
+        let seeds = args.last().and_then(|last| last.parse().ok()).unwrap_or(480);
         tune(seeds);
         return;
     }
@@ -261,7 +271,7 @@ fn tiers(bot: Bot, seeds: u64) {
         let mut won = 0;
         let (mut silver, mut gold) = (0, 0);
         for seed in 0..seeds {
-            let game = play(&spec, seed * 7919 + index as u64, bot);
+            let game = play(&spec, seed_for(spec.name, seed), bot);
             if game.status() != Status::Won {
                 continue;
             }
@@ -304,7 +314,7 @@ fn chains(bot: Bot, seeds: u64) {
     let mut runs = 0u64;
     for (index, spec) in ladder.iter().enumerate() {
         for seed in 0..seeds {
-            let mut game = Game::new(spec.clone(), seed * 7919 + index as u64);
+            let mut game = Game::new(spec.clone(), seed_for(spec.name, seed));
             let mut deepest = 0;
             for _ in 0..4_000 {
                 if game.status() != Status::Playing {
@@ -369,7 +379,7 @@ fn match_sizes(bot: Bot, seeds: u64) {
     let mut opener_runs = 0u64;
     for (index, spec) in ladder.iter().enumerate() {
         for seed in 0..seeds {
-            let mut game = Game::new(spec.clone(), seed * 7919 + index as u64);
+            let mut game = Game::new(spec.clone(), seed_for(spec.name, seed));
             let mut seen = vec![false; (LONGEST_MATCH + 2) as usize];
             for _ in 0..4_000 {
                 if game.status() != Status::Playing {
@@ -449,7 +459,7 @@ fn marks(seeds: u64) -> bool {
         let mut nothing: Vec<u64> = Vec::new();
         let mut everything: Vec<u64> = Vec::new();
         for seed in 0..seeds {
-            let seed = seed * 7919 + index as u64;
+            let seed = seed_for(spec.name, seed);
             let game = play(&bare[index], seed, Bot::Greedy);
             if game.status() == Status::Won {
                 nothing.push(game.progress.score);
@@ -534,7 +544,7 @@ fn in_logic(seeds: u64) -> bool {
     for (index, spec) in bare().into_iter().enumerate() {
         let wins = (0..seeds)
             .filter(|seed| {
-                play(&spec, seed * 7919 + index as u64, Bot::Greedy).status() == Status::Won
+                play(&spec, seed_for(spec.name, *seed), Bot::Greedy).status() == Status::Won
             })
             .count();
         if wins == 0 && index == 0 {
@@ -600,7 +610,7 @@ fn calibrate(bot: Bot, seeds: u64) {
     for (index, spec) in equipped().into_iter().enumerate() {
         let mut used: Vec<u32> = Vec::new();
         for seed in 0..seeds {
-            let game = play(&spec, seed * 7919 + index as u64, bot);
+            let game = play(&spec, seed_for(spec.name, seed), bot);
             if game.status() == Status::Won {
                 used.push(spec.moves.saturating_sub(game.progress.moves_spare));
             }
@@ -609,7 +619,7 @@ fn calibrate(bot: Bot, seeds: u64) {
         let probe = inflate(&spec);
         let mut ceiling: Vec<Vec<u32>> = vec![Vec::new(); probe.objectives.len()];
         for seed in 0..seeds {
-            let game = play(&probe, seed * 7919 + index as u64, bot);
+            let game = play(&probe, seed_for(spec.name, seed), bot);
             for (i, objective) in probe.objectives.iter().enumerate() {
                 ceiling[i].push(objective.reached(&game.progress));
             }
@@ -678,7 +688,7 @@ fn specials_made(bot: Bot, seeds: u64) {
         for seed in 0..seeds {
             let game = play_counting(
                 &spec,
-                seed * 7919 + index as u64,
+                seed_for(spec.name, seed),
                 bot,
                 &mut made,
                 &mut spreads,
@@ -770,7 +780,7 @@ fn run(bot: Bot, seeds: u64) {
         let mut needed: Vec<u32> = vec![0; spec.objectives.len()];
 
         for seed in 0..seeds {
-            let game = play(&spec, seed * 7919 + index as u64, bot);
+            let game = play(&spec, seed_for(spec.name, seed), bot);
             scores.push(game.progress.score);
             for (i, objective) in spec.objectives.iter().enumerate() {
                 reached[i].push(objective.reached(&game.progress));
@@ -1004,7 +1014,7 @@ fn score_report(seeds: u64) {
         // beaten would look excellent here and reward nothing.
         let mut by_spare: Vec<(u32, u64)> = Vec::new();
         for seed in 0..seeds {
-            let game = play(spec, seed * 7919 + index as u64, Bot::Greedy);
+            let game = play(spec, seed_for(spec.name, seed), Bot::Greedy);
             if game.status() != Status::Won {
                 continue;
             }
@@ -1067,6 +1077,28 @@ fn score_report(seeds: u64) {
         "widest spread between a lucky win and an unlucky one: {worst:.1}x on the total, \
          {worst_played:.1}x on the half that was played for"
     );
+}
+
+/// The seed a level is measured on, keyed by its name rather than its place in
+/// the ladder.
+///
+/// The index used to go into the seed, which meant moving a level re-rolled
+/// every board it is read on. Reordering the ladder on 2026-09-28 moved five
+/// levels whose design nobody had touched, and the tuner duly proposed new
+/// budgets for all of them, one by as much as an eighth. None of that was real:
+/// it was the instrument reporting on its own sample. A name is what stays put
+/// when the order changes, so now a level keeps its boards wherever it sits and
+/// a number that moves is a number that meant to.
+///
+/// FNV-1a, the same as the site fingerprint uses, because it needs to be
+/// stable and spread out and nothing else.
+fn seed_for(name: &str, seed: u64) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in name.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash ^ seed.wrapping_mul(7919)
 }
 
 fn percentile<T: Copy + Ord>(values: &mut Vec<T>, p: usize) -> Option<T> {
@@ -1133,7 +1165,24 @@ fn demands(index: usize, last: usize) -> Vec<(&'static str, Vec<Special>)> {
         // The top asks for the whole set, so it is measured holding it.
         return vec![("all five", UNLOCKS.to_vec())];
     }
-    UNLOCKS.iter().map(|special| (special_name(*special), vec![*special])).collect()
+    // A level that names its special is measured holding that one and nothing
+    // else, because that is now the only state the rules promise it from.
+    if let Some(special) = twiddlygems::level::level_needs(index, last + 1) {
+        return vec![(special_name(special), vec![special])];
+    }
+    let mut cases: Vec<(&'static str, Vec<Special>)> =
+        UNLOCKS.iter().map(|special| (special_name(*special), vec![*special])).collect();
+    // The two line clears together, which no rule asks for today but one might.
+    //
+    // Diagnostic only, and it cannot move a budget: the budget is the worst
+    // case, and holding two specials is never worse than holding the better of
+    // them alone. It is here because a rule of the shape "a cross, or both
+    // lines" is the obvious way to tighten a level's gate without asking for
+    // one particular special, and the only thing worth knowing about such a
+    // rule is what it would cost. See the deep chains in `progression.rs`,
+    // which are already written that way.
+    cases.push(("lineH+V", vec![Special::LineH, Special::LineV]));
+    cases
 }
 
 fn special_name(special: Special) -> &'static str {
@@ -1175,7 +1224,7 @@ fn moves_needed(index: usize, specials: &[Special], seeds: u64) -> Vec<Option<u3
     let spec = fitted(index, specials, WIDE);
     (0..seeds)
         .map(|seed| {
-            let game = play(&spec, seed * 7919 + index as u64, Bot::Greedy);
+            let game = play(&spec, seed_for(spec.name, seed), Bot::Greedy);
             (game.status() == Status::Won).then(|| WIDE - game.progress.moves_spare)
         })
         .collect()
@@ -1197,7 +1246,7 @@ fn won_scores(index: usize, specials: &[Special], seeds: u64, moves: u32) -> Vec
     let spec = fitted(index, specials, moves);
     (0..seeds)
         .filter_map(|seed| {
-            let game = play(&spec, seed * 7919 + index as u64, Bot::Greedy);
+            let game = play(&spec, seed_for(spec.name, seed), Bot::Greedy);
             (game.status() == Status::Won).then_some(game.progress.score)
         })
         .collect()
@@ -1231,6 +1280,7 @@ fn tune(seeds: u64) {
         "level", "moves", "upgrade", "silver", "gold", "binding", "was", "check",
     );
 
+    let mut per_case: Vec<(&'static str, Vec<(&'static str, Option<u32>)>)> = Vec::new();
     for index in 0..ladder.len() {
         let wanted = if index == 0 { OPENER_RATE } else { CLEAR_RATE };
         let cases = demands(index, last);
@@ -1240,9 +1290,19 @@ fn tune(seeds: u64) {
         let mut moves = 0;
         let mut binding = "-";
         let mut beyond = Vec::new();
+        // Every case's own budget, kept rather than thrown away with the
+        // maximum. What a level costs depends on which special it is cleared
+        // with, sometimes by a lot, so narrowing the rule to a subset of the
+        // five is a real lever on the budget: drop the worst special from what
+        // the rule accepts and the budget falls to the next one up. Printed
+        // under the table so that lever can be read off rather than guessed
+        // at, which is how `tune -- why` answers it.
+        let mut each: Vec<(&'static str, Option<u32>)> = Vec::new();
         for (name, specials) in &cases {
             let needed = moves_needed(index, specials, seeds);
-            match budget_for(&needed, wanted) {
+            let budget = budget_for(&needed, wanted);
+            each.push((name, budget));
+            match budget {
                 Some(wants) if wants > moves => {
                     moves = wants;
                     binding = name;
@@ -1251,6 +1311,7 @@ fn tune(seeds: u64) {
                 _ => {}
             }
         }
+        per_case.push((ladder[index].name, each));
 
         // Half again, which is the ratio the ladder already used and keeps an
         // upgrade worth finding without making the base budget meaningless.
@@ -1284,7 +1345,7 @@ fn tune(seeds: u64) {
                 let spec = fitted(index, specials, moves);
                 let won = (0..seeds)
                     .filter(|seed| {
-                        play(&spec, seed * 7919 + index as u64, Bot::Greedy).status() == Status::Won
+                        play(&spec, seed_for(spec.name, *seed), Bot::Greedy).status() == Status::Won
                     })
                     .count();
                 won * 100 / seeds.max(1) as usize
@@ -1312,4 +1373,38 @@ fn tune(seeds: u64) {
             note,
         );
     }
+
+    // What each level would cost if its rule named one special rather than
+    // accepting any of them. The budget in the table above is the worst of
+    // these, because every case is a state the rules say the level can be
+    // cleared from; narrowing the rule to exclude the worst drops the budget
+    // to the next one down.
+    println!();
+    println!("what each level costs, special by special (the budget above is the worst of them)");
+    println!(
+        "{:<19}{:>9}{:>9}{:>9}{:>9}{:>9}{:>9}",
+        "level", "lineH", "lineV", "cross", "rainbow", "rocket", "lineH+V",
+    );
+    for (name, cases) in &per_case {
+        // A level with one case has no column to sit under: the ungated ones
+        // ask for nothing, the top of the ladder asks for all five at once,
+        // and a level that names a special asks for that one. The case knows
+        // which it is, so it says so rather than being guessed at from the
+        // fact that there is only one of it.
+        if cases.len() == 1 {
+            println!("{name:<19}{:>45}", format!("{}: {}", cases[0].0, budget_text(cases[0].1)));
+            continue;
+        }
+        print!("{name:<19}");
+        for column in ["lineH", "lineV", "cross", "rainbow", "rocket", "lineH+V"] {
+            let found = cases.iter().find(|(case, _)| *case == column).and_then(|(_, b)| *b);
+            print!("{:>9}", budget_text(found));
+        }
+        println!();
+    }
+}
+
+/// A budget, or a dash where that special never got there at all.
+fn budget_text(budget: Option<u32>) -> String {
+    budget.map_or_else(|| "-".to_string(), |moves| moves.to_string())
 }

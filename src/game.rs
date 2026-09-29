@@ -2564,6 +2564,7 @@ mod tests {
             silver: 0,
             gold: 0,
             layout: None,
+            needs: None,
         }
     }
 

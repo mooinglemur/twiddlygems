@@ -1,5 +1,6 @@
 //! Level definitions and the objectives that end one.
 
+use crate::board::Special;
 use crate::rules::{Rules, MAX_COLORS};
 
 /// A goal the player has to reach before the moves run out.
@@ -121,6 +122,27 @@ impl Progress {
     }
 }
 
+/// The special the level at `index` asks for by name, if it asks for one.
+///
+/// Looked up rather than held in a table of its own, so the declaration lives
+/// beside the level it belongs to and cannot be left pointing at whichever
+/// level was reordered into that slot. The rules are built once per fill, so
+/// walking the ladder here costs nothing that matters.
+///
+/// `ladder` is how many levels the caller is reasoning about, and a length
+/// that is not this ladder's answers nothing. The rules are written against a
+/// level count rather than against the ladder itself, and are checked at
+/// several invented lengths; without this, a made-up ladder of fifty would
+/// find whatever the real one happens to keep at that index and gate a level
+/// nobody designed on a special nobody chose.
+pub fn level_needs(index: usize, ladder: usize) -> Option<Special> {
+    let real = levels();
+    if ladder != real.len() {
+        return None;
+    }
+    real.get(index).and_then(|spec| spec.needs)
+}
+
 /// Everything that makes one level distinct from the next.
 #[derive(Clone, Debug)]
 pub struct LevelSpec {
@@ -150,6 +172,22 @@ pub struct LevelSpec {
     pub gold: u64,
     /// Board shape and jelly placement; a plain rectangle when absent.
     pub layout: Option<&'static [&'static str]>,
+    /// One special this level asks for by name, over and above whatever its
+    /// place on the ladder already asks for.
+    ///
+    /// The band rule deliberately names no particular special, because which
+    /// one a run finds first is the seed's business, and so a level in the
+    /// band has to go down with whichever one turned up. That makes its budget
+    /// the worst special's, which on a level the other four are bad at is a
+    /// budget set by a case nobody enjoys playing.
+    ///
+    /// Naming one here is the way out, and it is an ordinary item gate rather
+    /// than an exception to the rule: the level is simply not in logic until
+    /// that special is found, exactly as a level is not in logic until its
+    /// unlocks are. The budget then follows the special that was named instead
+    /// of the worst of five. See `make balance -- tune`, whose second table
+    /// prints what each level costs special by special.
+    pub needs: Option<Special>,
 }
 
 impl LevelSpec {
@@ -163,7 +201,14 @@ impl LevelSpec {
             silver: 0,
             gold: 0,
             layout: None,
+            needs: None,
         }
+    }
+
+    /// The special this level asks for by name. See [`LevelSpec::needs`].
+    fn needs(mut self, special: Special) -> Self {
+        self.needs = Some(special);
+        self
     }
 
     /// What this level's moves upgrade is worth. See
@@ -438,7 +483,7 @@ pub fn levels() -> Vec<LevelSpec> {
         LevelSpec::new(
             "First Light",
             5,
-            vec![Objective::Color { color: 0, count: 18 }])
+            vec![Objective::Color { color: 1, count: 18 }])
             .with_layout(FIRST_LEVEL)
             .colors(4)
             .palette(&[0, 5, 1, 2])
@@ -461,40 +506,40 @@ pub fn levels() -> Vec<LevelSpec> {
             // under the silver, and no bare run in 138 has reached it. The
             // permission stays because it is Troy's call rather than the
             // measurement's, and the tail is what it always was.
-            .tiers(29_000, 41_500)
+            .tiers(30_000, 41_000)
             .upgrade(2),
         LevelSpec::new("Ruby Hunt", 8, vec![Objective::Color { color: 0, count: 30 }])
             .with_layout(EIGHT_BY_EIGHT)
             .colors(5)
-            .tiers(52_000, 65_500)
+            .tiers(48_000, 65_500)
             .upgrade(4),
         LevelSpec::new(
             "Two Tastes",
-            18,
+            19,
             vec![
                 Objective::Color { color: 1, count: 28 },
                 Objective::Color { color: 3, count: 28 },
             ],
         )
         .with_layout(EIGHT_BY_EIGHT)
-        .tiers(50_000, 61_000)
+        .tiers(49_500, 60_500)
         .upgrade(9),
         // Jelly arrives: now position matters, not just volume.
-        LevelSpec::new("Sticky Middle", 8, vec![Objective::Jelly])
+        LevelSpec::new("Sticky Middle", 7, vec![Objective::Jelly])
             .with_layout(JELLY_PATCH)
-            .tiers(25_500, 34_000)
-            .upgrade(4),
+            .tiers(23_500, 33_500)
+            .upgrade(3),
         // The last level a run can be asked to clear with nothing in hand, and
         // it is the one that asks most of a bare run: bricks take two hits
         // apiece and nothing a bare board can make reaches more than one at a
         // time. Hence a budget well past its neighbours'.
-        LevelSpec::new("Donowall", 41, vec![Objective::Brick])
+        LevelSpec::new("Donowall", 48, vec![Objective::Brick])
             .with_layout(BRICK_COLUMNS)
-            .tiers(115_000, 130_000)
-            .upgrade(20),
+            .tiers(135_000, 150_000)
+            .upgrade(24),
         LevelSpec::new(
             "Tetromino Torture",
-            40,
+            37,
             vec![
                 Objective::Seal { color: 2 },
                 Objective::Seal { color: 3 },
@@ -508,14 +553,14 @@ pub fn levels() -> Vec<LevelSpec> {
         // Four colors and four seal colors, so every clear is on top of a
         // seal and the cascades never stop. The marks are an order up on the
         // levels either side of it for that reason and not by mistake.
-        .tiers(475_000, 630_000)
-        .upgrade(20),
+        .tiers(500_000, 650_000)
+        .upgrade(18),
         LevelSpec::new(
             "Crowded House",
             12,
             vec![Objective::Score(13_000), Objective::Color { color: 4, count: 26 }],
         )
-        .tiers(40_500, 55_500)
+        .tiers(44_500, 54_000)
         .upgrade(6),
         // Its own score objective pins where a bare win lands, so these sat on
         // top of each other until they were measured the way a mark's rule
@@ -524,24 +569,20 @@ pub fn levels() -> Vec<LevelSpec> {
         // the ladder even so.
         LevelSpec::new("Crossroads", 12, vec![Objective::Jelly, Objective::Score(12_000)])
             .with_layout(CROSS)
-            .tiers(29_000, 34_500)
+            .tiers(30_500, 37_500)
             .upgrade(6),
-        LevelSpec::new("Pillars", 54, vec![Objective::Jelly])
+        LevelSpec::new("Pillars", 44, vec![Objective::Jelly])
             .with_layout(PILLARS)
-            .tiers(140_000, 155_000)
-            .upgrade(27),
-        LevelSpec::new("Hourglass", 59, vec![Objective::Jelly])
-            .with_layout(HOURGLASS)
-            .tiers(185_000, 200_000)
-            .upgrade(29),
+            .tiers(120_000, 130_000)
+            .upgrade(22),
         LevelSpec::new("Quarry", 23, vec![Objective::Jelly])
             .with_layout(QUARRY)
-            .tiers(66_000, 76_500)
+            .tiers(66_500, 78_500)
             .upgrade(11),
-        LevelSpec::new("Landslide", 36, vec![Objective::Brick])
+        LevelSpec::new("Landslide", 34, vec![Objective::Brick])
             .with_layout(SLOPE)
-            .tiers(87_500, 100_000)
-            .upgrade(18),
+            .tiers(88_000, 105_000)
+            .upgrade(17),
         // Four colors rather than three, and the third is not a number this
         // level can have.
         //
@@ -556,11 +597,11 @@ pub fn levels() -> Vec<LevelSpec> {
         // nobody could reach.
         //
         // A fourth color is enough to stop the board feeding itself.
-        LevelSpec::new("Refresher", 17, vec![Objective::Seal { color: 2 } ])
+        LevelSpec::new("Refresher", 18, vec![Objective::Seal { color: 2 } ])
             .colors(4)
             .with_layout(EMERALD_ISLES)
-            .tiers(160_000, 205_000)
-            .upgrade(8),
+            .tiers(185_000, 250_000)
+            .upgrade(9),
         LevelSpec::new(
             "Tetromino Tease",
             23,
@@ -579,7 +620,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // quarter of the draw landing on each piece instead of a fifth, over
         // and over, for forty hits. The marks went up by as much as the budget
         // came down, and for the same reason.
-        .tiers(390_000, 525_000)
+        .tiers(360_000, 545_000)
         .upgrade(11),
         LevelSpec::new(
             "The Vault",
@@ -593,8 +634,23 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(VAULT)
         .palette(&[0, 1, 2, 3])
-        .tiers(280_000, 435_000)
+        .tiers(270_000, 385_000)
         .upgrade(5),
+        // Asks for a rocket by name, which is what makes its budget sane.
+        //
+        // A tall narrow board of jelly is the worst case for a line clear: a
+        // horizontal one takes a row that is mostly wall, and a vertical one
+        // gets a single column. Measured, the same level wants 58 moves if all
+        // you have is a vertical clear and 20 if you have a rocket, and under
+        // the band's any-one-of-five rule the budget has to be the 58, because
+        // the rules promise it goes down with whichever special turned up.
+        // Naming the rocket buys back thirty-eight moves and makes the level
+        // about aiming rather than about grinding.
+        LevelSpec::new("Hourglass", 20, vec![Objective::Jelly])
+            .with_layout(HOURGLASS)
+            .needs(Special::Rocket)
+            .tiers(65_000, 79_500)
+            .upgrade(10),
         // The top of the ladder, and the only level measured holding all five
         // specials, because it is the only one whose rule asks for all five.
         // Its marks are the highest in the game by a wide margin: four colors
@@ -612,7 +668,7 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(GAUNTLET)
         .palette(&[0, 1, 2, 3])
-        .tiers(380_000, 565_000)
+        .tiers(350_000, 515_000)
         .upgrade(5),
     ]
 }
