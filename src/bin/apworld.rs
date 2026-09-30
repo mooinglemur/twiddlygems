@@ -33,6 +33,17 @@ use twiddlygems::progression::{
 /// What the game is called wherever Archipelago says its name.
 const GAME: &str = "Twiddly Gems";
 
+/// The Archipelago this world is tested against, which is what it claims as its
+/// floor. Kept in step with `AP_TAG` in the Makefile, which is the checkout the
+/// tests actually run in.
+const AP_TESTED: &str = "0.6.7";
+
+/// Archipelago's container format version, from `container_version` in
+/// `worlds/Files.py`. The zip reader refuses a manifest claiming a number above
+/// its own, so this is the oldest reader that can open the file and it has to
+/// match what [`AP_TESTED`] ships.
+const CONTAINER_VERSION: u32 = 7;
+
 /// Where the Python package lives, which is how a rule names the option class
 /// it depends on.
 ///
@@ -58,6 +69,45 @@ fn main() {
     write(into, "items.json", &item_table(count));
     write(into, "locations.json", &location_table(count));
     write(into, "options.json", &option_table());
+
+    // The manifest, which belongs beside the package rather than inside its
+    // data: Archipelago looks for `archipelago.json` at the root of the world.
+    let package = into.parent().unwrap_or(into);
+    write(package, "archipelago.json", &manifest());
+}
+
+/// What Archipelago reads about the world before it loads any of it.
+///
+/// Required, and until now missing. An unzipped checkout does not care: it
+/// walks the directory, and a world with no manifest simply has no declared
+/// version. A packaged `.apworld` is read by `APWorldContainer` instead, which
+/// wants a manifest and says so in a way easy to miss, logging that the file
+/// "will stop working with Archipelago 0.7.0" while loading it anyway. On
+/// 0.7.0 it raises, and the apworld does not load at all.
+///
+/// Written out here rather than kept by hand for the reason the rest of this
+/// file exists: `game` has to equal the world class's own name, which comes
+/// from this same constant, and Archipelago's packager asserts they match.
+fn manifest() -> Json {
+    Json::Obj(vec![
+        ("game", Json::Str(GAME.to_string())),
+        // The apworld's own version, which is this crate's. Not [`GENERATOR`]:
+        // that one says whether a seed and a client agree about items, and it
+        // is deliberately allowed to stay at zero across releases that change
+        // everything else.
+        ("world_version", Json::Str(env!("CARGO_PKG_VERSION").to_string())),
+        ("authors", Json::Arr(vec![Json::Str("MooingLemur".to_string())])),
+        // The floor is the version this is tested against, which is the only
+        // version anybody can honestly claim. See `AP_TAG` in the Makefile.
+        ("minimum_ap_version", Json::Str(AP_TESTED.to_string())),
+        // The container format, which the zip reader checks against its own and
+        // refuses if this is higher. Deliberately not a maximum_ap_version:
+        // Archipelago's own build pins both ends because it ships worlds inside
+        // a release, and a world distributed on its own should not stop working
+        // the day after an Archipelago release.
+        ("compatible_version", Json::Num(CONTAINER_VERSION)),
+        ("version", Json::Num(CONTAINER_VERSION)),
+    ])
 }
 
 /// Everything a player can set, as the yaml and the solo screen both read it.

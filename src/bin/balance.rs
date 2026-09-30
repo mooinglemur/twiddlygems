@@ -267,7 +267,7 @@ fn tiers(bot: Bot, seeds: u64) {
         "level", "won", "silver", "of won", "gold", "of won"
     );
 
-    for (index, spec) in equipped().into_iter().enumerate() {
+    for spec in equipped() {
         let mut won = 0;
         let (mut silver, mut gold) = (0, 0);
         for seed in 0..seeds {
@@ -312,7 +312,7 @@ fn chains(bot: Bot, seeds: u64) {
     let ladder = bare();
     let mut reached = vec![0u64; (LONGEST_CHAIN + 2) as usize];
     let mut runs = 0u64;
-    for (index, spec) in ladder.iter().enumerate() {
+    for spec in ladder.iter() {
         for seed in 0..seeds {
             let mut game = Game::new(spec.clone(), seed_for(spec.name, seed));
             let mut deepest = 0;
@@ -607,7 +607,7 @@ fn calibrate(bot: Bot, seeds: u64) {
         "level", "moves", "used p50", "used p90", "reached with the full budget"
     );
 
-    for (index, spec) in equipped().into_iter().enumerate() {
+    for spec in equipped() {
         let mut used: Vec<u32> = Vec::new();
         for seed in 0..seeds {
             let game = play(&spec, seed_for(spec.name, seed), bot);
@@ -680,7 +680,7 @@ fn specials_made(bot: Bot, seeds: u64) {
     let mut total_moves = 0u32;
     let mut all_spreads: Vec<u32> = Vec::new();
     let mut all_voices: Vec<u32> = Vec::new();
-    for (index, spec) in equipped().into_iter().enumerate() {
+    for spec in equipped() {
         let mut made = [0u32; 6];
         let mut moves = 0u32;
         let mut spreads: Vec<u32> = Vec::new();
@@ -771,7 +771,7 @@ fn run(bot: Bot, seeds: u64) {
         "level", "moves", "win%", "used", "score", "objectives (reached / needed)"
     );
 
-    for (index, spec) in bare().into_iter().enumerate() {
+    for spec in bare() {
         let moves = spec.moves;
         let mut wins = 0;
         let mut used_when_won: Vec<u32> = Vec::new();
@@ -1004,7 +1004,7 @@ fn score_report(seeds: u64) {
 
     let mut worst = 0.0_f64;
     let mut worst_played = 0.0_f64;
-    for (index, spec) in ladder.iter().enumerate() {
+    for spec in ladder.iter() {
         let mut played = Vec::new();
         let mut finals = Vec::new();
         // Paired with the moves each win had left over, so the table can say

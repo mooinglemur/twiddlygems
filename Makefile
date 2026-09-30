@@ -161,8 +161,14 @@ ap-live: wasm apworld-gen
 ## nothing is reachable from nowhere, that everything is reachable with
 ## everything, and that a real fill can be made. That last one is the
 ## completability gate, done by Archipelago's generator rather than by ours.
+##
+## The modules are named rather than discovered, so a new one has to be added
+## here to run at all. `test_manifest` is about the packaged file rather than
+## the game, and is the check that would have caught the manifest going missing.
 apworld-test: apdata ap-link
-	cd $(AP) && $(CURDIR)/$(VENV)/bin/python -m unittest worlds.twiddlygems.test.test_logic
+	cd $(AP) && $(CURDIR)/$(VENV)/bin/python -m unittest \
+		worlds.twiddlygems.test.test_logic \
+		worlds.twiddlygems.test.test_manifest
 
 ## Roll a real seed, which is the check the unit tests cannot be.
 ##
