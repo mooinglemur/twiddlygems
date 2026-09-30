@@ -66,69 +66,12 @@ TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
 assert TOP_UP_NAMES, "the engine named no item that may top up empty locations"
 
 
-def _build_options() -> type[PerGameCommonOptions]:
-    """Turns the settings table into real Option classes and a dataclass.
-
-    Generated rather than written out because the rules point at these classes
-    by name: a rule that depends on a setting carries the dotted path to its
-    class and imports it, so the class has to exist here, under exactly the
-    name the engine said it would. Writing them by hand would mean two lists to
-    keep in step, which is the arrangement this whole world exists to avoid.
-    """
-    fields: dict[str, type] = {}
-    for setting in SETTINGS:
-        module, _, name = setting["ap_class"].rpartition(".")
-        if module != __name__:
-            raise RuntimeError(
-                f"the engine expects this package at {module}, but it is {__name__}; "
-                "the dotted paths in the rules will not resolve"
-            )
-        body: dict[str, Any] = {
-            "display_name": setting["label"],
-            "__doc__": setting["about"],
-        }
-        # A number for most, and a mapping for a set of weights, which carries
-        # one per line instead.
-        if "default" in setting:
-            body["default"] = setting["default"]
-        if setting["kind"] == "range":
-            body["range_start"] = setting["low"]
-            body["range_end"] = setting["high"]
-            base: type = Range
-        elif setting["kind"] == "weights":
-            # A mapping with a line per kind, which is how Archipelago spells
-            # a set of relative chances. A Counter rather than a plain dict,
-            # so a file naming only some of them reads the rest as nothing:
-            # writing one line is a way of asking for only that kind.
-            body["default"] = {
-                weight["key"]: weight["default"] for weight in setting["weights"]
-            }
-            body["valid_keys"] = [weight["key"] for weight in setting["weights"]]
-            body["min"] = 0
-            body["max"] = setting["most"]
-            base = OptionCounter
-        elif setting["kind"] == "toggle":
-            # Archipelago's own two-value type, which takes true, on, yes and
-            # 1 alike, and their opposites. A two-value Choice would take only
-            # the words the engine wrote down, so `true` in a player's file
-            # would be an error on a line that looks perfectly reasonable.
-            base = Toggle
-        else:
-            for choice in setting["choices"]:
-                body[f"option_{choice['key']}"] = choice["value"]
-            base = Choice
-        option = type(name, (base,), body)
-        globals()[name] = option
-        fields[setting["key"]] = option
-
-    return dataclasses.make_dataclass(
-        "TwiddlyGemsOptions",
-        [(key, option) for key, option in fields.items()],
-        bases=(PerGameCommonOptions,),
-    )
-
-
-TwiddlyGemsOptions = _build_options()
+# The settings live in `options.py`, which is not a matter of taste: WebHost
+# pickles an option value into its database and reads it back through a
+# restricted unpickler that refuses any class outside a module whose name ends
+# in "options". Built here, they were refused, and the world could not have
+# been hosted. Imported after the data above, which that module reads.
+from .options import TwiddlyGemsOptions  # noqa: E402
 
 
 class TwiddlyGemsItem(Item):

@@ -38,12 +38,6 @@ const GAME: &str = "Twiddly Gems";
 /// tests actually run in.
 const AP_TESTED: &str = "0.6.7";
 
-/// Archipelago's container format version, from `container_version` in
-/// `worlds/Files.py`. The zip reader refuses a manifest claiming a number above
-/// its own, so this is the oldest reader that can open the file and it has to
-/// match what [`AP_TESTED`] ships.
-const CONTAINER_VERSION: u32 = 7;
-
 /// Where the Python package lives, which is how a rule names the option class
 /// it depends on.
 ///
@@ -51,7 +45,20 @@ const CONTAINER_VERSION: u32 = 7;
 /// and import it, so the engine has to know where the classes it is pointing
 /// at will be. The package checks this against its own `__name__` when it
 /// loads, so a rename fails loudly here rather than subtly at generation.
-const AP_MODULE: &str = "worlds.twiddlygems";
+/// The `options` on the end is required rather than tidy. Archipelago pickles
+/// an option value into WebHost's database and reads it back through
+/// `Utils.RestrictedUnpickler`, which decides what it is willing to build by
+/// looking at where the class says it lives:
+///
+/// ```text
+/// # pep 8 specifies that modules should have "all-lowercase names"
+/// if module.lower().endswith("options"):
+/// ```
+///
+/// A class anywhere else is refused whatever else is true of it, so these
+/// pointed at the package itself until 2026-09-29 and the world could not have
+/// been hosted.
+const AP_MODULE: &str = "worlds.twiddlygems.options";
 
 fn main() {
     let into = std::env::args().nth(1).unwrap_or_else(|| {
@@ -100,13 +107,17 @@ fn manifest() -> Json {
         // The floor is the version this is tested against, which is the only
         // version anybody can honestly claim. See `AP_TAG` in the Makefile.
         ("minimum_ap_version", Json::Str(AP_TESTED.to_string())),
-        // The container format, which the zip reader checks against its own and
-        // refuses if this is higher. Deliberately not a maximum_ap_version:
-        // Archipelago's own build pins both ends because it ships worlds inside
-        // a release, and a world distributed on its own should not stop working
-        // the day after an Archipelago release.
-        ("compatible_version", Json::Num(CONTAINER_VERSION)),
-        ("version", Json::Num(CONTAINER_VERSION)),
+        // Deliberately no `maximum_ap_version`: Archipelago's own build pins
+        // both ends because it ships worlds inside a release, and a world
+        // distributed on its own should not stop working the day after an
+        // Archipelago release.
+        //
+        // And deliberately no `version` or `compatible_version`, which describe
+        // the container rather than the world. A packaged .apworld needs both
+        // and the source must not carry either, which Archipelago states
+        // ("Do not write these fields yourself") and enforces in
+        // `test.general.test_world_manifest`. They are stamped in at packaging
+        // time by `tools/stamp_manifest.py`, from Archipelago's own numbers.
     ])
 }
 

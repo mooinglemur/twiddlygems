@@ -131,11 +131,22 @@ apdata:
 ## The tests are left out: they import Archipelago's own test bases, which only
 ## exist inside a checkout, so they are for this repository rather than for the
 ## file a player installs.
+##
+## The manifest is stamped with the container's own version fields on the way
+## past. They belong in the zip and must not be in the tree, so the staged copy
+## is where they go: see tools/stamp_manifest.py.
+##
+## That step reads the container version out of Archipelago rather than keeping
+## a copy of it here, so packaging needs the checkout and its venv. Zipping a
+## directory would not, but a zip without those fields is one no Archipelago
+## can open, so it would not be an .apworld either.
 apworld: apdata
+	@test -d $(AP) || { echo "error: no Archipelago checkout. Run 'make ap-setup'."; exit 1; }
 	rm -rf build/apworld
 	mkdir -p build/apworld
 	cp -r $(WORLD) build/apworld/twiddlygems
 	rm -rf build/apworld/twiddlygems/test build/apworld/twiddlygems/__pycache__
+	$(VENV)/bin/python tools/stamp_manifest.py $(AP) build/apworld/twiddlygems
 	cd build/apworld && $(PYTHON) -m zipfile -c ../$(notdir $(APWORLD)) twiddlygems
 	@echo "built $(APWORLD) ($$(wc -c < $(APWORLD) | awk '{printf "%.0f KiB", $$1/1024}'))"
 
@@ -165,10 +176,21 @@ ap-live: wasm apworld-gen
 ## The modules are named rather than discovered, so a new one has to be added
 ## here to run at all. `test_manifest` is about the packaged file rather than
 ## the game, and is the check that would have caught the manifest going missing.
+##
+## Archipelago's own conformance suites are run alongside ours, because they
+## are the ones that catch what a world gets wrong about *being* a world rather
+## than about this game. They test every world in the checkout, which costs a
+## few seconds and is how the option classes were caught claiming to live in
+## `abc`: unpicklable, so unhostable, and invisible to every test here.
 apworld-test: apdata ap-link
 	cd $(AP) && $(CURDIR)/$(VENV)/bin/python -m unittest \
 		worlds.twiddlygems.test.test_logic \
 		worlds.twiddlygems.test.test_manifest
+	cd $(AP) && $(CURDIR)/$(VENV)/bin/python -m unittest \
+		test.general.test_options \
+		test.general.test_world_manifest \
+		test.general.test_names \
+		test.general.test_ids
 
 ## Roll a real seed, which is the check the unit tests cannot be.
 ##
