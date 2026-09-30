@@ -15,17 +15,71 @@ enforces it in `test.general.test_world_manifest`, which fails a world whose
 checked-in manifest defines either. So they belong exactly here: added to the
 copy being packaged, and never to the one in the tree.
 
-The numbers come from Archipelago's own `APWorldContainer.get_manifest()`
-rather than from a constant here, because a constant here is a second copy of
-somebody else's version number and would be wrong the first time they changed
-it. This is the same merge Archipelago's own "Build APWorlds" launcher
-component does; that component is not called directly because it ends by
-opening a file manager, which is not a thing a build should do.
+**Read out of Archipelago's source rather than imported from it.** Importing
+`worlds.Files` means importing the `worlds` package, whose `__init__` loads
+every world in the checkout, and the ones whose optional dependencies are not
+installed log a screenful of tracebacks about jinja2 and zilliandomizer. None
+of that has anything to do with packaging this world, and a build that prints
+errors it does not mean teaches whoever reads it to ignore errors. Both numbers
+are plain literals in one file, so they are read with `ast`: no import, no
+dependencies, nothing loaded, and the values still come from Archipelago rather
+than from a copy kept here.
+
+This is the same merge Archipelago's own "Build APWorlds" launcher component
+does. That component is not called directly because it ends by opening a file
+manager, which is not a thing a build should do.
 """
 
+import ast
 import json
 import sys
 from pathlib import Path
+
+
+def container_versions(checkout: Path) -> tuple[int, int]:
+    """The `version` and `compatible_version` a packaged world declares.
+
+    `version` is the module-level `container_version`. `compatible_version` is
+    the literal `APWorldContainer.get_manifest` writes, which is its own number
+    and deliberately not the same one: the base class writes 5 and the other
+    container kinds write 6, so taking any of those would produce a file that
+    reads as the wrong sort of thing.
+
+    Raises rather than guessing if either has moved. A wrong number here is a
+    file that will not open, reported as "this might be the incorrect world
+    version", so failing at the build is much the kinder end of it.
+    """
+    source = checkout / "worlds" / "Files.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+
+    version: int | None = None
+    compatible: int | None = None
+    for node in tree.body:
+        # container_version: int = 7
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            if node.target.id == "container_version" and node.value is not None:
+                version = ast.literal_eval(node.value)
+        elif isinstance(node, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "container_version" for t in node.targets):
+                version = ast.literal_eval(node.value)
+        # class APWorldContainer: ... manifest["compatible_version"] = 7
+        elif isinstance(node, ast.ClassDef) and node.name == "APWorldContainer":
+            for inner in ast.walk(node):
+                if not isinstance(inner, ast.Assign):
+                    continue
+                for target in inner.targets:
+                    if (
+                        isinstance(target, ast.Subscript)
+                        and isinstance(target.slice, ast.Constant)
+                        and target.slice.value == "compatible_version"
+                    ):
+                        compatible = ast.literal_eval(inner.value)
+
+    if version is None:
+        raise SystemExit(f"could not find container_version in {source}")
+    if compatible is None:
+        raise SystemExit(f"could not find APWorldContainer's compatible_version in {source}")
+    return version, compatible
 
 
 def main(argv: list[str]) -> int:
@@ -40,29 +94,12 @@ def main(argv: list[str]) -> int:
         return 1
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-    # Imported rather than reimplemented, so the container version is whatever
-    # this Archipelago says it is.
-    sys.path.insert(0, str(checkout))
-    from worlds.Files import APWorldContainer  # noqa: E402
+    version, compatible = container_versions(checkout)
+    manifest["version"] = version
+    manifest["compatible_version"] = compatible
 
-    container = APWorldContainer(str(staged))
-    container.game = manifest["game"]
-    stamped = dict(manifest)
-    stamped.update(container.get_manifest())
-
-    # `get_manifest` also re-adds `game`, and would add the version fields the
-    # container happens to be holding, which is none: the world's own
-    # `world_version` and `minimum_ap_version` are strings in the file rather
-    # than attributes on the container, so they survive from `manifest` above.
-    for carried in ("world_version", "minimum_ap_version", "maximum_ap_version", "authors"):
-        if carried in manifest:
-            stamped[carried] = manifest[carried]
-
-    manifest_path.write_text(json.dumps(stamped, indent=2) + "\n", encoding="utf-8")
-    print(
-        f"stamped {manifest_path.name}: container version "
-        f"{stamped['version']}, compatible {stamped['compatible_version']}"
-    )
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    print(f"stamped {manifest_path.name}: container version {version}, compatible {compatible}")
     return 0
 
 

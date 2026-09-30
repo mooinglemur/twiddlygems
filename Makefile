@@ -136,17 +136,19 @@ apdata:
 ## past. They belong in the zip and must not be in the tree, so the staged copy
 ## is where they go: see tools/stamp_manifest.py.
 ##
-## That step reads the container version out of Archipelago rather than keeping
-## a copy of it here, so packaging needs the checkout and its venv. Zipping a
-## directory would not, but a zip without those fields is one no Archipelago
-## can open, so it would not be an .apworld either.
+## That step reads the container version out of Archipelago's source rather
+## than keeping a copy of it here, so packaging needs the checkout. It reads the
+## file rather than importing it, so it needs nothing installed and prints
+## nothing: importing Archipelago loads every world in the checkout, and the
+## ones missing an optional dependency log a screenful of tracebacks that have
+## nothing to do with this one.
 apworld: apdata
 	@test -d $(AP) || { echo "error: no Archipelago checkout. Run 'make ap-setup'."; exit 1; }
 	rm -rf build/apworld
 	mkdir -p build/apworld
 	cp -r $(WORLD) build/apworld/twiddlygems
 	rm -rf build/apworld/twiddlygems/test build/apworld/twiddlygems/__pycache__
-	$(VENV)/bin/python tools/stamp_manifest.py $(AP) build/apworld/twiddlygems
+	$(PYTHON) tools/stamp_manifest.py $(AP) build/apworld/twiddlygems
 	cd build/apworld && $(PYTHON) -m zipfile -c ../$(notdir $(APWORLD)) twiddlygems
 	@echo "built $(APWORLD) ($$(wc -c < $(APWORLD) | awk '{printf "%.0f KiB", $$1/1024}'))"
 
