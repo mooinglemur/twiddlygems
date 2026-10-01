@@ -16,5 +16,9 @@
 # same pass for the same reason: the game it names has to be the one the engine
 # names, and Archipelago's own packager refuses the build if the two disagree.
 /worlds/twiddlygems/archipelago.json
+# The licence the packaged world ships with, copied from the root by `make
+# apdata`. The root one is the copy anybody edits; this is where it has to sit
+# to end up inside the .apworld.
+/worlds/twiddlygems/LICENSE
 # Left behind by running the apworld's tests.
 __pycache__/

@@ -123,8 +123,17 @@ balance:
 ## Not checked in. It is a transformation of the engine and nothing else, so
 ## the engine is the copy worth keeping; everything that needs the file builds
 ## it first, and a checked-in copy could only ever be right or stale.
+##
+## The licence is copied in beside it, rather than kept as a second copy in the
+## tree, so the one at the repository root stays the only one anybody edits.
+## It goes in the world directory and not just into the zip, so that a world
+## packaged by anything other than `make apworld` still carries it: Archipelago's
+## own "Build APWorlds" reads the directory, and its ignore list excludes a
+## manifest and a .gitignore but not a licence.
 apdata:
 	@$(CARGO) run --quiet --release --bin apworld -- $(APDATA)
+	@cp LICENSE $(WORLD)/LICENSE
+	@echo "copied LICENSE into $(WORLD)"
 
 ## Zip the world into an .apworld, which is all an .apworld is.
 ##
