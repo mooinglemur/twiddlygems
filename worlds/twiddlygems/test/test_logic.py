@@ -1,6 +1,6 @@
 """What the rules promise, asked of Archipelago's own state machine."""
 
-from BaseClasses import CollectionState
+from BaseClasses import CollectionState, LocationProgressType
 
 from . import TwiddlyGemsTestBase
 from .. import GAME_DATA, ITEMS_BY_NAME, LOCATIONS, SETTINGS
@@ -388,6 +388,69 @@ class TestTheFloorWinsWhenItIsHigher(TwiddlyGemsTestBase):
         self.assertEqual(self.world.fill_slot_data()["ap_gems_per_level"], 9)
         in_play = [at for at in self.world._locations_in_play() if "gem_index" in at]
         self.assertEqual(len(in_play), len(LEVELS) * 9)
+
+
+class TestNothingBehindTheMarks(TwiddlyGemsTestBase):
+    """A run that asked for nothing worth finding behind silver and gold.
+
+    `WorldTestBase` fills a real multiworld in `setUp`, so every test in this
+    class only runs at all because the fill succeeded. That is most of the
+    point: shutting the marks takes thirty-two locations away from exactly the
+    items that need one, and without the engine raising the Archipelago gem
+    floor to match there would be forty-nine such items and forty-seven places,
+    and generation would refuse the seed rather than deal a worse one.
+    """
+
+    options = {"exclude_gold_and_silver": "on"}
+
+    def test_every_mark_is_excluded(self) -> None:
+        marks = [
+            location
+            for location in self.multiworld.get_locations(self.player)
+            if location.name.endswith(("Silver", "Gold"))
+        ]
+        self.assertEqual(len(marks), len(LEVELS) * 2, "a mark went missing from the world")
+        for location in marks:
+            self.assertEqual(
+                location.progress_type,
+                LocationProgressType.EXCLUDED,
+                f"{location.name} is not excluded, so the fill may still hide progress there",
+            )
+
+    def test_nothing_worth_finding_ended_up_on_one(self) -> None:
+        # What `EXCLUDED` promises, checked against the fill that just ran
+        # rather than trusted. Filler is allowed and expected.
+        for location in self.multiworld.get_locations(self.player):
+            if not location.name.endswith(("Silver", "Gold")):
+                continue
+            item = location.item
+            if item is None:
+                continue
+            self.assertFalse(
+                item.advancement or item.useful,
+                f"{location.name} is holding {item.name}, which this run asked it not to",
+            )
+
+    def test_the_gem_floor_rose_to_cover_them(self) -> None:
+        # The locations have to come from somewhere, and gems are the only
+        # thing the world can make more of. Counted rather than asserted
+        # against a number: what has to hold is that everything which may not
+        # sit on a mark has a place that will take it.
+        important = sum(
+            1
+            for item in self.multiworld.itempool
+            if item.player == self.player and (item.advancement or item.useful)
+        )
+        room = sum(
+            1
+            for location in self.multiworld.get_locations(self.player)
+            if location.progress_type != LocationProgressType.EXCLUDED
+        )
+        self.assertGreaterEqual(
+            room,
+            important,
+            f"{important} items may not sit on a mark and only {room} places will take them",
+        )
 
 
 class TestGemsTurnedUp(TwiddlyGemsTestBase):

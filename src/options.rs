@@ -47,6 +47,20 @@ pub struct Options {
     /// while [`Options::progressive_levels`] is on: with the ladder opening by
     /// clearing there is no such item to have spares of.
     pub spare_unlocks: u32,
+    /// Whether a level's silver and gold may hold anything worth finding.
+    ///
+    /// Off, they are locations like any other. On, nothing that matters is put
+    /// behind them: they still exist, still get checked, and still hand over
+    /// whatever filler landed there, but no progression and nothing useful is
+    /// placed at one. The same thing a player gets by naming every one of them
+    /// in Archipelago's own `exclude_locations`, said once.
+    ///
+    /// It is there because the marks ask a great deal: both of them want all
+    /// five specials and that level's move upgrade, and gold wants the level
+    /// beaten briskly on top. Somebody who wants to play the ladder rather
+    /// than chase scores should not have to beat sixteen levels twice over to
+    /// find out how the story ends.
+    pub exclude_gold_and_silver: u32,
     /// How likely each kind of bonus item is, relative to the others.
     ///
     /// In the order [`crate::progression::CONSUMABLES`] lists them, which
@@ -73,6 +87,9 @@ impl Default for Options {
             inventory_items: 10,
             progressive_levels: 1,
             spare_unlocks: 20,
+            // Off: the marks hold items by default, which is how the game has
+            // always been and what somebody who says nothing should get.
+            exclude_gold_and_silver: 0,
             // Even, which is what they were before there was a way to say
             // otherwise. Fifty rather than one because that is the number a
             // yaml usually carries, and a player reaching for this wants room
@@ -141,6 +158,7 @@ impl Options {
             INVENTORY_ITEMS => Some(self.inventory_items),
             PROGRESSIVE_LEVELS => Some(self.progressive_levels),
             SPARE_UNLOCKS => Some(self.spare_unlocks),
+            EXCLUDE_GOLD_AND_SILVER => Some(self.exclude_gold_and_silver),
             key => weight_at(key).map(|slot| self.inventory_weights[slot]),
         }
     }
@@ -158,6 +176,7 @@ impl Options {
             INVENTORY_ITEMS => self.inventory_items = value,
             PROGRESSIVE_LEVELS => self.progressive_levels = value,
             SPARE_UNLOCKS => self.spare_unlocks = value,
+            EXCLUDE_GOLD_AND_SILVER => self.exclude_gold_and_silver = value,
             GOAL => match Goal::from_value(value) {
                 Some(goal) => self.goal = goal,
                 None => return false,
@@ -183,6 +202,12 @@ pub const INVENTORY_ITEMS: &str = "inventory_items";
 pub const PROGRESSIVE_LEVELS: &str = "progressive_levels";
 /// The key of the setting that decides [`Options::spare_unlocks`].
 pub const SPARE_UNLOCKS: &str = "spare_unlocks";
+/// The key of the setting that decides [`Options::exclude_gold_and_silver`].
+///
+/// Named for what it does rather than for who wants it. A key is read in
+/// yamls that carry none of the comments here, including the ones an options
+/// generator writes, so it has to say what it means on its own.
+pub const EXCLUDE_GOLD_AND_SILVER: &str = "exclude_gold_and_silver";
 
 /// What a yaml calls the four weights together. See [`Kind::Weight`].
 pub const INVENTORY_CHANCE: &str = "inventory_item_chance";
@@ -425,6 +450,26 @@ pub static SETTINGS: &[Setting] = &[
         // allow.
         kind: Kind::Range { low: 0, high: 100, step: 5 },
         default: 20,
+    },
+    Setting {
+        key: EXCLUDE_GOLD_AND_SILVER,
+        label: "Exclude Gold and Silver locations",
+        about: "Silver and Gold locations still have items, but nothing worth \
+                finding is placed there. The same as naming every Silver and \
+                Gold location in Archipelago's own excluded locations.",
+        // Both marks want all five specials and that level's move upgrade, and
+        // gold wants the level beaten briskly on top. That is a lot to ask of
+        // somebody who wants to play the ladder rather than chase scores, and
+        // without this their only way out is to list thirty-two locations by
+        // hand.
+        //
+        // Shutting them takes two locations a level away from the items that
+        // most need one, so the Archipelago gem floor rises to compensate:
+        // see `ap_gems_per_level`. Without that a default run would come out
+        // with forty-nine items that must not sit on a mark and forty-seven
+        // places left to put them, and the generator would refuse the seed.
+        kind: Kind::Toggle,
+        default: 0,
     },
     // The four weights, which a yaml takes as one option and the solo screen
     // does not take at all. In the order the kinds are numbered, because

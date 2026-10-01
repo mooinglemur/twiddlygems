@@ -25,7 +25,8 @@ use twiddlygems::options::{
     MOST_WEIGHT, PROGRESSIVE_LEVELS, SETTINGS, SPARE_UNLOCKS,
 };
 use twiddlygems::progression::{
-    goal, item_name, item_pool, items, location_name, locations, requirement, spare_unlocks, Count,
+    goal, is_mark, item_name, item_pool, items, location_name, locations, requirement,
+    spare_unlocks, Count,
     Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, FIRST_GATED_LEVEL, GENERATOR,
     LONGEST_CHAIN, RELIABLE_CHAIN, SHORTEST_CHAIN,
 };
@@ -407,6 +408,14 @@ fn location_table(levels: usize) -> Json {
                 // absence of one to mean "always".
                 if let Location::ApGem { index, .. } = at {
                     fields.push(("gem_index", Json::Num(index)));
+                }
+                // A score mark says so, because a run may ask for nothing to
+                // be placed behind one and the world has to know which they
+                // are. Said here rather than matched on the name in Python:
+                // the names are for players, and a rule that read them would
+                // break the first time one was reworded.
+                if is_mark(at) {
+                    fields.push(("is_mark", Json::Bool(true)));
                 }
                 // Nothing is held back from the room count any more. The deep
                 // chains were, because the solo fill refused to use them while

@@ -959,8 +959,40 @@ pub fn ap_gems_per_level(levels: usize, options: &Options) -> u32 {
     // matters because this number decides which locations a world has at all,
     // and a world's locations cannot depend on a run's seed.
     // `the_pool_is_the_same_size_whatever_it_rolls` is what holds it.
-    let needed = ap_gems_needed(levels, item_pool(levels, 0, options).len());
+    let pool = item_pool(levels, 0, options);
+    // What must not land on a mark, counted separately from the rest. Filler
+    // may sit on an excluded location quite happily; nothing else may, so the
+    // two have different numbers of places to go and both have to fit.
+    let important = pool.iter().copied().filter(|item| worth_finding(*item)).count();
+    let barred = if options.exclude_gold_and_silver > 0 { marks(levels) } else { 0 };
+    let needed = ap_gems_needed(levels, pool.len(), important, barred);
     options.ap_gems.max(needed).min(AP_GEMS_PER_LEVEL)
+}
+
+/// Whether this is one of a level's two score marks.
+pub fn is_mark(at: Location) -> bool {
+    matches!(at, Location::LevelSilver(_) | Location::LevelGold(_))
+}
+
+/// Whether placing this item somewhere makes that place worth reaching.
+///
+/// The line Archipelago draws for an excluded location, which refuses
+/// advancement and useful alike and takes filler happily. Drawn the same way
+/// here so that a solo run and a multiworld agree about what a shut mark means.
+pub fn worth_finding(item: Item) -> bool {
+    !matches!(item.class(), Class::Filler | Class::Trap)
+}
+
+/// How many locations a ladder's score marks come to, which is the number shut
+/// to anything worth finding when a run asks for that.
+fn marks(levels: usize) -> usize {
+    // Silver and gold, one of each per level. Counted rather than written as
+    // `levels * 2` so that a third mark, or a level without one, is a change
+    // in one place.
+    locations(levels)
+        .iter()
+        .filter(|at| matches!(at, Location::LevelSilver(_) | Location::LevelGold(_)))
+        .count()
 }
 
 /// How many gems a level has to carry for a pool of `pool` items to have
@@ -970,7 +1002,13 @@ pub fn ap_gems_per_level(levels: usize, options: &Options) -> u32 {
 /// that the game cannot currently produce: this is the machinery that the
 /// progressive moves upgrade is waiting on, and it wants checking before the
 /// thing that needs it exists.
-pub fn ap_gems_needed(levels: usize, pool: usize) -> u32 {
+/// `important` is how many of `pool` may not be placed on a barred location,
+/// and `barred` is how many of the ordinary locations are shut to them. Two
+/// constraints rather than one, because they have different numerators and
+/// different denominators: everything has to fit somewhere, and the items that
+/// matter have to fit in the places that will take them. Gems relieve both,
+/// being neither barred nor anything a run can be refused.
+pub fn ap_gems_needed(levels: usize, pool: usize, important: usize, barred: usize) -> u32 {
     if levels == 0 {
         return 0;
     }
@@ -985,7 +1023,12 @@ pub fn ap_gems_needed(levels: usize, pool: usize) -> u32 {
         locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
     // Round up: half a location is no location.
     let short = pool.saturating_sub(elsewhere);
-    (short.div_ceil(levels) as u32).min(AP_GEMS_PER_LEVEL)
+    // And the same sum for the half of the pool that cannot go just anywhere.
+    // Shutting the marks takes two locations a level away from the items that
+    // most need one, so a ladder that fitted comfortably before can be short
+    // of places without a single item having been added.
+    let tight = important.saturating_sub(elsewhere.saturating_sub(barred));
+    (short.max(tight).div_ceil(levels) as u32).min(AP_GEMS_PER_LEVEL)
 }
 
 /// Whether this location is one a run set up this way actually plays over.
@@ -1457,11 +1500,17 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     let mut rng = Rng::new(seed);
     for item in item_pool(levels, seed, options) {
         expand(&rules, &inventory, &mut reached, options);
+        // A run that asked for nothing behind its marks gets that here too,
+        // and not only in a multiworld: the settings are one table and the
+        // solo game plays by the same answers. Filler is still welcome on a
+        // mark, which is the whole of what "nothing worth finding" means.
+        let keep_off_marks = options.exclude_gold_and_silver > 0 && worth_finding(item);
         let open: Vec<usize> = usable
             .iter()
             .filter_map(|at| location_index(*at, levels))
             .filter(|index| held[*index].is_none())
             .filter(|index| reached.has(places[*index]))
+            .filter(|index| !keep_off_marks || !is_mark(places[*index]))
             .collect();
         let Some(&index) = open.get(rng.below(open.len() as u32) as usize) else {
             // Nowhere left to put it. The rules and the pool disagree, which
@@ -2287,6 +2336,85 @@ mod tests {
     }
 
     #[test]
+    fn shutting_the_marks_leaves_nothing_worth_finding_behind_one() {
+        // What the option promises, asked of every run that turned it on. A
+        // mark may still hold filler, which is the whole of what "nothing
+        // worth finding" means: the location is still there and still gets
+        // checked, it just stops being somewhere a fill hides progress.
+        for (levels, seed, options) in every_run() {
+            if options.exclude_gold_and_silver == 0 {
+                continue;
+            }
+            let placed = solo_placement(levels, seed, &options);
+            for (at, held) in locations(levels).into_iter().zip(placed) {
+                let Some(item) = held else { continue };
+                if !is_mark(at) {
+                    continue;
+                }
+                assert!(
+                    !worth_finding(item),
+                    "on a ladder of {levels} dealt from {seed:#x} as {options:?}, {} is \
+                     keeping {}, and this run asked for nothing to be put there",
+                    location_name(at),
+                    item_name(item),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_marks_do_hold_things_when_nobody_asked_them_not_to() {
+        // The other half, and the one that stops the check above passing for
+        // the wrong reason: if the fill never put anything on a mark anyway,
+        // shutting them would prove nothing. Over a default ladder it does.
+        let levels = crate::level::levels().len();
+        let options = Options::default();
+        assert_eq!(options.exclude_gold_and_silver, 0, "this is about the default, which is off");
+        let found: usize = fills()
+            .map(|seed| {
+                let placed = solo_placement(levels, seed, &options);
+                locations(levels)
+                    .into_iter()
+                    .zip(placed)
+                    .filter(|(at, held)| {
+                        is_mark(*at) && held.is_some_and(|item| worth_finding(item))
+                    })
+                    .count()
+            })
+            .sum();
+        assert!(found > 0, "no mark held anything worth finding on any seed, shut or not");
+    }
+
+    #[test]
+    fn shutting_the_marks_makes_room_for_what_can_no_longer_go_there() {
+        // Thirty-two locations stop taking anything worth finding and the
+        // items that wanted them do not go away, so the Archipelago gem floor
+        // has to rise to cover the difference. Without this a default run
+        // comes out with more important items than places to put them, and the
+        // generator refuses the seed rather than dealing a worse one.
+        let levels = crate::level::levels().len();
+        let open = Options::default();
+        let shut = Options { exclude_gold_and_silver: 1, ..open };
+
+        let important =
+            item_pool(levels, 0, &shut).into_iter().filter(|item| worth_finding(*item)).count();
+        let room = locations(levels)
+            .into_iter()
+            .filter(|at| in_play(*at, levels, &shut))
+            .filter(|at| !is_mark(*at))
+            .count();
+        assert!(
+            room >= important,
+            "a run with its marks shut has {important} items that must not sit on one and \
+             only {room} places left to put them",
+        );
+        assert!(
+            ap_gems_per_level(levels, &shut) > ap_gems_per_level(levels, &open),
+            "shutting the marks took thirty-two locations away and asked for no more gems",
+        );
+    }
+
+    #[test]
     fn two_runs_are_dealt_different_progressions() {
         // The point of dealing per run: a second playthrough is a new game,
         // not the same one again. Every seed placing everything in the same
@@ -2668,18 +2796,34 @@ mod tests {
         let elsewhere =
             locations(levels).iter().filter(|at| !matches!(at, Location::ApGem { .. })).count();
         let over = elsewhere + levels * 3 + 1;
+        // Nothing barred, so the second constraint is slack and the answer is
+        // the one the pool size alone asks for.
         assert_eq!(
-            ap_gems_needed(levels, over),
+            ap_gems_needed(levels, over, 0, 0),
             4,
             "a pool of {over} against {elsewhere} places should want four gems a level",
         );
         assert_eq!(
-            ap_gems_needed(levels, elsewhere),
+            ap_gems_needed(levels, elsewhere, 0, 0),
             0,
             "a pool that already fits asked for gems anyway",
         );
         // And it never asks for more than the table has.
-        assert_eq!(ap_gems_needed(levels, 100_000), AP_GEMS_PER_LEVEL);
+        assert_eq!(ap_gems_needed(levels, 100_000, 0, 0), AP_GEMS_PER_LEVEL);
+
+        // The other constraint on its own: a pool that fits everywhere, whose
+        // important half does not fit in what is left once the marks are shut.
+        // Shutting them is what asks for the gems here, not the pool's size.
+        let barred = levels * 2;
+        let important = elsewhere - barred + levels + 1;
+        assert_eq!(
+            ap_gems_needed(levels, elsewhere, important, barred),
+            2,
+            "{important} items that must miss the marks, against {} places that are not one",
+            elsewhere - barred,
+        );
+        // And a run with room to spare still asks for nothing.
+        assert_eq!(ap_gems_needed(levels, elsewhere, elsewhere - barred, barred), 0);
     }
 
     #[test]

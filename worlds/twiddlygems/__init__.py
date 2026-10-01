@@ -25,7 +25,7 @@ import json
 import pkgutil
 from typing import Any
 
-from BaseClasses import Item, ItemClassification, Location, Region
+from BaseClasses import Item, ItemClassification, Location, LocationProgressType, Region
 from Options import Choice, OptionCounter, PerGameCommonOptions, Range, Toggle
 from rule_builder.field_resolvers import FromOption
 from worlds.AutoWorld import World
@@ -133,7 +133,33 @@ class TwiddlyGemsWorld(World):
         elsewhere = sum(
             1 for at in LOCATIONS if "gem_index" not in at and at.get("counts_as_room", True)
         )
-        needed = max(0, -(-(pool - elsewhere) // levels)) if levels else 0
+        short = pool - elsewhere
+
+        # The second constraint, which only bites when a run has asked for
+        # nothing worth finding behind its score marks. Those locations are
+        # still places, so `short` above still counts them, but they stop being
+        # places for anything that matters: the items which may not go there
+        # have thirty-two fewer homes and have not gone away. Archipelago fails
+        # such a seed outright rather than dealing a worse one, with either
+        # "No more spots to place" or "Not enough filler items for excluded
+        # locations", so the gems have to cover it before generation starts.
+        barred = (
+            sum(1 for at in LOCATIONS if at.get("is_mark"))
+            if self.options.exclude_gold_and_silver
+            else 0
+        )
+        # The same line Archipelago draws for an excluded location, which
+        # refuses advancement and useful alike and takes filler happily. Traps
+        # count as filler here for the same reason they do to Archipelago: a
+        # trap is something it is willing to put in a place nobody has to go.
+        important = sum(
+            self._count(item)
+            for item in ITEMS
+            if item["classification"] not in ("filler", "trap")
+        )
+        tight = important - (elsewhere - barred)
+
+        needed = max(0, -(-max(short, tight) // levels)) if levels else 0
         return min(
             max(self.options.ap_gems.value, needed), GAME_DATA["ap_gems_per_level"]
         )
@@ -151,10 +177,20 @@ class TwiddlyGemsWorld(World):
 
     def create_regions(self) -> None:
         menu = Region(self.origin_region_name, self.player, self.multiworld)
-        menu.locations += [
-            TwiddlyGemsLocation(self.player, at["name"], at["id"], menu)
-            for at in self._locations_in_play()
-        ]
+        # A run can ask for nothing worth finding to be placed behind a score
+        # mark, which is the same thing as naming every Silver and Gold in
+        # `exclude_locations` and a great deal less typing. Archipelago's own
+        # EXCLUDED is what says it: the location still exists and is still
+        # checked, and the fill refuses to put anything advancement or useful
+        # there. The engine raises the Archipelago gem floor to match, because
+        # shutting two locations a level takes them away from exactly the items
+        # that need somewhere to go.
+        shut_marks = bool(self.options.exclude_gold_and_silver)
+        for at in self._locations_in_play():
+            location = TwiddlyGemsLocation(self.player, at["name"], at["id"], menu)
+            if shut_marks and at.get("is_mark"):
+                location.progress_type = LocationProgressType.EXCLUDED
+            menu.locations.append(location)
         self.multiworld.regions.append(menu)
 
     def create_item(self, name: str) -> TwiddlyGemsItem:
