@@ -59,9 +59,10 @@ CLASSIFICATIONS = {
 ITEMS_BY_NAME = {item["name"]: item for item in ITEMS}
 
 #: The items there may be more of than the pool asks for. The engine says
-#: which, for the same reason it says everything else here. There is one, and
-#: a world with none of them could not fill its own locations, so this is
-#: checked at import rather than found out during a generation.
+#: which, for the same reason it says everything else here. They are the
+#: noises, which do nothing but make a sound, and a world with none of them
+#: could not fill its own locations, so this is checked at import rather than
+#: found out during a generation.
 TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
 assert TOP_UP_NAMES, "the engine named no item that may top up empty locations"
 
@@ -202,12 +203,19 @@ class TwiddlyGemsWorld(World):
     def get_filler_item_name(self) -> str:
         """What goes in a location with nothing better in it.
 
-        There is exactly one such item and the engine says which, the same way
-        it says everything else here. A spare unlock would be a second answer
-        to a question the rules have settled, and a spare moves upgrade is
-        worth nothing, since a level's upgrade lands whole and once.
+        The engine says which items may be made up like this, the same way it
+        says everything else here. A spare unlock would be a second answer to a
+        question the rules have settled, and a spare moves upgrade is worth
+        nothing, since a level's upgrade lands whole and once. What is left is
+        the noises, every one of which does nothing but make its own sound.
+
+        Drawn rather than taken in turn, and drawn on this slot's own generator
+        rather than the global one, so two slots in a room do not get the same
+        noises in the same order. Archipelago calls this for every leftover
+        location, and a run of thirty identical names in a feed would read as a
+        bug in the fill.
         """
-        return TOP_UP_NAMES[0]
+        return self.random.choice(TOP_UP_NAMES)
 
     def _option(self, ap_class: str) -> int:
         """What one setting is set to, named by the class the engine gave it.

@@ -441,10 +441,12 @@ fn copies(item: Item, levels: usize) -> Copies {
     match item {
         Item::Unlock(_) => Copies::Fixed(Count::Exactly(1)),
         Item::Moves { .. } => Copies::Fixed(Count::Exactly(1)),
-        // None in the pool. It is named and numbered because a run has to be
-        // able to say what it was handed, and it arrives by topping up the
-        // leftover locations rather than by being placed.
-        Item::Filler => Copies::Fixed(Count::Exactly(0)),
+        // None in the pool. They are named and numbered because a run has to
+        // be able to say what it was handed, and they arrive by topping up the
+        // leftover locations rather than by being placed. A count here would
+        // be a count *as well as* the topping up, so a world holding twenty
+        // noises would submit twenty items more than it has places for.
+        Item::Filler(_) => Copies::Fixed(Count::Exactly(0)),
         // The four of these split one total between them. Not a count each,
         // because how many of a kind there are is not a number anybody wrote
         // down: the setting says how many bonus items there are and the kinds
@@ -496,17 +498,20 @@ enum Copies {
 ///
 /// A world submits as many items as it has locations, and this game has more
 /// places to look than things to find, so something has to be made up. Only
-/// one thing may be: a spare unlock would be a second answer to a question the
-/// rules have settled, and a spare moves upgrade is worth nothing at all,
-/// since a level's upgrade lands whole and once.
+/// one *kind* of thing may be: a spare unlock would be a second answer to a
+/// question the rules have settled, and a spare moves upgrade is worth nothing
+/// at all, since a level's upgrade lands whole and once. The noises are that
+/// kind, all of them, and which one a given leftover gets is the slot's own
+/// draw rather than anything written down here.
 ///
 /// Said here rather than guessed at from the name on the Python side, like
-/// everything else about what an item is.
+/// everything else about what an item is. The Python reads the whole list of
+/// these and draws from it, so adding a noise needs nothing done over there.
 fn tops_up(item: Item) -> bool {
     match item {
         Item::Unlock(_) => false,
         Item::Moves { .. } => false,
-        Item::Filler => true,
+        Item::Filler(_) => true,
         // Not yet. How many of these a world holds is going to be asked for
         // in the yaml, and a leftover location quietly making more of them
         // would answer that question a second time.

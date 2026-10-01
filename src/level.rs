@@ -532,7 +532,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // The last level a run can be asked to clear with nothing in hand, and
         // it is the one that asks most of a bare run: bricks take two hits
         // apiece and nothing a bare board can make reaches more than one at a
-        // time. Hence a budget well past its neighbours'.
+        // time. Hence a budget well past its neighbors'.
         LevelSpec::new("Donowall", 48, vec![Objective::Brick])
             .with_layout(BRICK_COLUMNS)
             .tiers(135_000, 150_000)

@@ -95,6 +95,17 @@ export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 }
 /// by in the feed. Archipelago's own four; see `Class` in the engine.
 export const ItemClass = { FILLER: 0, USEFUL: 1, PROGRESSION: 2, TRAP: 3 };
 
+/// Which sort of item it is, which is a different question from what it is
+/// worth: a noise and a bonus item are both things the rules never ask for,
+/// and only one of them makes a sound. See `Item::kind` in the engine.
+export const ItemKind = {
+  UNLOCK: 0,
+  MOVES: 1,
+  NOISE: 2,
+  CONSUMABLE: 3,
+  LEVEL_UNLOCK: 4,
+};
+
 /**
  * The things a run can be handed to spend, by the code the engine numbers them
  * with.
@@ -321,6 +332,39 @@ export class Engine {
    */
   itemClass(index) {
     return this.wasm.tg_item_class(this.handle, index);
+  }
+
+  /**
+   * Which sort of item sits at `index`, as an `ItemKind`, and its one
+   * parameter alongside it.
+   *
+   * The pair that lets the page do something with an item besides print its
+   * name. A noise is what needs it: the sound to play is `NOISES[value]`, and
+   * matching on the name instead would put a second copy of twenty strings
+   * in the sound bank for the engine's list to drift away from.
+   *
+   * An index off the end is an unlock of nothing, so a caller that asks about
+   * an item this build does not have gets an answer that sets nothing off.
+   */
+  itemKind(index) {
+    return this.wasm.tg_item_kind(this.handle, index);
+  }
+
+  itemValue(index) {
+    return this.wasm.tg_item_value(this.handle, index);
+  }
+
+  /**
+   * Where the item numbered `id` sits in `itemNames`, or a number off the end
+   * if this build has no item with that number.
+   *
+   * For the multiworld side. A find of this run's own arrives as an event
+   * carrying an index already; what the server says about an item coming from
+   * somewhere else carries its number, and the page wants to ask the same
+   * questions about both.
+   */
+  itemAtId(id) {
+    return this.wasm.tg_item_at_id(this.handle, id);
   }
 
   /**

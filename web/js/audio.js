@@ -397,8 +397,31 @@ export class Audio {
     } else {
       source = ctx.createOscillator();
       source.type = layer.source ?? 'sine';
-      const hz = noteToHz(noteOverride ?? layer.note ?? A4) * wobble(jitter.frequency);
-      const to = layer.sweep ? noteToHz(layer.sweep.to) * wobble(jitter.frequency) : null;
+      const cents = (apart) => 2 ** (apart / 1200);
+      const settled = noteToHz(noteOverride ?? layer.note ?? A4) * wobble(jitter.frequency);
+      // Three ways to say where a glide goes, and one to say where it comes
+      // from.
+      //
+      // `to` is an absolute pitch and `by` is an interval in cents from
+      // whatever this layer is playing. A layer carrying its own note only
+      // ever needs the first; a voice handed its note from a written figure
+      // needs the second, because a definition that glided to a fixed pitch
+      // would slide every note in the figure to the same place.
+      //
+      // `from` is the other direction: the note is where the glide *ends*, and
+      // it begins that interval away. A player scooping up into a note is
+      // doing something different from one sliding off it, and the difference
+      // is which end the written pitch is: with `from` the note is in tune for
+      // all of itself except the approach.
+      const scooped = layer.sweep?.from !== undefined;
+      const hz = scooped ? settled * cents(layer.sweep.from) : settled;
+      const to = !layer.sweep
+        ? null
+        : scooped
+          ? settled
+          : layer.sweep.by !== undefined
+            ? hz * cents(layer.sweep.by)
+            : noteToHz(layer.sweep.to) * wobble(jitter.frequency);
       const glide = Math.max(0.001, (layer.sweep?.time ?? duration) * span);
 
       source.frequency.setValueAtTime(hz, start);
@@ -417,6 +440,41 @@ export class Audio {
         }
       } else if (to !== null) {
         source.frequency.exponentialRampToValueAtTime(Math.max(1, to), start + glide);
+      }
+
+      // A steady vibrato that starts partway through, which is what a held
+      // note does and what `waver` cannot be talked into.
+      //
+      // `waver` is a random walk *along a glide*: it has no pitch of its own
+      // to sit on and nothing happens once the glide arrives. This is the
+      // opposite shape, and both are wanted: a firework never holds a note,
+      // and a player leans on one and then leans into it.
+      //
+      // `after` is in seconds and is not stretched, the same way an attack is
+      // not. The point of it is that short notes never reach it, so one voice
+      // can play a figure where only the long note wavers.
+      if (layer.vibrato) {
+        const depth = layer.vibrato.depth ?? 25;
+        const rate = layer.vibrato.rate ?? 5.5;
+        const begins = start + Math.max(0, layer.vibrato.after ?? 0);
+        const ends = start + duration;
+        if (begins < ends) {
+          // Pinned first, so the swing below starts from the settled pitch
+          // rather than ramping there from wherever the glide left off.
+          const around = to !== null ? to : hz;
+          source.frequency.setValueAtTime(around, begins);
+          // Eight points a cycle, which is enough that a listener hears a
+          // sine and not a stepped one.
+          const steps = Math.max(2, Math.round((ends - begins) * rate * 8));
+          for (let i = 1; i <= steps; i += 1) {
+            const when = begins + ((ends - begins) * i) / steps;
+            const swing = Math.sin(2 * Math.PI * rate * (when - begins));
+            source.frequency.linearRampToValueAtTime(
+              Math.max(20, around * cents(depth * swing)),
+              when,
+            );
+          }
+        }
       }
       // A layer's own `detune` is in cents and rides on top of the caller's,
       // which is how one voice holds more than one pitch when the note is

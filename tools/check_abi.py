@@ -247,6 +247,51 @@ else:
         ],
     )
 
+# The named filler is a list of names in the engine and a list of sounds in the
+# sound bank, joined by nothing but position: an item event carries the noise's
+# code and the page uses it to index `NOISES`. So the two orders have to match
+# exactly, and the names are carried in the JS table for no reason except to be
+# compared here.
+#
+# This is worth checking rather than trusting because the failure is silent in
+# every direction. A noise inserted in the middle of the engine's list, or a
+# sound moved in the sound bank, leaves both sides building, every item still
+# arriving, every name in the feed still correct, and every sound belonging to
+# the item next door.
+rust_noises = re.search(r"pub fn name\(self\) -> &'static str \{(.*?)\n    \}", progression_source, re.S)
+js_noises = re.search(r"export const NOISES = \[(.*?)\n\];", read(ROOT / "web" / "js" / "sounds.js"), re.S)
+if not rust_noises:
+    problems.append("could not find Noise::name to read the filler item names from")
+elif not js_noises:
+    problems.append("could not find the NOISES table in sounds.js")
+else:
+    engine_names = re.findall(r'Noise::\w+ => "([^"]*)"', rust_noises.group(1))
+    # Single-quoted or double-quoted, since one of these has an apostrophe in
+    # it and prettier flips the quotes around to suit.
+    page_names = re.findall(r"""^\s*(?:\{\s*)?name: (?:'([^']*)'|"([^"]*)")""", js_noises.group(1), re.M)
+    page_names = [single or double for single, double in page_names]
+    if not engine_names:
+        problems.append("Noise::name has no arms, so the filler item names could not be read")
+    elif engine_names != page_names:
+        extra = [name for name in page_names if name not in engine_names]
+        missing = [name for name in engine_names if name not in page_names]
+        if extra or missing:
+            problems.append(
+                f"named filler: the engine has {len(engine_names)} and the sound bank "
+                f"{len(page_names)}; the engine is missing {extra or 'nothing'} and the "
+                f"sound bank is missing {missing or 'nothing'}"
+            )
+        else:
+            at = next(
+                i for i, (a, b) in enumerate(zip(engine_names, page_names)) if a != b
+            )
+            problems.append(
+                f"named filler: the two lists hold the same names in different orders, "
+                f"first differing at {at}, where the engine says {engine_names[at]!r} and "
+                f"the sound bank says {page_names[at]!r}. Every item from there on would "
+                f"play the wrong sound."
+            )
+
 if problems:
     print("ABI mismatch between the engine and the front end:\n", file=sys.stderr)
     for problem in problems:

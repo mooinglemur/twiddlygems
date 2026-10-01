@@ -324,7 +324,26 @@ impl Session {
     /// Filler for an index off the end, because that is the answer that claims
     /// the least about an item this engine does not have.
     pub fn item_class(&self, index: usize) -> Class {
-        items(self.levels.len()).get(index).map_or(Class::Filler, |item| item.class())
+        self.item_at(index).map_or(Class::Filler, |item| item.class())
+    }
+
+    /// The item at `index` in that same list, or `None` for an index off the
+    /// end. What the page asks when it needs to do something with an item
+    /// rather than just print its name: playing a noise's sound, for one.
+    pub fn item_at(&self, index: usize) -> Option<Item> {
+        items(self.levels.len()).get(index).copied()
+    }
+
+    /// Where the item with this number sits in that list.
+    ///
+    /// The other direction, for the one place that has a number rather than an
+    /// index: a multiworld's own announcement of an item says which item by
+    /// id, and the page wants to know the same things about it that it knows
+    /// about a find of its own. `None` for a number this game has no item for,
+    /// which is the ordinary case rather than an error: a room is full of other
+    /// worlds' numbers.
+    pub fn item_index_of_id(&self, id: u32) -> Option<usize> {
+        Item::from_id(id).and_then(|item| item_index(item, self.levels.len()))
     }
 
     /// Every location's name, in the order [`locations`] gives them.
@@ -895,7 +914,7 @@ mod tests {
     use crate::board::{Gem, Pos, Special};
     use crate::game::Phase;
     use crate::options::{setting_index, Goal, PROGRESSIVE_LEVELS};
-    use crate::progression::CONSUMABLES;
+    use crate::progression::{Noise, CONSUMABLES, NOISES};
     use crate::level::Objective;
     use crate::rules::SpecialSet;
 
@@ -1707,7 +1726,8 @@ mod tests {
         // nothing for a level past the end of this ladder. The last is the one
         // a real multiworld could produce, off a longer ladder than ours.
         let past_the_ladder = Item::Moves { level: session.level_count() }.id();
-        for id in [Item::Filler.id() + 1, Special::Archipelago.code() as u32, past_the_ladder] {
+        let past_the_noises = Item::Filler(*NOISES.last().expect("there are noises")).id() + 1;
+        for id in [past_the_noises, Special::Archipelago.code() as u32, past_the_ladder] {
             assert!(!session.receive_id(id), "{id} was taken for an item");
             assert!(session.events().is_empty(), "{id} announced something");
         }
@@ -1739,7 +1759,7 @@ mod tests {
             Item::Unlock(Special::Cross),
             Item::Consumable(Consumable::Rocket),
             Item::Moves { level: 0 },
-            Item::Filler,
+            Item::Filler(Noise::SadTrombone),
         ];
         for item in sent {
             assert!(session.receive_id(item.id()), "{} was refused", item_name(item));
@@ -1776,7 +1796,8 @@ mod tests {
             Item::Moves { level: 0 },
             Item::Consumable(Consumable::Rocket),
             Item::LevelUnlock,
-            Item::Filler,
+            Item::Filler(Noise::DoorKnock),
+            Item::Filler(Noise::DoorKnock),
         ];
         for item in sent {
             session.receive_id(item.id());

@@ -2,10 +2,19 @@
 // loop. All gameplay decisions live in wasm; this file only feeds it time and
 // input and asks what to draw.
 
-import { AIMED, Consumable, EventKind, Special, loadEngine, Phase, Status } from './engine.js';
+import {
+  AIMED,
+  Consumable,
+  EventKind,
+  ItemKind,
+  Special,
+  loadEngine,
+  Phase,
+  Status,
+} from './engine.js';
 import { ArchipelagoClient, State as Link } from './archipelago.js';
 import { Audio } from './audio.js';
-import { STEAMBOAT, VICTORY_PARTS } from './sounds.js';
+import { NOISES, STEAMBOAT, VICTORY_PARTS } from './sounds.js';
 import { GOAL_EFFECT_MS, Renderer } from './render.js';
 import { attachInput } from './input.js';
 import { Hud } from './hud.js';
@@ -86,6 +95,23 @@ const VICTORY_TUNE = 'victory';
  * something the board did, rather than as the screen having its own music.
  */
 const VICTORY_LEAD_IN = 0.35;
+/**
+ * The voice the tune-shaped noises are booked under, and how many may run.
+ *
+ * One name for all of them rather than one each, because what the cap is for
+ * is the mix: two tunes over each other is already a lot and three is mush.
+ * A multiworld can hand over a fistful of items at once, so this is a real
+ * case rather than a defensive one.
+ */
+const NOISE_TUNE = 'noise';
+const NOISE_TUNES_AT_ONCE = 2;
+/**
+ * How long after the find's own chime a noise starts.
+ *
+ * The chime says a location gave something up and the noise is the something,
+ * so they want to be heard in that order. Together they land as one odd sound.
+ */
+const NOISE_LEAD_IN = 0.14;
 /**
  * How many taps on an objective open the testing menu.
  *
@@ -606,6 +632,50 @@ async function boot() {
     }
   };
 
+  /**
+   * The sound a named filler item makes, if the item at this index is one.
+   *
+   * Everything about which sound belongs to which item is split between the
+   * two sides that each own half of it: the engine owns the names and their
+   * order, `NOISES` owns what they sound like, and this is the one line that
+   * joins them. Nothing here reads a name, so renaming an item is free and
+   * reordering the list is caught by `make abi`.
+   *
+   * An index this build has no item for reads as an unlock, so it falls out
+   * here rather than needing a check of its own.
+   */
+  const playNoise = (index) => {
+    if (engine.itemKind(index) !== ItemKind.NOISE) {
+      return;
+    }
+    playNoiseSound(engine.itemValue(index));
+  };
+
+  /**
+   * One named filler sound, by its place in `NOISES`.
+   *
+   * Split from the lookup above so the testing menu can audition one without
+   * having to invent an item for it.
+   */
+  const playNoiseSound = (at) => {
+    const noise = NOISES[at];
+    if (!noise) {
+      return;
+    }
+    if (noise.figure) {
+      audio.sequence(noise.figure.parts, {
+        tempo: noise.figure.tempo,
+        delay: NOISE_LEAD_IN,
+        name: NOISE_TUNE,
+        cap: NOISE_TUNES_AT_ONCE,
+      });
+      return;
+    }
+    for (const play of noise.plays) {
+      audio.play(play.sound, { ...play, delay: NOISE_LEAD_IN + (play.delay ?? 0) });
+    }
+  };
+
   /// Anything the run was given goes in the feed. In solo these come from
   /// clearing levels; under Archipelago the same events will carry what the
   /// multiworld sent, which is why this reads the stream rather than asking
@@ -628,6 +698,7 @@ async function boot() {
       if (said) {
         hud.logItem(said);
         audio.play('sparkle');
+        playNoise(event.value);
       }
     }
   };
@@ -642,6 +713,13 @@ async function boot() {
     // a busy room would otherwise be a metronome.
     if (message.mine) {
       audio.play('sparkle');
+      // And the noise, if that is what arrived. Off the server's own message
+      // rather than off the engine's item event, for the same reason the feed
+      // line is: a reconnection replays every item the room ever sent us, and
+      // through the events that would be a wall of noises about nothing.
+      if (message.itemId !== null && message.itemId !== undefined) {
+        playNoise(engine.itemAtId(message.itemId));
+      }
     }
   };
 
@@ -1135,6 +1213,33 @@ async function boot() {
   };
 
   /**
+   * The testing menu, and the sound list behind it.
+   *
+   * The two are one call because they lead to each other: the sound list hands
+   * the switches back when it opens and returns them when it closes, so a
+   * tester can set up a clear, go and listen to something, and come back to
+   * find the clear still armed.
+   *
+   * The sounds are auditioned here rather than in a panel of their own because
+   * this is where a tester already is, and because the page is the side that
+   * knows what a noise sounds like: the HUD is handed a list of names and
+   * hands back which one was pressed.
+   */
+  const openDebug = (picked = []) => {
+    hud.showDebug(DEBUG_CHOICES, {
+      remote: mode === 'multiworld',
+      picked,
+      onClose: applyDebug,
+      onSounds: (stillPicked) => {
+        hud.showAudition(
+          NOISES.map((noise) => noise.name),
+          { onPlay: playNoiseSound, onBack: () => openDebug(stillPicked) },
+        );
+      },
+    });
+  };
+
+  /**
    * Tapping an objective twenty times over opens the testing menu.
    *
    * Counted on the list rather than on a chip, because the chips are rebuilt
@@ -1157,7 +1262,7 @@ async function boot() {
         return;
       }
       objectiveTaps = 0;
-      hud.showDebug(DEBUG_CHOICES, { remote: mode === 'multiworld', onClose: applyDebug });
+      openDebug();
     },
     { capture: true },
   );

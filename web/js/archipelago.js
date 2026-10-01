@@ -770,6 +770,13 @@ export class ArchipelagoClient {
       // feed of what this run is doing or in the room's chatter.
       ours: packet.receiving === this.slot || packet.item?.player === this.slot,
       mine: packet.receiving === this.slot,
+      // In this game's own numbering, for the page to ask the engine what it
+      // was. Only an item arriving carries one; a chat line or a join has no
+      // item at all. The page uses it to play the sound a named filler item
+      // makes, which has to come off a live message rather than off the
+      // engine's own event: a reconnection replays every item the room ever
+      // sent, and that would be a wall of noises nobody asked for.
+      itemId: packet.item ? Number(packet.item.item) - this.base : null,
     });
   }
 

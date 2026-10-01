@@ -91,7 +91,7 @@ const { result } = await send('Runtime.evaluate', {
   expression: `
   (async () => {
     const { Audio } = await import('./js/audio.js');
-    const { SOUNDS, RIFFLE, STEAMBOAT, VICTORY_PARTS } = await import('./js/sounds.js');
+    const { SOUNDS, NOISES, RIFFLE, STEAMBOAT, VICTORY_PARTS } = await import('./js/sounds.js');
     const RATE = 48000;
 
     // Renders \`count\` copies of a sound fired at once, through the real chain.
@@ -127,7 +127,18 @@ const { result } = await send('Runtime.evaluate', {
       // list of parts, which is what \`Audio.sequence\` takes. Everything
       // measured below is the same either way, which is the point of putting
       // it through the same function.
-      if (Array.isArray(name)) {
+      // A named filler item rather than a single sound: \`name\` may instead be
+      // one of the \`NOISES\` entries, which is a handful of plays or a written
+      // figure. Put through the same function as everything else, because a
+      // measurement that only ever saw these would have nothing to compare
+      // them against.
+      if (name && name.plays) {
+        for (const play of name.plays) {
+          audio.play(play.sound, play);
+        }
+      } else if (name && name.figure) {
+        audio.sequence(name.figure.parts, { tempo: name.figure.tempo, name: 'noise' });
+      } else if (Array.isArray(name)) {
         audio.sequence(name, { tempo: STEAMBOAT.tempo, ...opts });
       } else {
         for (let i = 0; i < count; i += 1) {
@@ -161,9 +172,24 @@ const { result } = await send('Runtime.evaluate', {
         previous = mono;
       }
 
-      // Brightness at the start against brightness at the end. A sound whose
-      // filter sweeps down gets darker as it fades; one that simply stops does
-      // not. This is what separates a poof from a click with a long tail.
+      // Zero crossings per second over a window, early against late.
+      //
+      // **This is a brightness proxy for noise and a pitch reading for
+      // anything pitched**, and the difference matters. A hiss crosses zero
+      // more often the brighter it is, so a filter closing on noise shows up
+      // here and that is what separates a poof from a click with a long tail.
+      // A harmonic wave crosses zero twice a cycle whatever its harmonics are
+      // doing, so on a sawtooth this measures the fundamental: opening a
+      // lowpass from 300Hz to 1700Hz over a note moves it by about 2%, while
+      // scooping that note up a fifth moves it by 35%. Use \`edge\` below for
+      // brightness on anything with a pitch.
+      //
+      // It is also a rate over the whole window, so silence inside the window
+      // dilutes it. The busy signal is two sines that sum to 1240 crossings a
+      // second while they sound, and reads 743, because its early third is
+      // 832ms containing 500ms of tone: 1240 times 0.6 is 744. Nothing is
+      // wrong with the sound. For anything intermittent this figure is the
+      // pitch multiplied by the duty cycle.
       const band = (from, to) => {
         let n = 0, prev = 0;
         for (let i = from; i < to; i += 1) {
@@ -173,11 +199,41 @@ const { result } = await send('Runtime.evaluate', {
         }
         return Math.round(n / (Math.max(1, to - from) / RATE));
       };
+
+      // Brightness that works on a pitched sound: how fast the waveform moves
+      // against how big it is.
+      //
+      // The mean step between samples divided by the mean level. A first
+      // difference is a high-pass, so this rises with harmonic content where
+      // counting zero crossings does not: a sine's steps are proportional to
+      // its frequency, and a sawtooth's are dominated by its highest surviving
+      // harmonic, so opening a lowpass over a note shows up directly. Scaled
+      // by level so it reads the timbre rather than the envelope.
+      //
+      // Written for the muted trombone, whose whole character is a filter
+      // opening across a held note, and which the crossing count said was
+      // doing nothing at all.
+      const edge = (from, to) => {
+        let steps = 0, size = 0;
+        for (let i = Math.max(1, from); i < to; i += 1) {
+          const now = left[i] + right[i];
+          const was = left[i - 1] + right[i - 1];
+          steps += Math.abs(now - was);
+          size += Math.abs(now);
+        }
+        return size > 0 ? Number((steps / size).toFixed(4)) : 0;
+      };
       const third = Math.max(1, Math.floor(last / 3));
 
       // How many separate strikes the sound contains, counted as rising edges
       // of a short-window envelope. One knock or two is audible at a glance but
       // not otherwise checkable, and "two rapid hits" is the whole brief.
+      //
+      // Only trustworthy well above 300Hz. The window is 3ms, which is shorter
+      // than one cycle of anything lower, so a low sine's own waveform shows up
+      // as the envelope rising and falling and the count comes out high: the
+      // door knock is three strikes and reads as five or six. Fine for the
+      // microwave at 2.1kHz, which is the only one asserted on.
       let hitEnvelope = [];
       const hits = (() => {
         const win = Math.max(1, Math.floor(RATE * 0.003));
@@ -208,7 +264,7 @@ const { result } = await send('Runtime.evaluate', {
       // Measured cycle by cycle rather than by counting crossings in a window:
       // the gap between successive upward zero crossings is the instantaneous
       // period, which resolves a few percent of pitch change. Each period is
-      // compared against a wide average of its neighbours, so a steady glide
+      // compared against a wide average of its neighbors, so a steady glide
       // reads near zero however fast it falls.
       const wobble = (() => {
         // Crossings are interpolated between samples. Snapping them to whole
@@ -228,12 +284,18 @@ const { result } = await send('Runtime.evaluate', {
         for (let i = 1; i < marks.length; i += 1) {
           periods.push(marks[i] - marks[i - 1]);
         }
-        // Each period is compared against the midpoint of two far neighbours
+        // Each period is compared against the midpoint of two far neighbors
         // rather than an average of everything between. Averaging a window
         // narrower than a few waver steps partly follows the waver and hides
         // it; taking the midpoint of the endpoints cancels the glide's local
         // slope instead, and leaves the wobble behind.
         const REACH = 110;
+        // Zero here means "too short to say", not "holds its pitch". It takes
+        // a couple of hundred cycles in the last two thirds to measure this at
+        // all, which a low sound lasting a third of a second does not have:
+        // the boing reads 0 and has one of the deepest wavers in the bank.
+        // Anything asserting on this number has to be a sound long enough to
+        // produce one.
         if (periods.length < REACH * 2 + 3) return 0;
         let deviation = 0, counted = 0;
         for (let i = REACH; i < periods.length - REACH; i += 1) {
@@ -246,8 +308,86 @@ const { result } = await send('Runtime.evaluate', {
         return counted ? Number((deviation / counted).toFixed(4)) : 0;
       })();
 
+      // How far the pitch moves over the back of the sound, as a fraction of
+      // its own period.
+      //
+      // A different question from \`wobble\`, and it needs a different
+      // instrument. \`wobble\` compares each cycle against far neighbors to
+      // cancel a glide's slope, and that also cancels a *periodic* swing whose
+      // cycles divide into the reach: a 90 cent vibrato at 6Hz on a 220Hz note
+      // puts its neighbors exactly three vibrato cycles away, so they sit at
+      // the same phase, the midpoint lands on the current value and the whole
+      // thing reads 0.014, barely above a dead steady note.
+      //
+      // This is the plain spread of the instantaneous period, which has
+      // nothing to cancel and sees a vibrato for what it is. It sees a glide
+      // too, so it only means something between two renders that glide alike.
+      const swing = (() => {
+        const marks = [];
+        let was = 0;
+        for (let i = third; i < last; i += 1) {
+          const v = left[i] + right[i];
+          if (v > 0 && was <= 0 && v !== was) {
+            marks.push(i - 1 + -was / (v - was));
+          }
+          was = v;
+        }
+        const periods = [];
+        for (let i = 1; i < marks.length; i += 1) {
+          periods.push(marks[i] - marks[i - 1]);
+        }
+        if (periods.length < 8) return 0;
+        const mean = periods.reduce((sum, p) => sum + p, 0) / periods.length;
+        if (mean <= 0) return 0;
+        const spread =
+          periods.reduce((sum, p) => sum + (p - mean) ** 2, 0) / periods.length;
+        return Number((Math.sqrt(spread) / mean).toFixed(4));
+      })();
+
+      // How far the sound comes back up after it has fallen.
+      //
+      // The largest ratio of any later stretch to the quietest stretch before
+      // it, taken over block averages after the loudest moment, so the noise
+      // in an envelope does not read as a revival. 1 means it only ever gets
+      // quieter. Anything well above means the sound dies away and returns,
+      // which for a continuous one is a fault and for a deliberately repeating
+      // one is the whole point, so what this number means depends on the sound
+      // and only the continuous ones are asserted on.
+      //
+      // Written after the Surf went silent at six seconds and came back at
+      // forty percent of its peak at seven, which Troy heard immediately and
+      // no check here would have.
+      const revive = (() => {
+        if (hitEnvelope.length < 16) return 1;
+        let loudest = 0;
+        for (let i = 0; i < hitEnvelope.length; i += 1) {
+          if (hitEnvelope[i] > hitEnvelope[loudest]) loudest = i;
+        }
+        const tail = hitEnvelope.slice(loudest);
+        const size = Math.max(1, Math.floor(tail.length / 16));
+        const means = [];
+        for (let i = 0; i + size <= tail.length; i += size) {
+          let sum = 0;
+          for (let j = i; j < i + size; j += 1) sum += tail[j];
+          means.push(sum / size);
+        }
+        if (means.length < 3) return 1;
+        // Floored at a hundredth of the peak, which is far below anything
+        // audible under a game. Without it a return from true silence divides
+        // by nothing and the number is meaningless rather than large.
+        let quietest = Math.max(means[0], 0.01);
+        let worst = 1;
+        for (let i = 1; i < means.length; i += 1) {
+          worst = Math.max(worst, means[i] / quietest);
+          quietest = Math.max(0.01, Math.min(quietest, means[i]));
+        }
+        return Number(worst.toFixed(2));
+      })();
+
       return {
         peak: Number(peak.toFixed(4)),
+        swing,
+        revive,
         // Averaged over the sound's own extent, not the whole render. Dividing
         // by the buffer made a long tone in a long render look quieter than a
         // tick in a short one, which is a property of the measurement and not
@@ -268,6 +408,8 @@ const { result } = await send('Runtime.evaluate', {
         wobble,
         early: band(0, third),
         late: band(third * 2, last),
+        edgeEarly: edge(0, third),
+        edgeLate: edge(third * 2, last),
         voices: audio.started,
       };
     }
@@ -345,6 +487,87 @@ const { result } = await send('Runtime.evaluate', {
     // The control uses whatever the shipped rocket uses, so the check is about
     // the real sound rather than a number picked to pass.
     const shipped = SOUNDS.rocket.layers.find((l) => l.waver)?.waver ?? { depth: 0.05, rate: 17 };
+    // A control for \`sweep.by\`, the one new thing the named filler needed: a
+    // voice handed its note from a figure and sliding down from wherever it
+    // was put, since a fixed destination would slide every note in a figure to
+    // the same pitch. The same note both times, so the only difference is the
+    // slide, and a slide that silently did nothing would look exactly like a
+    // trombone that happened to be playing one note.
+    const slide = (by) => ({
+      slider: {
+        gain: 0.3,
+        duration: 0.5,
+        layers: [
+          {
+            source: 'sawtooth',
+            ...(by === null ? {} : { sweep: { by, time: 0.42 } }),
+            filters: [{ type: 'lowpass', frequency: 1500, q: 1.2 }],
+            env: { attack: 0.03, hold: 0.2, decay: 0.3 },
+          },
+        ],
+      },
+    });
+    const oneNote = [{ sound: 'slider', notes: [['A3', 0, 1]] }];
+    const flatNote = await render(oneNote, 1, 2, false, { tempo: 96 }, slide(null));
+    const slidNote = await render(oneNote, 1, 2, false, { tempo: 96 }, slide(-700));
+
+    // Controls for the two things the muted trombone needed, measured the same
+    // way: one long note on a bare voice, with and without the feature.
+    //
+    // \`sweep.from\` arrives *on* the written note instead of leaving it, so
+    // the early pitch is below the late one, where \`sweep.by\` is the other way
+    // round and no sweep at all is flat. Three renders rather than two,
+    // because "the pitch rises" means nothing without knowing what the same
+    // voice does when it is told to fall.
+    const scooper = (sweep) => ({
+      scooper: {
+        gain: 0.3,
+        duration: 1,
+        layers: [
+          {
+            source: 'sawtooth',
+            ...(sweep ? { sweep } : {}),
+            filters: [{ type: 'lowpass', frequency: 1400, q: 1 }],
+            env: { attack: 0.02, hold: 0.7, decay: 0.2 },
+          },
+        ],
+      },
+    });
+    const held = [{ sound: 'scooper', notes: [['A3', 0, 1]] }];
+    const scoopFlat = await render(held, 1, 3, false, { tempo: 60 }, scooper(null));
+    const scoopUp = await render(held, 1, 3, false, { tempo: 60 }, scooper({ from: -700, time: 0.5 }));
+    const scoopDown = await render(held, 1, 3, false, { tempo: 60 }, scooper({ by: -700, time: 0.5 }));
+
+    // And \`vibrato\`, which starts partway through and runs to the end. The
+    // wobble figure is read over the last two thirds, which is where the
+    // vibrato is and where the control is dead steady, so on this voice the
+    // number is the vibrato and nothing else. A real periodic swing, unlike
+    // the \`waver\` random walk, and deep enough here to be unmistakable.
+    const vibrato = (on) => ({
+      holder: {
+        gain: 0.3,
+        duration: 1,
+        layers: [
+          {
+            source: 'sawtooth',
+            ...(on ? { vibrato: { depth: 90, rate: 6, after: 0.4 } } : {}),
+            filters: [{ type: 'lowpass', frequency: 1400, q: 1 }],
+            env: { attack: 0.02, hold: 1.4, decay: 0.3 },
+          },
+        ],
+      },
+    });
+    const steadyHeld = [{ sound: 'holder', notes: [['A3', 0, 1]] }];
+    const noVibrato = await render(steadyHeld, 1, 3, false, { tempo: 60 }, vibrato(false));
+    const withVibrato = await render(steadyHeld, 1, 3, false, { tempo: 60 }, vibrato(true));
+
+    // The shipped trombone on one long note, so the plunger opening can be
+    // seen. Within the figure it cannot: the brightness figures are thirds of
+    // the whole four-note phrase, and the wah happens inside each note.
+    const wahNote = await render([{ sound: 'brass', notes: [['A3', 0, 1]] }], 1, 3, false, {
+      tempo: 60,
+    });
+
     const steadyTone = await render('tone', 1, 1.5, false, {}, glide(false));
     const waveryTone = await render('tone', 1, 1.5, false, {}, glide(shipped));
     // Deliberately absurd, to tell a broken feature from an insensitive ruler.
@@ -488,6 +711,122 @@ const { result } = await send('Runtime.evaluate', {
       steadyTone,
       waveryTone,
       wildTone,
+      flatNote,
+      slidNote,
+      scoopFlat,
+      scoopUp,
+      scoopDown,
+      noVibrato,
+      withVibrato,
+      wahNote,
+      /**
+       * Wavering layers whose glide ends well before the layer does.
+       *
+       * Read off the definitions, not out of a render: this is arithmetic on
+       * the numbers that make the sound, so it is exact where a measurement of
+       * it is not. See the check that reads this.
+       *
+       * A third is the line. Every wavering layer that ships settles for the
+       * last 3% to 16% of itself, during the decay, which is both deliberate
+       * and inaudible; the fault this is here for sat still for 57%.
+       */
+      stillWavers: (() => {
+        const found = [];
+        for (const [name, sound] of Object.entries(SOUNDS)) {
+          const layers = [...(sound.layers ?? []), ...(sound.voice ? [sound.voice] : [])];
+          layers.forEach((layer, at) => {
+            if (!layer.waver) return;
+            const e = layer.env ?? {};
+            // The same sum \`playLayer\` makes, and the same defaults.
+            const env = (e.attack ?? 0.002) + (e.hold ?? 0) + (e.decay ?? 0.1);
+            const glide = layer.sweep?.time ?? env;
+            const still = env - glide;
+            if (still / env > 1 / 3) {
+              found.push({
+                sound: name,
+                layer: at,
+                glide: Number(glide.toFixed(3)),
+                env: Number(env.toFixed(3)),
+                still: Number(still.toFixed(3)),
+                fraction: Number((still / env).toFixed(3)),
+              });
+            }
+          });
+        }
+        return found;
+      })(),
+      /**
+       * Every named filler sound, measured the way the page plays it.
+       *
+       * Twenty-six of these and nobody is going to listen to all of them on
+       * every build, so what is checked here is what a measurement can settle
+       * and an ear cannot be relied on to: that each one makes a sound at all,
+       * and that none of them is loud enough to meet the limiter on its own.
+       * A sound whose name was mistyped, or whose layers all cancel, is
+       * silence, and silence is the one failure that looks exactly like an
+       * item that does nothing on purpose.
+       *
+       * Rendered one at a time rather than together, because what each one
+       * costs on its own is the question. How they stack is not a question
+       * here: these arrive one per check, and the two paths that play them
+       * both go through one item.
+       */
+      noises: await (async () => {
+        // The whole bank with the per-play randomness taken out, for the phone
+        // comparison below only.
+        //
+        // The pair has to be two renders of the *same* sound or the ratio
+        // measures the dice instead of the filter. Measured against two live
+        // renders, the door knock came out at 54% one run and 36% the next,
+        // which is the jitter on its pitch moving a 96Hz fundamental around a
+        // 200Hz cutoff, not anything about a phone. Same trap the boom and the
+        // thud figures already avoid, a few hundred lines up.
+        const steady = JSON.parse(JSON.stringify(SOUNDS));
+        for (const sound of Object.values(steady)) {
+          delete sound.scatter;
+          for (const layer of [...(sound.layers ?? []), ...(sound.voice ? [sound.voice] : [])]) {
+            delete layer.jitter;
+          }
+        }
+        // Long enough for the longest of them with room to spare. The surf
+        // has a 15.3s envelope, and a window shorter than the sound measures
+        // the window: the tail reads as exactly the buffer length and the
+        // average is taken over a sound that was cut off, which makes a long
+        // quiet one look like a short loud one. It also hides a revival that
+        // happens past the end of the window, which is the one thing the
+        // \`revive\` figure is here to catch.
+        const WINDOW = 17;
+        const out = [];
+        for (const noise of NOISES) {
+          // What ships, played the way the page plays it, and the loudest of
+          // several goes.
+          //
+          // A peak here is a random variable like a stack's is, for the same
+          // two reasons: a few of these are several plays at once, and every
+          // oscillator starts on a scattered phase. Measured once, the wind
+          // chime came back anywhere between 0.33 and 0.55 across runs, so a
+          // threshold read against one draw is a threshold that fires on a
+          // Tuesday. What the limiter check below wants to know is whether a
+          // sound *can* clip, so the worst of a handful is the honest answer.
+          const full = await worst(noise, 1, WINDOW, 4);
+          // And the steady pair, whole and then through what a phone speaker
+          // throws away. Worth knowing per sound rather than in general: the
+          // bank runs from a door knock with a 96Hz fundamental to a cricket
+          // at 4.4kHz, so how much of one survives a small speaker is a
+          // property of that one sound. Printed and not judged, because a
+          // breaking wave is allowed to be mostly bass; what it is for is so
+          // Troy can see what a sound costs on a phone while he is deciding
+          // whether he likes it on a desk.
+          const wide = await render(noise, 1, WINDOW, false, {}, steady);
+          const thin = await render(noise, 1, WINDOW, true, {}, steady);
+          out.push({
+            name: noise.name,
+            ...full,
+            through: Number((thin.rmsBuffer / Math.max(1e-9, wide.rmsBuffer)).toFixed(3)),
+          });
+        }
+        return out;
+      })(),
     };
   })()
   `,
@@ -535,13 +874,34 @@ for (const [label, key] of [
   ['glide plain', 'steadyTone'],
   ['glide waver', 'waveryTone'],
   ['glide wild', 'wildTone'],
+  ['slide none', 'flatNote'],
+  ['slide -700c', 'slidNote'],
+  ['held plain', 'scoopFlat'],
+  ['scoop up', 'scoopUp'],
+  ['slide off', 'scoopDown'],
+  ['held steady', 'noVibrato'],
+  ['held vibrato', 'withVibrato'],
+  ['brass 1 note', 'wahNote'],
 ]) {
   const s = stats[key];
   console.log(
     `  ${label.padEnd(11)} peak ${String(s.peak).padEnd(7)} rms ${String(s.rms).padEnd(8)} ` +
       `from ${String(s.onsetMs).padStart(5)}ms  tail ${String(s.ms).padStart(6)}ms  ` +
       `bright ${String(s.early).padStart(5)} -> ` +
-      `${String(s.late).padStart(5)}  wobble ${String(s.wobble).padEnd(6)} voices ${s.voices}`,
+      `${String(s.late).padStart(5)}  edge ${String(s.edgeEarly).padStart(6)} -> ` +
+      `${String(s.edgeLate).padStart(6)}  swing ${String(s.swing).padEnd(6)}`,
+  );
+}
+
+console.log('\nthe named filler, one at a time:');
+for (const s of stats.noises) {
+  console.log(
+    `  ${s.name.padEnd(20)} peak ${String(s.peak).padEnd(7)} rms ${String(s.rms).padEnd(8)} ` +
+      `from ${String(s.onsetMs).padStart(5)}ms  tail ${String(s.ms).padStart(6)}ms  ` +
+      `bright ${String(s.early).padStart(5)} -> ${String(s.late).padStart(5)}  ` +
+      `hits ${String(s.hits).padStart(2)}  ` +
+      `back ${String(s.revive).padStart(5)}  ` +
+      `phone ${String(Math.round(s.through * 100)).padStart(3)}%`,
   );
 }
 
@@ -875,6 +1235,304 @@ if (stats.hushed.ratio > 0.02) {
   stop();
   process.exit(1);
 }
+
+// `sweep.by` is the one piece of new machinery the named filler needed, and a
+// slide that quietly did nothing would leave the trombone sounding like an
+// organ: still a sound, still the right notes, nothing obviously broken. The
+// same note with and without a seven-semitone slide, so the only thing that
+// can move the late brightness is the slide.
+if (stats.slidNote.late >= stats.flatNote.late * 0.9) {
+  console.error(
+    `\nFAIL: a note told to slide down 700 cents ends at ${stats.slidNote.late} against the ` +
+      `${stats.flatNote.late} of the same note not sliding. \`sweep.by\` is not gliding the ` +
+      `pitch, so every voice handed its note from a figure is holding it flat.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// Every named filler sound has to be a sound.
+//
+// Silence is the failure that hides: an item whose sound name is mistyped, or
+// whose layers cancel, arrives with its name in the feed and does nothing,
+// which is exactly what an item that does nothing on purpose looks like.
+const silent = stats.noises.filter((noise) => noise.peak < 0.002);
+if (silent.length > 0) {
+  console.error(
+    `\nFAIL: ${silent.length} of the ${stats.noises.length} named filler sounds are silent: ` +
+      `${silent.map((noise) => `${noise.name} (${noise.peak})`).join(', ')}.`,
+  );
+  stop();
+  process.exit(1);
+}
+// And none of them may meet the limiter on its own. These arrive one at a
+// time, so unlike a pile of pops there is nothing here for the limiter to be
+// catching: one of these over the threshold is simply too loud.
+const tooLoud = stats.noises.filter((noise) => noise.peak >= LIMITER_THRESHOLD);
+if (tooLoud.length > 0) {
+  console.error(
+    `\nFAIL: ${tooLoud.length} named filler sounds reach the limiter on their own, against ` +
+      `${LIMITER_THRESHOLD}: ${tooLoud.map((n) => `${n.name} (${n.peak})`).join(', ')}.`,
+  );
+  stop();
+  process.exit(1);
+}
+// They also have to be in the same ballpark as each other.
+//
+// A sound at a twentieth of the level of its neighbors passes the silence
+// check above and is still useless: the item arrives, something happens, and
+// the player cannot tell what. Measured as a ratio against the middle of the
+// set rather than against a fixed level, because what is wanted is that they
+// sit together, not that they sit at any particular place. Three of these came
+// in at a quarter of the median the first time they were measured, which is
+// how this check came to exist.
+//
+// Averaged over each sound's own extent, not peaked: a struck note peaks many
+// times its average while dense noise barely peaks at all, so peaks would
+// compare the shapes of these sounds rather than their loudness.
+const levels = stats.noises.map((noise) => noise.rms).sort((a, b) => a - b);
+const median = levels[Math.floor(levels.length / 2)];
+const faint = stats.noises.filter((noise) => noise.rms < median / 8);
+if (faint.length > 0) {
+  console.error(
+    `\nFAIL: ${faint.length} named filler sounds are under an eighth of the median level ` +
+      `(${median.toFixed(5)}): ${faint.map((n) => `${n.name} (${n.rms})`).join(', ')}. ` +
+      `They will not be heard as the same kind of event as the rest.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// `sweep.from` has to arrive on the note rather than leave it.
+//
+// Both directions are checked against the same voice holding still, because
+// "the pitch rose" is only meaningful next to what the voice does when told to
+// fall. A scoop whose sign was inverted would still be a glide, still sound
+// like a trombone of a sort, and be the wrong gesture: Troy asked for a scoop
+// up into the note having been given a slide off it, so this is the mistake
+// the feature exists to stop repeating.
+// The crossing count is the right ruler here and the wrong one for the wah
+// below: on a pitched sound it reads the fundamental, which is exactly what a
+// scoop moves. The arrival is compared with a few percent of slack, because
+// counting crossings in a window is a couple of counts noisy and "arrives on
+// pitch" is not a claim about the third decimal.
+if (
+  !(
+    stats.scoopUp.early < stats.scoopFlat.early * 0.9 &&
+    stats.scoopUp.late > stats.scoopFlat.late * 0.95
+  )
+) {
+  console.error(
+    `\nFAIL: a note told to scoop up from 700 cents below reads ${stats.scoopUp.early} -> ` +
+      `${stats.scoopUp.late} against ${stats.scoopFlat.early} -> ${stats.scoopFlat.late} for ` +
+      `the same note held flat. It should start below and arrive on pitch.`,
+  );
+  stop();
+  process.exit(1);
+}
+if (stats.scoopDown.late >= stats.scoopFlat.late) {
+  console.error(
+    `\nFAIL: \`sweep.by\` and \`sweep.from\` are not opposites: sliding off a note ends at ` +
+      `${stats.scoopDown.late} against ${stats.scoopFlat.late} held flat, so it is not ` +
+      `falling. One of the two directions is wired wrong.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// `vibrato` has to actually swing, and the control has to actually be steady.
+//
+// Read with `swing` and not `wobble`: see the note where both are computed.
+// `wobble` cancels a periodic modulation and scored this 0.014 against 0.005
+// for a dead steady note, which looks like a vibrato that is barely working
+// and is really a ruler that cannot see one.
+//
+// The control first, for the same reason the hush check has one: if a held
+// note already moved about, this would pass on a vibrato that did nothing.
+// Compared as a ratio against the same voice, not against an absolute, because
+// this number has a noise floor that depends on the sound: interpolating zero
+// crossings of a filtered sawtooth is a few parts in a thousand jittery by
+// itself, and a shorter note has fewer cycles to average over. Two renders of
+// one voice share that floor, so the ratio is the honest figure.
+if (stats.noVibrato.swing > 0.02) {
+  console.error(
+    `\nFAIL: a held note with no vibrato already moves ${stats.noVibrato.swing}, which is too ` +
+      `much to tell a vibrato from, so the check below would prove nothing.`,
+  );
+  stop();
+  process.exit(1);
+}
+// Both an absolute floor and a ratio. The ratio alone has a hole: the control
+// legitimately measures 0 on a lucky phase, and `0 < 0 * 2` is false, so a
+// vibrato that did nothing at all would pass. 0.018 is half of what 90 cents
+// should give.
+if (stats.withVibrato.swing < Math.max(0.018, stats.noVibrato.swing * 2)) {
+  console.error(
+    `\nFAIL: a 90 cent vibrato spreads the pitch ${stats.withVibrato.swing} against ` +
+      `${stats.noVibrato.swing} for the same note without one, where 90 cents should be ` +
+      `about 0.037. It is not swinging.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// And the plunger has to be doing the wah, not the pitch.
+//
+// The shipped voice on one long note, rather than a synthetic control, because
+// the thing worth pinning is the real trombone. Troy's correction was that the
+// wah had been a pitch glide down, so every note sagged off its own pitch;
+// what a mute does is open the bell, which changes the timbre and not the
+// pitch at all.
+//
+// Read with `edge` and not with the crossing count. The crossing count says
+// this voice goes 432 -> 443 across a note whose filter opens from 300Hz to
+// 1700Hz, because a sawtooth crosses zero twice a cycle however many harmonics
+// are getting out: it was measuring the pitch, which correctly barely moves.
+if (stats.wahNote.edgeLate < stats.wahNote.edgeEarly * 1.35) {
+  console.error(
+    `\nFAIL: the muted trombone's timbre goes ${stats.wahNote.edgeEarly} -> ` +
+      `${stats.wahNote.edgeLate} across one long note, so it is not opening up. The plunger ` +
+      `coming off the bell is the whole of the "wah", and it is a filter sweep rather than ` +
+      `anything to do with pitch.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// A sound that is one continuous event must only ever get quieter.
+//
+// Named rather than applied to all twenty, because most of the rest come back
+// on purpose: the Kitchen Timer and the Cricket Chirp are three bursts each,
+// the Wind Chime is four separate tubes, the Door Knock is three knocks. For
+// those, dying away and returning is the design. For a swell of surf it is a
+// fault, and it was one: the tail arrived as a third layer fading in after the
+// first two had gone, so the sound stopped at six seconds and restarted at
+// forty percent of its peak.
+//
+// Missing is a failure, the same as the Kitchen Timer's check, because a
+// rename would otherwise take the check with it silently.
+for (const name of ['Surf', 'Gust of Wind']) {
+  const sound = stats.noises.find((noise) => noise.name === name);
+  if (!sound) {
+    console.error(
+      `\nFAIL: there is no ${name} among the named filler, so the check that it fades away ` +
+        `once rather than twice is checking nothing. Point it at whatever replaced it.`,
+    );
+    stop();
+    process.exit(1);
+  }
+  // Two is generous. A monotonic decay reads 1, and the fault that prompted
+  // this read in the tens.
+  if (sound.revive > 2) {
+    console.error(
+      `\nFAIL: ${name} comes back to ${sound.revive} times its quietest moment after having ` +
+        `faded. It is one continuous sound, so it should only ever get quieter: something in ` +
+        `it is swelling again after the rest has gone.`,
+    );
+    stop();
+    process.exit(1);
+  }
+}
+
+// A layer that wavers must waver for most of its own length.
+//
+// Troy heard this one before any check did. The Barking Spider was lengthened
+// to 1.4s with its glide left at the 0.6s it had when the sound was 0.7s, so
+// the last 0.8s sat dead still: "incorrectly stops changing pitch at some
+// point." The waver stops when the glide does, because the waver *is* steps
+// along the glide and there are none once it has arrived, so what went flat was
+// the wobble and not only the climb.
+//
+// Read off the definitions rather than out of a render, which is the second
+// attempt at this. The first compared the measured `wobble` against the
+// rocket's and did not discriminate at all: the broken version scored 0.51 and
+// the fixed one 0.20, because that metric compares each cycle against
+// neighbors a couple of hundred periods away, and where the glide stops the
+// reach straddles the moving part and the still part and reports the boundary
+// as enormous deviation. The audio cannot settle this; the numbers that make
+// the sound can, exactly.
+//
+// A plain glide that arrives and holds is ordinary, which is why only wavered
+// layers are checked: the thud's pitch drops in 55ms and then the body rings
+// for twice that, and it is right. A `waver` exists to stop a pitch settling,
+// so a wavered layer that settles is contradicting itself.
+if (stats.stillWavers.length > 0) {
+  console.error(
+    `\nFAIL: ${stats.stillWavers.length} wavering layers hold a dead pitch for most of ` +
+      `their length:\n` +
+      stats.stillWavers
+        .map(
+          (l) =>
+            `  ${l.sound} layer ${l.layer}: glides for ${l.glide}s of ${l.env}s, ` +
+            `then still for ${l.still}s (${Math.round(l.fraction * 100)}%)`,
+        )
+        .join('\n') +
+      `\nA waver is steps along the glide, so once the glide arrives the pitch stops moving ` +
+      `entirely. Leave \`time\` off the sweep to glide across the whole envelope.`,
+  );
+  stop();
+  process.exit(1);
+}
+
+// One of them is twelve beeps and nothing else, which is the one claim in the
+// whole set a measurement can check as squarely as an ear: four to a burst,
+// three bursts, evenly spaced and all the same level. It is also the only
+// sound here whose pitch is well clear of the strike counter's 3ms window, so
+// if the counter and this sound ever disagree, one of the two is wrong.
+//
+// Looked up by name, and **missing is a failure**. This check was written for
+// Microwave Beep; renaming that item to Kitchen Timer left the lookup finding
+// nothing and the check quietly passing on every build, which is worse than
+// not having it. Anything found by name in here has to say so when it is gone.
+const BURSTS = 3;
+const PER_BURST = 4;
+const beeps = stats.noises.find((noise) => noise.name === 'Kitchen Timer');
+if (!beeps) {
+  console.error(
+    `\nFAIL: there is no Kitchen Timer among the named filler, so the one sound whose shape ` +
+      `this can check exactly is not being checked. Point this at whatever replaced it.`,
+  );
+  stop();
+  process.exit(1);
+}
+if (beeps.hits !== BURSTS * PER_BURST) {
+  // The envelope is one value every 3ms over a thirteen second window, so it
+  // is four thousand numbers and all but a tenth of them are zero. Shown as
+  // the loud windows only, which is what the count is made of and short
+  // enough to read.
+  const shape = beeps.envelope
+    .map((level, at) => (level > 0.35 ? at : -1))
+    .filter((at) => at >= 0)
+    .map((at) => `${(at * 3) / 1000}s`);
+  console.error(
+    `\nFAIL: the Kitchen Timer beeps ${beeps.hits} times rather than ` +
+      `${BURSTS * PER_BURST}, which is ${PER_BURST} to a burst and ${BURSTS} bursts. ` +
+      `It is loud at ${shape.length} points: ${shape.slice(0, 40).join(' ')}` +
+      `${shape.length > 40 ? ' ...' : ''}`,
+  );
+  stop();
+  process.exit(1);
+}
+
+const loudestNoise = stats.noises.reduce((worstOne, noise) =>
+  noise.peak > worstOne.peak ? noise : worstOne,
+);
+// Called out rather than failed on. Half of one of these surviving a phone is
+// not a fault, it is what a low sound is; what would be a fault is not knowing
+// which ones they are while tuning them.
+const bassy = stats.noises.filter((noise) => noise.through < 0.5);
+console.log(
+  `\nnamed filler ok: ${stats.noises.length} sounds, all audible and all under the limiter; ` +
+    `loudest is ${loudestNoise.name} at ${loudestNoise.peak}; ` +
+    `a 700 cent slide drops the late pitch ${stats.flatNote.late} -> ${stats.slidNote.late}`,
+);
+if (bassy.length > 0) {
+  console.log(
+    `  under half of these reaches a phone speaker: ` +
+      `${bassy.map((n) => `${n.name} ${Math.round(n.through * 100)}%`).join(', ')}`,
+  );
+}
+
 console.log(
   `\naudio ok: loudest stack peaks ${loudest.toFixed(3)} (limiter at ${LIMITER_THRESHOLD}); ` +
     `the pop darkens ${stats.one.early} -> ${stats.one.late}; ` +

@@ -249,6 +249,59 @@ pub unsafe extern "C" fn tg_item_class(handle: *const Handle, index: u32) -> u32
     session!(handle, 0).session.item_class(index as usize).code()
 }
 
+/// Which sort of item the one at `index` is: 0 unlock, 1 moves upgrade, 2
+/// noise, 3 bonus item, 4 progressive level unlock. See `ItemKind` in
+/// `engine.js` and [`Item::kind`](crate::progression::Item::kind).
+///
+/// This and [`tg_item_value`] are the pair that lets the page do something
+/// with an item besides print its name. A noise is the one that needs it: the
+/// page has to play the right sound for the item that arrived, and matching on
+/// the name would mean the sound bank holding a second copy of twenty
+/// strings that the engine has already settled.
+///
+/// An index past the end reads as an unlock of nothing, which is what an
+/// unknown item should do: kind 0 with value 0 names no special.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_item_kind(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.item_at(index as usize).map_or(0, |item| item.kind() as u32)
+}
+
+/// The item's one parameter alongside its kind: which special an unlock is
+/// for, which level a moves upgrade is for, which noise a noise is, which kind
+/// a bonus item is. Nothing for a progressive level unlock, every copy of
+/// which is the same item. See [`tg_item_kind`].
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_item_value(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.item_at(index as usize).map_or(0, |item| item.value() as u32)
+}
+
+/// Where the item numbered `id` sits in the name list, so the page can ask
+/// [`tg_item_kind`] and the rest about it. `u32::MAX` for a number this game
+/// has no item for.
+///
+/// For the multiworld side of the feed. A find of this run's own arrives as an
+/// event carrying an index already; what the server says about an item arriving
+/// from elsewhere carries its number instead, and the page wants the same
+/// answers about both. The miss is a number out of range rather than a flag of
+/// its own, because every other call here reads one as the item that claims
+/// nothing, so a page that forgets to check still does something harmless.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_item_at_id(handle: *const Handle, id: u32) -> u32 {
+    session!(handle, u32::MAX)
+        .session
+        .item_index_of_id(id)
+        .map_or(u32::MAX, |index| index as u32)
+}
+
 /// Every location's name, the same way. See [`tg_item_names_ptr`].
 ///
 /// # Safety
@@ -964,7 +1017,7 @@ mod tests {
     use super::*;
     use crate::game::EV_SWAP;
     use crate::options::{setting_index, PROGRESSIVE_LEVELS, SETTINGS};
-    use crate::progression::{Class, Location};
+    use crate::progression::{Class, Location, Noise};
 
     /// Drives the ABI the way the front end does, to catch a mismatch between
     /// what the engine knows and what it is willing to say.
@@ -1154,7 +1207,7 @@ mod tests {
 
             assert_eq!(tg_item_class(handle, at("Rocket")), Class::Progression.code());
             assert_eq!(tg_item_class(handle, at("Level 3 Moves Upgrade")), Class::Progression.code());
-            assert_eq!(tg_item_class(handle, at("Filler")), Class::Filler.code());
+            assert_eq!(tg_item_class(handle, at("Sad Trombone")), Class::Filler.code());
             assert_eq!(
                 tg_item_class(handle, at("Inventory Item: Rocket Cluster")),
                 Class::Useful.code(),
@@ -1162,6 +1215,43 @@ mod tests {
             // A page is free to ask about an item this engine does not have,
             // and the answer is the one that claims the least.
             assert_eq!(tg_item_class(handle, 9_999), Class::Filler.code());
+
+            // And the same index again for the kind and the parameter, which
+            // is how the page picks the sound a noise makes. Getting these off
+            // a different index than the name would play the wrong one, which
+            // is a mistake nobody would ever call a bug: it would just sound
+            // slightly wrong forever.
+            let noise = at("Cricket Chirp");
+            assert_eq!(tg_item_kind(handle, noise), 2, "a noise is not reading as one");
+            assert_eq!(
+                tg_item_value(handle, noise),
+                Noise::CricketChirp.code(),
+                "the page would play some other noise's sound",
+            );
+            // One of each of the other kinds, so "everything is a noise" could
+            // not pass this.
+            assert_eq!(tg_item_kind(handle, at("Rainbow")), 0);
+            assert_eq!(tg_item_value(handle, at("Rainbow")), Special::Rainbow.code() as u32);
+            assert_eq!(tg_item_kind(handle, at("Level 3 Moves Upgrade")), 1);
+            assert_eq!(tg_item_value(handle, at("Level 3 Moves Upgrade")), 2);
+            assert_eq!(tg_item_kind(handle, at("Inventory Item: Rainbow")), 3);
+            assert_eq!(tg_item_kind(handle, at("Progressive Level Unlock")), 4);
+            // An item this engine does not have is an unlock of nothing, which
+            // is the answer that sets off nothing on the page.
+            assert_eq!(tg_item_kind(handle, 9_999), 0);
+            assert_eq!(tg_item_value(handle, 9_999), 0);
+
+            // The multiworld's direction: a number, back to the same index.
+            // The miss has to land out of range rather than on an item, or a
+            // room full of other worlds' numbers would set off a noise every
+            // time somebody else found something.
+            assert_eq!(tg_item_at_id(handle, Item::Filler(Noise::CricketChirp).id()), noise);
+            assert_eq!(tg_item_at_id(handle, Item::Unlock(Special::Rainbow).id()), at("Rainbow"));
+            assert_eq!(tg_item_at_id(handle, 9_999), u32::MAX);
+            assert_eq!(tg_item_kind(handle, tg_item_at_id(handle, 9_999)), 0);
+            // A moves upgrade for a level this ladder does not have reads back
+            // as an item and still has no place in this game's list.
+            assert_eq!(tg_item_at_id(handle, Item::Moves { level: 40 }.id()), u32::MAX);
             tg_destroy(handle);
         }
     }

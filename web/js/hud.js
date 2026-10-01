@@ -1054,11 +1054,13 @@ export class Hud {
    * is handed to `onClose` at once and the page decides what order to do it in.
    *
    * `choices` is `[{ key, label, hint }]` and is the page's list, not this
-   * one's: the HUD has no business knowing what any of them do.
+   * one's: the HUD has no business knowing what any of them do. `picked` is
+   * which of them are already on, so a trip through the sound list and back
+   * does not lose what was being set up.
    */
-  showDebug(choices, { remote, onClose }) {
+  showDebug(choices, { remote, picked = [], onClose, onSounds }) {
     const { dom } = this;
-    const chosen = new Set();
+    const chosen = new Set(picked);
 
     dom.overlayTitle.textContent = 'Testing';
     dom.overlayBody.textContent = remote
@@ -1069,7 +1071,7 @@ export class Hud {
       'Testing shortcuts',
       choices.map((choice) => ({
         ...choice,
-        on: false,
+        on: chosen.has(choice.key),
         onToggle: (on) => {
           if (on) {
             chosen.add(choice.key);
@@ -1079,10 +1081,38 @@ export class Hud {
         },
       })),
     );
-    // One way out, and it is the one that does the work.
+    // Two ways out. Only one of them applies anything: the sound list is a
+    // detour rather than a choice, and it hands the switches back on its way
+    // there so returning does not undo what was being set up.
     dom.overlayButtons.replaceChildren(
+      button('Sounds', () => onSounds([...chosen])),
       button('Close', () => onClose([...chosen]), true),
     );
+  }
+
+  /**
+   * Every named filler sound, one row each, played by pressing it.
+   *
+   * A list of buttons rather than one that plays all of them in order, which
+   * is a deliberate choice and not the lazy one. Tuning a sound means hearing
+   * it, changing a number and hearing it again, so what is wanted is one
+   * sound on demand and as many times as you like. Playing them in sequence
+   * would also mean a timer deciding when each one starts, and a timer
+   * deciding anything about sound here has been a bug every time.
+   *
+   * `names` is the page's list, in the page's order, and the index pressed is
+   * what goes back: this panel never learns what any of them sound like.
+   */
+  showAudition(names, { onPlay, onBack }) {
+    const { dom } = this;
+    dom.overlayTitle.textContent = 'Filler sounds';
+    dom.overlayBody.textContent = 'Press one to hear it. Press it again to hear it again.';
+
+    this.showActions(
+      'Filler sounds',
+      names.map((name, at) => ({ label: name, hint: 'Play', onPress: () => onPlay(at) })),
+    );
+    dom.overlayButtons.replaceChildren(button('Back', onBack, true));
   }
 
   /**
@@ -1119,24 +1149,13 @@ export class Hud {
    * one's.
    */
   showSwitches(label, rows) {
-    const { dom } = this;
-    dom.overlaySwitches.setAttribute('aria-label', label);
-    dom.overlaySwitches.replaceChildren(
-      ...rows.map((entry) => {
-        const row = document.createElement('button');
-        row.type = 'button';
-        row.className = 'switch-row';
+    this.showRows(
+      label,
+      rows.map((entry) => {
+        const row = listRow(entry);
         // A switch, so a screen reader says whether it is on rather than
         // simply naming it, and says so again each time it is pressed.
         row.setAttribute('role', 'switch');
-
-        const name = document.createElement('span');
-        name.className = 'switch-label';
-        name.textContent = entry.label;
-        const hint = document.createElement('span');
-        hint.className = 'switch-hint';
-        hint.textContent = entry.hint;
-        row.append(name, hint);
 
         let on = entry.on === true;
         const show = () => {
@@ -1152,6 +1171,33 @@ export class Hud {
         return row;
       }),
     );
+  }
+
+  /**
+   * The same list, with rows that do something when pressed rather than ones
+   * that remember being on. Each row is `{ label, hint, onPress }`.
+   *
+   * A plain button and not a switch, because nothing about one of these is on
+   * or off: it happens, and that is the whole of it. A screen reader saying
+   * "not checked" after playing a sound would be describing a state that does
+   * not exist.
+   */
+  showActions(label, rows) {
+    this.showRows(
+      label,
+      rows.map((entry) => {
+        const row = listRow(entry);
+        row.addEventListener('click', entry.onPress);
+        return row;
+      }),
+    );
+  }
+
+  /** Puts a built list of rows up, which is the half the two share. */
+  showRows(label, rows) {
+    const { dom } = this;
+    dom.overlaySwitches.setAttribute('aria-label', label);
+    dom.overlaySwitches.replaceChildren(...rows);
 
     dom.tracker.classList.add('hidden');
     this.openOverlay();
@@ -1215,6 +1261,25 @@ function button(label, onClick, primary) {
   }
   element.addEventListener('click', onClick);
   return element;
+}
+
+/**
+ * One row of the list the switches and the actions share: a name on the left
+ * and a word about it on the right. What pressing it does is the caller's.
+ */
+function listRow({ label, hint }) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'switch-row';
+
+  const name = document.createElement('span');
+  name.className = 'switch-label';
+  name.textContent = label;
+  const note = document.createElement('span');
+  note.className = 'switch-hint';
+  note.textContent = hint;
+  row.append(name, note);
+  return row;
 }
 
 function describe(objective) {

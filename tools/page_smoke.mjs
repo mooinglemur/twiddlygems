@@ -1439,12 +1439,78 @@ click(overlayButton('Close'), 'the level picker has no way out');
 
   // Nothing is applied until it is closed, so a tester can change their mind.
   const before = engine.unlocked;
-  const unlockAll = options.children.find((row) =>
-    row.children.some((part) => part.textContent === 'Unlock all levels'),
-  );
+  const rowNamed = (name) =>
+    options.children.find((row) => row.children.some((part) => part.textContent === name));
+  const unlockAll = rowNamed('Unlock all levels');
   assert.ok(unlockAll, 'the testing menu cannot unlock the ladder');
   click(unlockAll, 'the switch does not respond');
   assert.equal(engine.unlocked, before, 'the testing menu applied a switch before it was closed');
+
+  // The sound list, which is the other way out of this menu and the only way
+  // the filler sounds can be heard on purpose. One row per noise, named by the
+  // engine's own list rather than by anything written here, so a noise added
+  // to the engine shows up without this check being edited.
+  {
+    const { audio } = window.twiddlygems;
+    const { NOISES } = await import(path.resolve('web/js/sounds.js'));
+    click(overlayButton('Sounds'), 'the testing menu has no way to the sounds');
+    assert.equal(elements.get('overlay-title').textContent, 'Filler sounds');
+    assert.equal(
+      options.children.length,
+      NOISES.length,
+      'the sound list does not offer one row per noise',
+    );
+    assert.equal(
+      options.children[0].children[0].textContent,
+      NOISES[0].name,
+      'the sound list is not in the engine order',
+    );
+    // Pressing one has to start something. Audio is off in this harness, so
+    // what is checked is that the press reaches the audio layer at all rather
+    // than that anything was heard: the levels are `make audio`'s business.
+    const asked = [];
+    const real = audio.play;
+    audio.play = (name, opts) => {
+      asked.push(name);
+      return real.call(audio, name, opts);
+    };
+    const sequenced = [];
+    const realSequence = audio.sequence;
+    audio.sequence = (parts, opts) => {
+      sequenced.push(parts);
+      return realSequence.call(audio, parts, opts);
+    };
+    try {
+      for (const row of options.children) {
+        click(row, 'a sound row does not respond');
+      }
+    } finally {
+      audio.play = real;
+      audio.sequence = realSequence;
+    }
+    // Four of the twenty are written figures and go the other way, so both
+    // halves of `playNoiseSound` are covered by pressing the whole list.
+    assert.ok(asked.length > 0, 'pressing every sound row played nothing');
+    assert.ok(
+      sequenced.length > 0,
+      'none of the sound rows went through the sequencer, so no figure was played',
+    );
+    assert.equal(
+      asked.length + sequenced.length >= NOISES.length,
+      true,
+      `${NOISES.length} rows pressed produced only ${asked.length + sequenced.length} sounds`,
+    );
+
+    // And back, with the switch that was set on the way in still set: a tester
+    // going to listen to something should not lose what they were setting up.
+    click(overlayButton('Back'), 'the sound list has no way back');
+    assert.equal(elements.get('overlay-title').textContent, 'Testing');
+    assert.equal(
+      rowNamed('Unlock all levels')?.getAttribute('aria-checked'),
+      'true',
+      'a trip to the sound list forgot what was already switched on',
+    );
+  }
 
   click(overlayButton('Close'), 'the testing menu has no way out');
   assert.equal(

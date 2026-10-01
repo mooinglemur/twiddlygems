@@ -49,18 +49,24 @@ pub enum Item {
     /// beatable on its own budget or the ladder dead-ends. What they buy is a
     /// better run at one: more moves is more score.
     Moves { level: usize },
-    /// Nothing at all, for a location with nothing better in it.
+    /// A noise and nothing else, for a location with nothing better in it.
     ///
     /// There are more places to look than things to find, which is the shape
     /// that leaves room for another world's items in a multiworld. What goes
-    /// in the leftovers on this side has to be something, and until there are
-    /// traps and consumables to put there, this is the honest something.
+    /// in the leftovers on this side has to be something, and these are the
+    /// honest something: each one is a named thing that makes its own sound
+    /// and changes nothing a run may do.
     ///
     /// It was a spare moves upgrade before, which stopped meaning anything the
     /// moment an upgrade started landing whole and once: a second copy changed
     /// nothing, so a run could clear a level, be handed an item it already had
-    /// all of, and be none the wiser. Better a name that says so.
-    Filler,
+    /// all of, and be none the wiser.
+    ///
+    /// It was then a single item literally called "Filler", which was honest
+    /// and dull. These names land in *other people's* feeds, so they are worth
+    /// being things rather than a label: a room reads "Troy found Sad Trombone"
+    /// and gets the joke without having to know this game at all.
+    Filler(Noise),
     /// Something to spend, kept until the player spends it.
     ///
     /// Useful rather than progression: no level and no location asks for one,
@@ -119,6 +125,129 @@ impl Consumable {
     }
 }
 
+/// One of the named nothings. See [`Item::Filler`].
+///
+/// A kind rather than a payload with a string in it, because the engine is the
+/// one place that names an item: the page, the apworld and a tracker all read
+/// the names out of [`items`], and a second list of them anywhere would be a
+/// second answer to what item 2003 is called.
+///
+/// What each one sounds like is the page's business and is not in here. The
+/// engine hands over which of these arrived and nothing more; `NOISES` in
+/// `web/js/sounds.js` is the other end of this list, in this order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Noise {
+    DoorKnock,
+    BusySignal,
+    WindChime,
+    TinyBell,
+    SourNote,
+    GustOfWind,
+    BananaPeel,
+    DeflatingBalloon,
+    CricketChirp,
+    DialTone,
+    Surf,
+    BarkingSpider,
+    KitchenTimer,
+    SadTrombone,
+    ShaveAndAHaircut,
+    TriumphantKazoo,
+    MusicBoxFragment,
+    PolishingCloth,
+    PocketfulOfGravel,
+    SatisfyingClick,
+}
+
+/// Every noise, in the order the item table numbers them. Appending is safe;
+/// reordering is not, for the reason [`Item::id`] gives.
+///
+/// Six were cut from the middle of this on 2026-09-30, after Troy heard them:
+/// Boing, Record Scratch, Cash Register, Elevator Music, Jeweler's Loupe and
+/// Coin in a Fountain. That renumbered every noise after each of them, which
+/// is exactly what the line above says not to do, and it was free only because
+/// no seed has ever been generated from this game. Once one has, a cut noise
+/// has to stay in the list with its number, however bad it sounded.
+///
+/// One was swapped in place rather than cut: Busy Signal took Pebble Drop's
+/// slot, so 2001 means something new and nothing else moved. That is the
+/// cheaper of the two kinds of change and the one to prefer once seeds exist,
+/// because only the players holding that one item are affected rather than
+/// everybody holding anything after it. It is still a change a rolled seed
+/// cannot survive.
+pub const NOISES: [Noise; 20] = [
+    Noise::DoorKnock,
+    Noise::BusySignal,
+    Noise::WindChime,
+    Noise::TinyBell,
+    Noise::SourNote,
+    Noise::GustOfWind,
+    Noise::BananaPeel,
+    Noise::DeflatingBalloon,
+    Noise::CricketChirp,
+    Noise::DialTone,
+    Noise::Surf,
+    Noise::BarkingSpider,
+    Noise::KitchenTimer,
+    Noise::SadTrombone,
+    Noise::ShaveAndAHaircut,
+    Noise::TriumphantKazoo,
+    Noise::MusicBoxFragment,
+    Noise::PolishingCloth,
+    Noise::PocketfulOfGravel,
+    Noise::SatisfyingClick,
+];
+
+impl Noise {
+    /// Its place in [`NOISES`], which is what its id and its event are built
+    /// from.
+    pub fn code(self) -> u32 {
+        NOISES.iter().position(|kind| *kind == self).unwrap_or(0) as u32
+    }
+
+    pub fn from_code(code: u32) -> Option<Noise> {
+        NOISES.get(code as usize).copied()
+    }
+
+    /// What it is called, which is what a room reads.
+    ///
+    /// Written out rather than derived from the variant name. A few of these
+    /// want an article or an apostrophe, and spelling them by rule would mean
+    /// the rule deciding what a player sees.
+    pub fn name(self) -> &'static str {
+        match self {
+            Noise::DoorKnock => "Door Knock",
+            // Replaced Pebble Drop here, which Troy did not like and which was
+            // only ever the board's thud pitched up. This number has changed
+            // meaning rather than moved: see the note on `NOISES`.
+            Noise::BusySignal => "Busy Signal",
+            Noise::WindChime => "Wind Chime",
+            Noise::TinyBell => "Tiny Bell",
+            Noise::SourNote => "Sour Note",
+            Noise::GustOfWind => "Gust of Wind",
+            Noise::BananaPeel => "Banana Peel",
+            Noise::DeflatingBalloon => "Deflating Balloon",
+            Noise::CricketChirp => "Cricket Chirp",
+            Noise::DialTone => "Dial Tone",
+            // Written as Distant Thunder and renamed once Troy heard it as the
+            // sea, which it is. The name is the better joke by a long way: a
+            // room with a Pokemon player in it reads "found Surf" and takes a
+            // second look at the feed, which is exactly what these names are
+            // for.
+            Noise::Surf => "Surf",
+            Noise::BarkingSpider => "Barking Spider",
+            Noise::KitchenTimer => "Kitchen Timer",
+            Noise::SadTrombone => "Sad Trombone",
+            Noise::ShaveAndAHaircut => "Shave and a Haircut",
+            Noise::TriumphantKazoo => "Triumphant Kazoo",
+            Noise::MusicBoxFragment => "Music Box Fragment",
+            Noise::PolishingCloth => "Polishing Cloth",
+            Noise::PocketfulOfGravel => "Pocketful of Gravel",
+            Noise::SatisfyingClick => "A Satisfying Click",
+        }
+    }
+}
+
 impl Item {
     /// A stable number for this item, the way [`Location::id`] is one for a
     /// location.
@@ -132,7 +261,7 @@ impl Item {
         match self {
             Item::Unlock(special) => special.code() as u32,
             Item::Moves { level } => MOVES_ID_BASE + level as u32,
-            Item::Filler => FILLER_ID,
+            Item::Filler(noise) => FILLER_ID + noise.code(),
             Item::Consumable(kind) => CONSUMABLE_ID_BASE + kind.code(),
             Item::LevelUnlock => LEVEL_UNLOCK_ID,
         }
@@ -162,7 +291,7 @@ impl Item {
             return Consumable::from_code(id - CONSUMABLE_ID_BASE).map(Item::Consumable);
         }
         if id >= FILLER_ID {
-            return (id == FILLER_ID).then_some(Item::Filler);
+            return Noise::from_code(id - FILLER_ID).map(Item::Filler);
         }
         if id >= MOVES_ID_BASE {
             return Some(Item::Moves { level: (id - MOVES_ID_BASE) as usize });
@@ -185,18 +314,22 @@ impl Item {
     pub fn class(self) -> Class {
         match self {
             Item::Unlock(_) | Item::Moves { .. } | Item::LevelUnlock => Class::Progression,
-            Item::Filler => Class::Filler,
+            Item::Filler(_) => Class::Filler,
             Item::Consumable(_) => Class::Useful,
         }
     }
 
-    /// Which sort of item this is, for the event that announces it. See
-    /// [`crate::game::EV_ITEM`].
+    /// Which sort of item this is, which is a different question from what it
+    /// is worth: a noise and a bonus item are both things no rule ever asks
+    /// for, and only one of them makes a sound.
+    ///
+    /// This and [`Item::value`] are what the page reads when it needs to do
+    /// something with an item besides print its name. See `tg_item_kind`.
     pub fn kind(self) -> u8 {
         match self {
             Item::Unlock(_) => 0,
             Item::Moves { .. } => 1,
-            Item::Filler => 2,
+            Item::Filler(_) => 2,
             Item::Consumable(_) => 3,
             Item::LevelUnlock => 4,
         }
@@ -207,8 +340,8 @@ impl Item {
         match self {
             Item::Unlock(special) => special.code() as u16,
             Item::Moves { level } => level as u16,
-            // Nothing to say about it; there is only the one.
-            Item::Filler => 0,
+            // Which noise it is, which is the whole of what one of these is.
+            Item::Filler(noise) => noise.code() as u16,
             Item::Consumable(kind) => kind.code() as u16,
             // Nor this: every copy is the same item, and which level it opens
             // is a matter of how many have arrived rather than of the item.
@@ -462,7 +595,9 @@ pub const AP_GEMS_PER_LEVEL: u32 = 10;
 /// Where the move items start. The unlocks sit below it on their own codes.
 const MOVES_ID_BASE: u32 = 1_000;
 
-/// Filler's own number, in a thousand of its own like every other kind.
+/// Where the named filler starts, in a thousand of its own like every other
+/// kind. One number each, by [`Noise::code`], so a twenty-seventh noise
+/// appended to [`NOISES`] takes the next number and renumbers nothing.
 const FILLER_ID: u32 = 2_000;
 
 /// Where the things a run can spend start, in a thousand of their own like
@@ -845,10 +980,10 @@ pub fn items(levels: usize) -> Vec<Item> {
         .iter()
         .map(|special| Item::Unlock(*special))
         .chain((0..levels).map(|level| Item::Moves { level }))
-        // Last, and in the table despite never being in the pool: a run has
-        // to be able to name what it was handed, and this is what the
-        // leftover locations hold.
-        .chain(std::iter::once(Item::Filler))
+        // In the table despite never being counted into the pool: a run has to
+        // be able to name what it was handed, and these are what the leftover
+        // locations are topped up with.
+        .chain(NOISES.iter().map(|noise| Item::Filler(*noise)))
         .chain(CONSUMABLES.iter().map(|kind| Item::Consumable(*kind)))
         // Also in the table whatever a run asked for, because the table is the
         // datapackage: a run playing the ladder the old way simply holds none
@@ -877,7 +1012,11 @@ pub fn item_name(item: Item) -> String {
             Special::None | Special::Archipelago => "Nothing".to_string(),
         },
         Item::Moves { level } => format!("Level {} Moves Upgrade", level + 1),
-        Item::Filler => "Filler".to_string(),
+        // Its own name and nothing around it. These are the one kind of item
+        // here that is not described by what it does to the run, because it
+        // does nothing to the run: it is a thing that turned up and made a
+        // noise, and the name is the joke.
+        Item::Filler(noise) => noise.name().to_string(),
         // Said out loud, because three of the four share a name with an
         // unlock and two items in a datapackage may not. It is also the
         // difference that matters to a player reading a spoiler: one of these
@@ -1054,12 +1193,16 @@ pub fn item_index(item: Item, levels: usize) -> Option<usize> {
     match item {
         Item::Unlock(special) => UNLOCKABLE.iter().position(|other| *other == special),
         Item::Moves { level } => (level < levels).then_some(UNLOCKABLE.len() + level),
-        // Last, because appending is the only safe way to change this order:
-        // an item's place in the table is what an event carries instead of its
-        // name, and everything already numbered has to keep its number.
-        Item::Filler => Some(UNLOCKABLE.len() + levels),
-        Item::Consumable(kind) => Some(UNLOCKABLE.len() + levels + 1 + kind.code() as usize),
-        Item::LevelUnlock => Some(UNLOCKABLE.len() + levels + 1 + CONSUMABLES.len()),
+        // Appending is the only safe way to change this order: an item's place
+        // in the table is what an event carries instead of its name, so a
+        // noise added to the end of `NOISES` pushes the bonus items along
+        // without renaming any of them, while one inserted in the middle would
+        // rename every one after it.
+        Item::Filler(noise) => Some(UNLOCKABLE.len() + levels + noise.code() as usize),
+        Item::Consumable(kind) => {
+            Some(UNLOCKABLE.len() + levels + NOISES.len() + kind.code() as usize)
+        }
+        Item::LevelUnlock => Some(UNLOCKABLE.len() + levels + NOISES.len() + CONSUMABLES.len()),
     }
 }
 
@@ -1112,9 +1255,15 @@ pub struct Inventory {
     /// How many move items have landed on each level, indexed by level. Short
     /// or empty for levels nothing has been found for yet.
     moves: Vec<u32>,
-    /// How much of nothing the run has been handed. Kept only so
-    /// [`Inventory::count`] can answer honestly.
-    filler: u32,
+    /// How many of each noise the run has been handed, by [`Noise::code`].
+    /// Kept only so [`Inventory::count`] can answer honestly: nothing in the
+    /// game reads one, and no rule can sensibly be built on how much nothing
+    /// a run has been given.
+    ///
+    /// Per noise rather than one total, because the question `count` is asked
+    /// is about an item and not about a class, and "how many Sad Trombones"
+    /// has an answer that is not "how many noises altogether".
+    filler: [u32; NOISES.len()],
     /// How many of each thing there is to spend, by [`Consumable::code`].
     ///
     /// These are the only holdings that go down as well as up, because they
@@ -1132,7 +1281,7 @@ impl Inventory {
         Inventory {
             specials: SpecialSet::NONE,
             moves: Vec::new(),
-            filler: 0,
+            filler: [0; NOISES.len()],
             consumables: [0; CONSUMABLES.len()],
             unlocks: 0,
         }
@@ -1173,8 +1322,10 @@ impl Inventory {
             // Changes nothing about what the run may do, and is still worth
             // announcing: the player checked a location and was handed
             // something, and silence there would read as the check failing.
-            Item::Filler => {
-                self.filler += 1;
+            // Announcing one is also the only thing that makes its noise, so a
+            // silent arrival here would be an item that did literally nothing.
+            Item::Filler(noise) => {
+                self.filler[noise.code() as usize] += 1;
                 true
             }
             // They stack, so a second one is as welcome as the first and just
@@ -1229,7 +1380,7 @@ impl Inventory {
                 !probe.receive(item)
             }
             Item::Moves { level } => self.moves.get(level).copied().unwrap_or(0) > 0,
-            Item::Filler => self.filler > 0,
+            Item::Filler(noise) => self.filler[noise.code() as usize] > 0,
             Item::Consumable(kind) => self.consumables(kind) > 0,
             Item::LevelUnlock => self.unlocks > 0,
         }
@@ -1253,7 +1404,7 @@ impl Inventory {
             // Counted rather than waved away, so this answers truthfully
             // whatever asks. Nothing does: no rule can sensibly be built on
             // how much nothing a run has been handed.
-            Item::Filler => self.filler,
+            Item::Filler(noise) => self.filler[noise.code() as usize],
             // Held now rather than ever found, which is the answer a rule
             // would want and is also the only honest one: these are spent.
             Item::Consumable(kind) => self.consumables(kind),
@@ -1529,12 +1680,19 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     // A spare moves upgrade used to go here, back when several of them stacked
     // on one level. They do not any more, so a second copy would change
     // nothing at all: the player would be handed an item they already had the
-    // whole of, and told they had found something. Filler says what it is.
+    // whole of, and told they had found something. A noise says what it is.
+    //
+    // Which noise is a draw, on the fill's own stream, the way the Python side
+    // draws one on the slot's. It has to be a draw rather than a rotation: the
+    // locations are walked in table order here, so handing them out in turn
+    // would put the same noise on the same location in every run there will
+    // ever be, and the opening level would always knock on the same door.
     expand(&rules, &inventory, &mut reached, options);
     for at in &usable {
         let Some(index) = location_index(*at, levels) else { continue };
         if held[index].is_none() && reached.has(*at) {
-            held[index] = Some(Item::Filler);
+            let noise = NOISES[rng.below(NOISES.len() as u32) as usize];
+            held[index] = Some(Item::Filler(noise));
         }
     }
     held
@@ -2140,14 +2298,13 @@ mod tests {
                     left.swap_remove(at);
                     continue;
                 }
-                // Anything beyond the pool is Filler and nothing else. A
+                // Anything beyond the pool is a noise and nothing else. A
                 // second unlock would be a real fault, and so now would a
                 // second moves upgrade: a level's upgrade lands whole and
                 // once, so a spare is an item that does nothing while
                 // announcing itself as a find.
-                assert_eq!(
-                    *held,
-                    Item::Filler,
+                assert!(
+                    matches!(*held, Item::Filler(_)),
                     "{} was placed but is not in the pool",
                     item_name(*held),
                 );
@@ -2160,6 +2317,45 @@ mod tests {
                 item_name(left[0]),
             );
         }
+    }
+
+    #[test]
+    fn the_leftovers_are_drawn_rather_than_dealt_in_turn() {
+        // The noises are picked at random from the fill's own stream. Taking
+        // them in turn would be simpler and would be wrong: the leftover
+        // locations are walked in table order, so a rotation would put the
+        // same noise on the same location in every run there will ever be, and
+        // every player's opening level would knock on the same door.
+        let noises = |levels: usize, seed: u64| -> Vec<Noise> {
+            solo_placement(levels, seed, &Options::default())
+                .into_iter()
+                .flatten()
+                .filter_map(|item| match item {
+                    Item::Filler(noise) => Some(noise),
+                    _ => None,
+                })
+                .collect()
+        };
+        let first = noises(13, 1);
+        assert!(
+            first.len() > 10,
+            "a default run left only {} leftovers, which is too few to say anything about",
+            first.len(),
+        );
+        let mut kinds: Vec<u32> = first.iter().map(|noise| noise.code()).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        assert!(
+            kinds.len() > 1,
+            "all {} leftovers in this run are {}, so nothing is being drawn",
+            first.len(),
+            first[0].name(),
+        );
+        // And drawn off the run's seed rather than freshly each time, because
+        // a returning player is handed back the run they left.
+        assert_eq!(noises(13, 1), first, "the same seed dealt different noises");
+        // Two runs are two different games, down to the jokes in them.
+        assert_ne!(noises(13, 2), first, "two seeds dealt the same noises in the same order");
     }
 
     #[test]
@@ -2232,7 +2428,10 @@ mod tests {
             .iter()
             .filter_map(|item| match item {
                 Item::Unlock(special) => Some(*special),
-                Item::Moves { .. } | Item::Filler | Item::Consumable(_) | Item::LevelUnlock => None,
+                Item::Moves { .. }
+                | Item::Filler(_)
+                | Item::Consumable(_)
+                | Item::LevelUnlock => None,
             })
             .collect();
         let mut by_code = unlocks.clone();
@@ -2921,7 +3120,9 @@ mod tests {
             (5, "Rocket", Item::Unlock(Special::Rocket)),
             (1_000, "Level 1 Moves Upgrade", Item::Moves { level: 0 }),
             (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
-            (2_000, "Filler", Item::Filler),
+            (2_000, "Door Knock", Item::Filler(Noise::DoorKnock)),
+            (2_013, "Sad Trombone", Item::Filler(Noise::SadTrombone)),
+            (2_019, "A Satisfying Click", Item::Filler(Noise::SatisfyingClick)),
             (3_000, "Inventory Item: Rocket", Item::Consumable(Consumable::Rocket)),
             (3_001, "Inventory Item: Rainbow", Item::Consumable(Consumable::Rainbow)),
             (3_002, "Inventory Item: Cross Clear", Item::Consumable(Consumable::CrossClear)),
@@ -2958,7 +3159,8 @@ mod tests {
             items(50).iter().all(|item| match item {
                 Item::Unlock(_) => item.id() < MOVES_ID_BASE,
                 Item::Moves { .. } => (MOVES_ID_BASE..FILLER_ID).contains(&item.id()),
-                Item::Filler => item.id() == FILLER_ID,
+                Item::Filler(_) =>
+                    (FILLER_ID..FILLER_ID + NOISES.len() as u32).contains(&item.id()),
                 Item::Consumable(_) => (CONSUMABLE_ID_BASE
                     ..CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32)
                     .contains(&item.id()),
@@ -3006,7 +3208,11 @@ mod tests {
         assert_eq!(Item::from_id(Special::Archipelago.code() as u32), None);
         // And the gaps between the blocks, each of which is a number some
         // other game's item could be sitting on.
-        assert_eq!(Item::from_id(FILLER_ID + 1), None, "there is only one filler");
+        assert_eq!(
+            Item::from_id(FILLER_ID + NOISES.len() as u32),
+            None,
+            "a twenty-first noise does not exist yet",
+        );
         assert_eq!(Item::from_id(LEVEL_UNLOCK_ID + 1), None, "there is only one level unlock");
         assert_eq!(
             Item::from_id(CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32),

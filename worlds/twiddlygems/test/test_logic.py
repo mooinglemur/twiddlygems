@@ -20,6 +20,12 @@ SHARED = [
 #: The ladder's own item, which the pool holds many of on purpose.
 LADDER = "Progressive Level Unlock"
 
+#: The items the pool may hold any number of, because they are what the
+#: leftover locations are topped up with. The named filler: each one does
+#: nothing but make its own sound. Read from the engine, which is the side that
+#: decides, rather than listed here where the list would go stale.
+TOP_UP = {item["name"] for item in ITEMS_BY_NAME.values() if item["top_up"]}
+
 #: How many levels from the bottom go down bare-handed. Read from the engine
 #: rather than written here, because it is the engine's decision and a second
 #: copy would be one to keep in step.
@@ -226,8 +232,19 @@ class TestDefault(TwiddlyGemsTestBase):
         # answer to a question the rules have settled, and a spare moves
         # upgrade is worth nothing at all, because a level's upgrade lands
         # whole and once. Either would tell the player they had found
-        # something when they had not.
-        self.assertEqual(self.world.get_filler_item_name(), "Filler")
+        # something when they had not. What is left is the named filler, every
+        # one of which does nothing but make its own sound.
+        #
+        # Drawn rather than taken in turn, so this asks for a handful and
+        # checks both halves of that: every answer is one the engine offered,
+        # and they are not all the same answer. Thirty identical names in one
+        # player's feed would read as a bug in the fill.
+        drawn = {self.world.get_filler_item_name() for _ in range(60)}
+        self.assertTrue(
+            drawn <= TOP_UP,
+            f"the filler drew {drawn - TOP_UP}, which the engine did not offer for topping up",
+        )
+        self.assertGreater(len(drawn), 1, "sixty draws came back the same; it is not drawing")
 
         mine = [item for item in self.multiworld.itempool if item.player == self.player]
         self.assertEqual(
@@ -240,7 +257,7 @@ class TestDefault(TwiddlyGemsTestBase):
             by_name[item.name] = by_name.get(item.name, 0) + 1
 
         for name, count in by_name.items():
-            if name == "Filler" or name in SHARED or name == LADDER:
+            if name in TOP_UP or name in SHARED or name == LADDER:
                 continue
             self.assertEqual(
                 count, 1, f"{name} was submitted {count} times to fill the world out"
@@ -253,7 +270,16 @@ class TestDefault(TwiddlyGemsTestBase):
             self.world._count(ITEMS_BY_NAME[LADDER]),
             "the world submitted a different number of level unlocks than its settings ask for",
         )
-        self.assertGreater(by_name.get("Filler", 0), 0, "nothing filled the leftovers")
+        topped_up = {name: count for name, count in by_name.items() if name in TOP_UP}
+        self.assertGreater(sum(topped_up.values()), 0, "nothing filled the leftovers")
+        # And the pool a real seed gets is varied, not one noise over and over.
+        # The draw above is checked in isolation; this is the same claim about
+        # what `create_items` actually built.
+        self.assertGreater(
+            len(topped_up),
+            1,
+            f"every leftover in this seed is {next(iter(topped_up), None)}",
+        )
 
         # The shared items are exempt above because how many of each there are
         # is a roll. What is not a roll is how many there are altogether: the

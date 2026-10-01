@@ -28,6 +28,14 @@ Loading the page with `?debug` puts the engine and renderer on
 `window.twiddlygems`, which is how the animation timings get inspected from the
 console or from a screenshot script.
 
+Tapping an objective twenty times in a row, with nothing tapped in between,
+opens a testing menu: unlock the ladder, unlock the specials, 99 moves, a full
+inventory, win this level now. Everything checked is applied when the menu
+closes, so the order they were tapped in cannot matter. Behind it is a list of
+every filler sound, one row each, played by pressing it, which is how they get
+tuned. All of it is reachable on a phone, which is why it is a gesture rather
+than a query string.
+
 `make smoke` runs two headless checks: one drives the module's ABI directly, and
 one boots the actual front end against a stubbed-out browser and plays a move
 through it. Neither knows what the board looks like, but between them they catch
@@ -301,7 +309,7 @@ fill does what a generator does, in the plainest way: take everything
 reachable, drop the next item into one of those, go round again. Placing only
 into somewhere already reachable is what makes it safe, since the inventory
 only grows and nothing can end up behind itself. Whatever is left empty
-afterwards gets filler, the way a multiworld would put another world's items
+afterwards gets a noise, the way a multiworld would put another world's items
 there, because clearing a level and being handed nothing reads as a bug.
 
 **It is dealt from the run's own seed**, so a solo run generates its own
@@ -950,15 +958,38 @@ and gold on every level, because somebody may want a relaxed slot on purpose.
 What the default should not be is the one that asks for nothing.
 
 A world submits as many items as it has locations, and this game has more
-places to look than things to find. The rest is **Filler**, an item that does
-nothing and says so.
+places to look than things to find. The rest is **named filler**: twenty items
+that change nothing about the run and each make one sound. Door Knock, Sad
+Trombone, Dial Tone, Barking Spider, Pocketful of Gravel, A Satisfying Click.
+
+The names are the point, and they are aimed outward. A filler item in a
+multiworld is read mostly by other people: what a room sees is "Troy found Sad
+Trombone", and that lands without anybody needing to know what this game is.
+An item called "Filler" is honest and says nothing. So these are things rather
+than labels, and none of them describes its own effect, because it has none.
+
+The best of them is **Surf**, which is a wave going over and was written as
+distant thunder until it turned out to sound like the sea. A room usually has
+a Pokemon player in it, and a feed line saying somebody found Surf is worth a
+double take. That is the whole brief for these names in one item.
+
+Which one a leftover location gets is a draw rather than a rotation, on the
+fill's own stream in solo and on the slot's generator in a multiworld. The
+locations are walked in table order, so handing them out in turn would put the
+same noise on the same location in every run ever played.
 
 It used to be a spare moves upgrade, back when several of them stacked on one
 level. They do not any more: a level's upgrade lands whole and once, so a
 second copy changed nothing while still announcing itself as a find, which is
 worse than an item that admits to being nothing. A spare unlock was never an
-option either, being a second answer to a question the rules have settled. When
-there are traps and consumables, they go here instead.
+option either, being a second answer to a question the rules have settled.
+
+The engine owns the names and their order; the sound bank owns what each one
+sounds like, and the two are joined by position alone. That is checked at build
+time rather than trusted, because every way of getting it wrong is silent: a
+noise inserted in the middle of the list leaves both sides building, every item
+still arriving, every name in the feed still right, and every sound belonging
+to the item next door.
 
 ## Where this is going
 

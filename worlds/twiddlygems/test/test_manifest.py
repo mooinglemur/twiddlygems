@@ -83,10 +83,10 @@ class TestPackagedManifest(unittest.TestCase):
             "the manifest claims a container format newer than this Archipelago can open",
         )
 
-    def test_the_packaged_world_carries_its_licence(self) -> None:
+    def test_the_packaged_world_carries_its_license(self) -> None:
         # Named `LICENSE`, with no extension, which is what nearly every world
         # in Archipelago's own tree does. Checked against the one at the root
-        # rather than merely for existence, because a stale copy of a licence
+        # rather than merely for existence, because a stale copy of a license
         # is the kind of wrong that nobody looks at twice.
         import zipfile
 
@@ -95,7 +95,7 @@ class TestPackagedManifest(unittest.TestCase):
         self.assertEqual(
             shipped,
             (REPO / "LICENSE").read_text(encoding="utf-8"),
-            "the packaged licence is not the one at the root of the repository",
+            "the packaged license is not the one at the root of the repository",
         )
 
     def test_the_world_it_declares_is_the_one_it_ships(self) -> None:
