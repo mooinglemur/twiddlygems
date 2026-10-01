@@ -501,6 +501,7 @@ export class ArchipelagoClient {
       uuid: uuid(),
       version: { ...PROTOCOL_VERSION, class: 'Version' },
       items_handling: ITEMS_HANDLING,
+      // Deliberately none. DeathLink in the future, perhaps
       tags: [],
       slot_data: true,
     });
