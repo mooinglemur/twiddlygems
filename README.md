@@ -958,9 +958,9 @@ and gold on every level, because somebody may want a relaxed slot on purpose.
 What the default should not be is the one that asks for nothing.
 
 A world submits as many items as it has locations, and this game has more
-places to look than things to find. The rest is **named filler**: twenty items
+places to look than things to find. The rest is **named filler**: sixteen items
 that change nothing about the run and each make one sound. Door Knock, Sad
-Trombone, Dial Tone, Barking Spider, Pocketful of Gravel, A Satisfying Click.
+Trombone, Busy Signal, Barking Spider, Cricket Chirp, Kitchen Timer.
 
 The names are the point, and they are aimed outward. A filler item in a
 multiworld is read mostly by other people: what a room sees is "Troy found Sad

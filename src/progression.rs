@@ -153,10 +153,6 @@ pub enum Noise {
     SadTrombone,
     ShaveAndAHaircut,
     TriumphantKazoo,
-    MusicBoxFragment,
-    PolishingCloth,
-    PocketfulOfGravel,
-    SatisfyingClick,
 }
 
 /// Every noise, in the order the item table numbers them. Appending is safe;
@@ -175,7 +171,13 @@ pub enum Noise {
 /// because only the players holding that one item are affected rather than
 /// everybody holding anything after it. It is still a change a rolled seed
 /// cannot survive.
-pub const NOISES: [Noise; 20] = [
+///
+/// Four more came off the **end** on 2026-10-01, Troy's call that the rest
+/// were more than enough: Music Box Fragment, Polishing Cloth, Pocketful of
+/// Gravel and A Satisfying Click. Truncating costs nothing at all, because no
+/// surviving noise changes number. Of the three ways to shorten this list it
+/// is much the cheapest, and the one to reach for first.
+pub const NOISES: [Noise; 16] = [
     Noise::DoorKnock,
     Noise::BusySignal,
     Noise::WindChime,
@@ -192,10 +194,6 @@ pub const NOISES: [Noise; 20] = [
     Noise::SadTrombone,
     Noise::ShaveAndAHaircut,
     Noise::TriumphantKazoo,
-    Noise::MusicBoxFragment,
-    Noise::PolishingCloth,
-    Noise::PocketfulOfGravel,
-    Noise::SatisfyingClick,
 ];
 
 impl Noise {
@@ -240,10 +238,6 @@ impl Noise {
             Noise::SadTrombone => "Sad Trombone",
             Noise::ShaveAndAHaircut => "Shave and a Haircut",
             Noise::TriumphantKazoo => "Triumphant Kazoo",
-            Noise::MusicBoxFragment => "Music Box Fragment",
-            Noise::PolishingCloth => "Polishing Cloth",
-            Noise::PocketfulOfGravel => "Pocketful of Gravel",
-            Noise::SatisfyingClick => "A Satisfying Click",
         }
     }
 }
@@ -3122,7 +3116,7 @@ mod tests {
             (1_049, "Level 50 Moves Upgrade", Item::Moves { level: 49 }),
             (2_000, "Door Knock", Item::Filler(Noise::DoorKnock)),
             (2_013, "Sad Trombone", Item::Filler(Noise::SadTrombone)),
-            (2_019, "A Satisfying Click", Item::Filler(Noise::SatisfyingClick)),
+            (2_015, "Triumphant Kazoo", Item::Filler(Noise::TriumphantKazoo)),
             (3_000, "Inventory Item: Rocket", Item::Consumable(Consumable::Rocket)),
             (3_001, "Inventory Item: Rainbow", Item::Consumable(Consumable::Rainbow)),
             (3_002, "Inventory Item: Cross Clear", Item::Consumable(Consumable::CrossClear)),
@@ -3211,7 +3205,7 @@ mod tests {
         assert_eq!(
             Item::from_id(FILLER_ID + NOISES.len() as u32),
             None,
-            "a twenty-first noise does not exist yet",
+            "a seventeenth noise does not exist yet",
         );
         assert_eq!(Item::from_id(LEVEL_UNLOCK_ID + 1), None, "there is only one level unlock");
         assert_eq!(

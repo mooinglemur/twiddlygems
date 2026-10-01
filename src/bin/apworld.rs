@@ -444,8 +444,8 @@ fn copies(item: Item, levels: usize) -> Copies {
         // None in the pool. They are named and numbered because a run has to
         // be able to say what it was handed, and they arrive by topping up the
         // leftover locations rather than by being placed. A count here would
-        // be a count *as well as* the topping up, so a world holding twenty
-        // noises would submit twenty items more than it has places for.
+        // be a count *as well as* the topping up, so a world holding sixteen
+        // noises would submit sixteen items more than it has places for.
         Item::Filler(_) => Copies::Fixed(Count::Exactly(0)),
         // The four of these split one total between them. Not a count each,
         // because how many of a kind there are is not a number anybody wrote

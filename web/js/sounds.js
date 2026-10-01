@@ -1369,99 +1369,7 @@ export const SOUNDS = {
     })),
   },
 
-  /// Three passes of cloth over a stone. No transient anywhere: the whole
-  /// point of this one is that nothing is struck.
-  swish: {
-    gain: 0.3,
-    voiceCap: 3,
-    duration: 0.9,
-    layers: [0, 0.3, 0.58].map((delay, which) => ({
-      source: 'noise',
-      filters: [
-        {
-          type: 'bandpass',
-          frequency: 1400 + which * 200,
-          q: 0.8,
-          sweep: { to: 700, time: 0.22 },
-        },
-        { type: 'highpass', frequency: 500, q: 0.5 },
-      ],
-      env: { attack: 0.05, hold: 0.04, decay: 0.16 },
-      delay,
-      gain: 1 - which * 0.2,
-      jitter: { frequency: 0.15, gain: 0.2 },
-    })),
-  },
-
-  /// A handful of small stones, as (start in seconds, pitch, level).
-  ///
-  /// A table for the same reason the riffle is one: the design is the spacing,
-  /// and these are deliberately uneven. Evenly spaced clicks are a machine.
-  gravel: {
-    gain: 0.22,
-    voiceCap: 2,
-    layers: [
-      [0.0, 1900, 0.9],
-      [0.021, 2500, 0.6],
-      [0.047, 1500, 0.8],
-      [0.058, 2900, 0.45],
-      [0.094, 1750, 0.7],
-      [0.131, 2200, 0.5],
-      [0.146, 1300, 0.65],
-      [0.198, 2050, 0.4],
-      [0.247, 1600, 0.5],
-      [0.316, 1850, 0.3],
-    ].flatMap(([delay, note, level]) => [
-      {
-        source: 'triangle',
-        note,
-        sweep: { to: note * 0.7, time: 0.01 },
-        env: { attack: 0.0006, decay: 0.016 },
-        delay,
-        gain: level * 0.6,
-        jitter: { frequency: 0.08, gain: 0.25 },
-      },
-      {
-        source: 'noise',
-        filters: [{ type: 'bandpass', frequency: note * 1.4, q: 3 }],
-        env: { attack: 0.0005, decay: 0.011 },
-        delay,
-        gain: level * 0.5,
-        jitter: { frequency: 0.15, gain: 0.25 },
-      },
-    ]),
-  },
-
-  /// A good switch, down and up. One half alone is a tick; it takes both to
-  /// be the thing the item is named after.
-  click: {
-    gain: 0.28,
-    voiceCap: 3,
-    layers: [
-      {
-        source: 'noise',
-        filters: [{ type: 'bandpass', frequency: 2800, q: 2.2 }],
-        env: { attack: 0.0004, decay: 0.012 },
-        gain: 0.7,
-      },
-      {
-        source: 'triangle',
-        note: 1500,
-        sweep: { to: 1050, time: 0.008 },
-        env: { attack: 0.0005, decay: 0.022 },
-        gain: 0.5,
-      },
-      {
-        source: 'noise',
-        filters: [{ type: 'bandpass', frequency: 3600, q: 2.6 }],
-        env: { attack: 0.0004, decay: 0.009 },
-        delay: 0.028,
-        gain: 0.45,
-      },
-    ],
-  },
-
-  // Three more voices for written figures, alongside `keys`, `glass` and
+  // Two more voices for written figures, alongside `keys`, `glass` and
   // `bass` above. Same contract: no `note` of their own, and a `duration` the
   // sequencer stretches to the written length of each note.
 
@@ -1582,25 +1490,6 @@ export const SOUNDS = {
     ],
   },
 
-  /// A comb tooth plucked. The third partial is 2786 cents up, which is the
-  /// fifth harmonic: that interval is why a music box reads as metal and a
-  /// tidy octave would read as a flute.
-  musicBox: {
-    gain: 0.18,
-    duration: 0.4,
-    layers: [
-      { source: 'sine', env: { attack: 0.001, decay: 0.5 }, gain: 0.9 },
-      { source: 'sine', detune: 1200, env: { attack: 0.001, decay: 0.3 }, gain: 0.3 },
-      { source: 'sine', detune: 2786, env: { attack: 0.001, decay: 0.16 }, gain: 0.13 },
-      {
-        source: 'noise',
-        filters: [{ type: 'highpass', frequency: 5000, q: 0.7 }],
-        env: { attack: 0.0008, decay: 0.02 },
-        gain: 0.1,
-        stretch: false,
-      },
-    ],
-  },
 };
 
 /// What each named filler item sounds like, in the engine's own order.
@@ -1809,29 +1698,4 @@ export const NOISES = [
       ],
     },
   },
-  {
-    name: 'Music Box Fragment',
-    // A fragment and not a tune: it stops in the middle of itself, which is
-    // the whole joke of the name.
-    figure: {
-      tempo: 120,
-      parts: [
-        {
-          sound: 'musicBox',
-          notes: [
-            ['G5', 0, 0.5],
-            ['E5', 0.5, 0.5],
-            ['C5', 1, 0.5],
-            ['G4', 1.5, 0.5],
-            ['A4', 2, 0.5],
-            ['B4', 2.5, 0.5],
-            ['C5', 3, 1],
-          ],
-        },
-      ],
-    },
-  },
-  { name: 'Polishing Cloth', plays: [{ sound: 'swish' }] },
-  { name: 'Pocketful of Gravel', plays: [{ sound: 'gravel' }] },
-  { name: 'A Satisfying Click', plays: [{ sound: 'click' }] },
 ];

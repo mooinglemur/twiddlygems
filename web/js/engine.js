@@ -340,7 +340,7 @@ export class Engine {
    *
    * The pair that lets the page do something with an item besides print its
    * name. A noise is what needs it: the sound to play is `NOISES[value]`, and
-   * matching on the name instead would put a second copy of twenty strings
+   * matching on the name instead would put a second copy of sixteen strings
    * in the sound bank for the engine's list to drift away from.
    *
    * An index off the end is an unlock of nothing, so a caller that asks about

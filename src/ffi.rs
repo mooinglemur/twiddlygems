@@ -256,7 +256,7 @@ pub unsafe extern "C" fn tg_item_class(handle: *const Handle, index: u32) -> u32
 /// This and [`tg_item_value`] are the pair that lets the page do something
 /// with an item besides print its name. A noise is the one that needs it: the
 /// page has to play the right sound for the item that arrived, and matching on
-/// the name would mean the sound bank holding a second copy of twenty
+/// the name would mean the sound bank holding a second copy of sixteen
 /// strings that the engine has already settled.
 ///
 /// An index past the end reads as an unlock of nothing, which is what an

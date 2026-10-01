@@ -1488,7 +1488,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
       audio.play = real;
       audio.sequence = realSequence;
     }
-    // Four of the twenty are written figures and go the other way, so both
+    // Three of the sixteen are written figures and go the other way, so both
     // halves of `playNoiseSound` are covered by pressing the whole list.
     assert.ok(asked.length > 0, 'pressing every sound row played nothing');
     assert.ok(
