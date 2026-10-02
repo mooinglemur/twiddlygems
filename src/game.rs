@@ -520,6 +520,13 @@ pub struct Game {
     /// it is gone again before anything looks at it. What every objective does
     /// go through is [`Game::objectives_met`], so that is where to say so.
     forced_clear: bool,
+    /// A Shuffle Trap has arrived and the board owes it a shuffle.
+    ///
+    /// Armed from outside and spent by [`Game::update`] once the board is
+    /// idle, for the two reasons [`Game::spring_shuffle`] gives: an event
+    /// raised outside `update` reaches nobody, and a board mid-cascade has
+    /// gems that something is in the middle of clearing.
+    trap_shuffle: bool,
     /// How many gems the player's last swap matched, or 0 for a swap that
     /// matched nothing.
     ///
@@ -588,6 +595,7 @@ impl Game {
             announced_clear: false,
             minted_this_wave: 0,
             forced_clear: false,
+            trap_shuffle: false,
             swap_match: 0,
             tallied: false,
             goal_hold_ms: 0.0,
@@ -907,6 +915,20 @@ impl Game {
         // objectives keep reading met through the flourish that follows.
         if self.forced_clear && !self.announced_clear {
             self.settle();
+        }
+        // A Shuffle Trap, taken here for the same reason and with the same
+        // care: it needs an idle board, and `EV_SHUFFLE` has to be raised on
+        // this side of the line above or the page never hears it.
+        //
+        // After the forced clear, so a trap arriving on the frame a level is
+        // won does not rearrange the board the flourish is about to play out
+        // on. Once the level is over the flag simply sits there, which is
+        // right: the next board is a new board, and springing it there would
+        // be hurting the player for something that happened on the last one.
+        if self.trap_shuffle && matches!(self.phase, Phase::Idle) && self.status == Status::Playing {
+            self.trap_shuffle = false;
+            self.phase = Phase::Shuffling { elapsed: 0.0 };
+            self.events.push(Event::plain(EV_SHUFFLE, 0));
         }
         // Before the phase loop, because an idle board runs none of it and a
         // level that opens on its last few moves has to say so anyway.
@@ -2096,6 +2118,36 @@ impl Game {
             return;
         }
         self.forced_clear = true;
+    }
+
+    /// Springs a Shuffle Trap: rearrange every gem on the board.
+    ///
+    /// Armed rather than done, and taken by the next [`Game::update`] for the
+    /// same reason [`Game::force_clear`] is: `EV_SHUFFLE` has to be raised
+    /// inside `update` or it is raised to nobody, since the first thing that
+    /// function does is throw the frame's events away. The page's shuffle
+    /// sound hangs off that event, so a shuffle announced outside it would be
+    /// a board that rearranged itself in silence.
+    ///
+    /// It waits for an idle board rather than interrupting whatever is
+    /// happening. Shuffling mid-cascade would mean moving gems that something
+    /// is in the middle of clearing, and the phase it would have to return to
+    /// is not a question worth answering: a trap that lands a moment later is
+    /// the same trap. Nothing is lost by waiting, because the flag stays set.
+    ///
+    /// Refused outright on a level whose rules say not to shuffle. Those are
+    /// the ones where a layout is the puzzle, and rearranging them would be
+    /// a trap that invalidated the level rather than one that hurt.
+    pub fn spring_shuffle(&mut self) {
+        if self.status != Status::Playing || !self.spec.rules.shuffle_when_stuck {
+            return;
+        }
+        self.trap_shuffle = true;
+    }
+
+    /// Whether a Shuffle Trap is waiting for the board to settle.
+    pub fn shuffle_armed(&self) -> bool {
+        self.trap_shuffle
     }
 
     /// Debug: hand the level a different number of moves.

@@ -973,6 +973,33 @@ distant thunder until it turned out to sound like the sea. A room usually has
 a Pokemon player in it, and a feed line saying somebody found Surf is worth a
 double take. That is the whole brief for these names in one item.
 
+### Traps
+
+The other thing a leftover location can hold. **Shuffle Trap** is the first:
+it rearranges every gem on the board, exactly as a stuck board already does.
+
+A trap is the only item here that is an **event rather than a holding**.
+Everything else a run receives it then has — an unlock teaches the board, a
+moves upgrade raises a budget, a bonus item waits to be spent. A trap happens
+to the board in front of the player and is over, which is why receiving one
+has to reach the live game rather than only the inventory.
+
+Three separate items rather than one carrying a kind, so a tracker and a feed
+can name which one hit you, and "Trap" is in each name rather than left to the
+feed's coloring, which is Archipelago's own convention.
+
+They are armed rather than done: the board springs one when it is next idle.
+Rearranging mid-cascade would mean moving gems that something is in the middle
+of clearing, and a trap that lands a moment later is the same trap. A level
+whose rules say not to shuffle refuses the trap outright, because those are the
+ones where the layout is the puzzle and rearranging it would not hurt the
+player so much as throw the level away.
+
+Traps are in the datapackage and in nobody's pool yet: what decides how many a
+seed holds is a yaml percentage that does not exist, and they are meant to
+replace a share of the filler rather than add items. Until then the testing
+menu springs one.
+
 Which one a leftover location gets is a draw rather than a rotation, on the
 fill's own stream in solo and on the slot's generator in a multiworld. The
 locations are walked in table order, so handing them out in turn would put the
@@ -1002,9 +1029,9 @@ to the item next door.
    solo, and delivered by the multiworld later. Both sides fill the same
    `Inventory`, so "can this be cleared from here" is one question asked of one
    thing. The apworld is emitted from those same tables and generates real
-   seeds. Still to come: the trap and usable items, which need somewhere to
-   keep and spend them; options, since everything is fixed in this first pass;
-   and the client that connects a run to a server.
+   seeds. The bonus items, the settings and the client that connects a run to
+   a server all landed since this was written. Still to come: the rest of the
+   traps, and the yaml percentage that decides how many of them a seed holds.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles

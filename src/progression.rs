@@ -82,6 +82,12 @@ pub enum Item {
     /// in the strongest sense here, since everything the world holds past the
     /// opening level sits behind some number of these.
     LevelUnlock,
+    /// Something done to the board the player is looking at.
+    ///
+    /// The only item here that is an event rather than a holding: see
+    /// [`Trap`]. Receiving one springs it, and nothing is left afterwards
+    /// except the board being different.
+    Trap(Trap),
 }
 
 /// The kinds of thing a run can be given to spend. See [`Item::Consumable`].
@@ -196,6 +202,58 @@ pub const NOISES: [Noise; 16] = [
     Noise::TriumphantKazoo,
 ];
 
+/// Something a run would rather not have been sent. See [`Item::Trap`].
+///
+/// Three distinct items rather than one carrying a kind, Troy's call: a
+/// tracker and a feed both name the item, so "Shuffle Trap" tells a player
+/// what happened to them where "Trap" would only tell them that something did.
+///
+/// A trap is the one kind of item here that is an **event rather than a
+/// holding**. Everything else a run receives it then has: an unlock teaches
+/// the board, a moves upgrade raises a budget, a bonus item waits to be spent,
+/// a noise makes its sound and is counted. A trap happens to the board in
+/// front of the player and is over. That is why [`Inventory`] counts them but
+/// nothing reads the count, and why receiving one has to reach the live game.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Trap {
+    /// Rearranges every gem on the board, exactly as a stuck board already
+    /// does.
+    ///
+    /// The cheapest of the three by a distance, because the board has done
+    /// this since the first week: `shuffle_board` finds an arrangement with a
+    /// move in it and no match already made, and `Phase::Shuffling` animates
+    /// it and raises `EV_SHUFFLE`, which the page already has a sound for. The
+    /// trap does not get its own anything.
+    Shuffle,
+}
+
+/// Every trap, in the order the item table numbers them. Appending is safe;
+/// reordering is not, for the reason [`Item::id`] gives.
+pub const TRAPS: [Trap; 1] = [Trap::Shuffle];
+
+impl Trap {
+    /// Its place in [`TRAPS`], which is what its id and its event are built
+    /// from.
+    pub fn code(self) -> u32 {
+        TRAPS.iter().position(|kind| *kind == self).unwrap_or(0) as u32
+    }
+
+    pub fn from_code(code: u32) -> Option<Trap> {
+        TRAPS.get(code as usize).copied()
+    }
+
+    /// What it is called, which is what a room reads.
+    ///
+    /// "Trap" is in every name on purpose. These are the one thing here a
+    /// player is not pleased to see, and Archipelago's own convention is to
+    /// say so in the name rather than leave it to the item's color.
+    pub fn name(self) -> &'static str {
+        match self {
+            Trap::Shuffle => "Shuffle Trap",
+        }
+    }
+}
+
 impl Noise {
     /// Its place in [`NOISES`], which is what its id and its event are built
     /// from.
@@ -258,6 +316,7 @@ impl Item {
             Item::Filler(noise) => FILLER_ID + noise.code(),
             Item::Consumable(kind) => CONSUMABLE_ID_BASE + kind.code(),
             Item::LevelUnlock => LEVEL_UNLOCK_ID,
+            Item::Trap(kind) => TRAP_ID_BASE + kind.code(),
         }
     }
 
@@ -277,6 +336,9 @@ impl Item {
     /// above cannot change what a number already in somebody's seed reads
     /// back as.
     pub fn from_id(id: u32) -> Option<Item> {
+        if id >= TRAP_ID_BASE {
+            return Trap::from_code(id - TRAP_ID_BASE).map(Item::Trap);
+        }
         if id >= LEVEL_UNLOCK_ID {
             // One number for every copy, so anything past it is nothing.
             return (id == LEVEL_UNLOCK_ID).then_some(Item::LevelUnlock);
@@ -310,6 +372,10 @@ impl Item {
             Item::Unlock(_) | Item::Moves { .. } | Item::LevelUnlock => Class::Progression,
             Item::Filler(_) => Class::Filler,
             Item::Consumable(_) => Class::Useful,
+            // The one Archipelago treats specially: a fill is willing to put
+            // one of these where nobody has to go, the same as filler, and a
+            // player who has excluded a location is promised neither.
+            Item::Trap(_) => Class::Trap,
         }
     }
 
@@ -326,6 +392,7 @@ impl Item {
             Item::Filler(_) => 2,
             Item::Consumable(_) => 3,
             Item::LevelUnlock => 4,
+            Item::Trap(_) => 5,
         }
     }
 
@@ -340,6 +407,7 @@ impl Item {
             // Nor this: every copy is the same item, and which level it opens
             // is a matter of how many have arrived rather than of the item.
             Item::LevelUnlock => 0,
+            Item::Trap(kind) => kind.code() as u16,
         }
     }
 }
@@ -602,6 +670,10 @@ const CONSUMABLE_ID_BASE: u32 = 3_000;
 /// number for every copy: they are copies of one item, which is what makes a
 /// progressive item progressive.
 const LEVEL_UNLOCK_ID: u32 = 4_000;
+
+/// Where the traps start, in a thousand of their own. One number each, by
+/// [`Trap::code`].
+const TRAP_ID_BASE: u32 = 5_000;
 
 /// The first level that cannot be cleared bare-handed.
 ///
@@ -984,6 +1056,10 @@ pub fn items(levels: usize) -> Vec<Item> {
         // of these, the way a run asking for one gem still knows the names of
         // all ten.
         .chain(std::iter::once(Item::LevelUnlock))
+        // Last, so adding a trap renumbers nothing. In the table whether or
+        // not a run asked for any, like everything else here: how many a world
+        // holds is a setting, and the names and numbers are a datapackage.
+        .chain(TRAPS.iter().map(|kind| Item::Trap(*kind)))
         .collect()
 }
 
@@ -1028,6 +1104,10 @@ pub fn item_name(item: Item) -> String {
         // so a player who has seen one in another game knows what to do with
         // this one: find more of them.
         Item::LevelUnlock => "Progressive Level Unlock".to_string(),
+        // "Trap" is part of the name rather than left to the feed's coloring,
+        // which is Archipelago's own convention and the kinder one: a player
+        // reading a spoiler log or somebody else's feed sees what it was.
+        Item::Trap(kind) => kind.name().to_string(),
     }
 }
 
@@ -1197,6 +1277,9 @@ pub fn item_index(item: Item, levels: usize) -> Option<usize> {
             Some(UNLOCKABLE.len() + levels + NOISES.len() + kind.code() as usize)
         }
         Item::LevelUnlock => Some(UNLOCKABLE.len() + levels + NOISES.len() + CONSUMABLES.len()),
+        Item::Trap(kind) => Some(
+            UNLOCKABLE.len() + levels + NOISES.len() + CONSUMABLES.len() + 1 + kind.code() as usize,
+        ),
     }
 }
 
@@ -1267,6 +1350,13 @@ pub struct Inventory {
     /// How many progressive level unlocks have arrived. How far up the ladder
     /// a run may play, when it is playing that way.
     unlocks: u32,
+    /// How many of each trap has been sprung, by [`Trap::code`].
+    ///
+    /// Kept for the same reason the noises are: so [`Inventory::count`] can
+    /// answer honestly about every item in the table. Nothing reads it, and a
+    /// trap is the one item where the count is the *least* of what matters,
+    /// since what a trap did happened to a board that has since moved on.
+    traps: [u32; TRAPS.len()],
 }
 
 impl Inventory {
@@ -1278,6 +1368,7 @@ impl Inventory {
             filler: [0; NOISES.len()],
             consumables: [0; CONSUMABLES.len()],
             unlocks: 0,
+            traps: [0; TRAPS.len()],
         }
     }
 
@@ -1335,6 +1426,13 @@ impl Inventory {
                 self.unlocks += 1;
                 true
             }
+            // Always news, and the one item where "is the run better off for
+            // it" is beside the point: it is going to happen to the board
+            // whatever the answer, and the player is owed a line saying why.
+            Item::Trap(kind) => {
+                self.traps[kind.code() as usize] += 1;
+                true
+            }
         }
     }
 
@@ -1377,6 +1475,7 @@ impl Inventory {
             Item::Filler(noise) => self.filler[noise.code() as usize] > 0,
             Item::Consumable(kind) => self.consumables(kind) > 0,
             Item::LevelUnlock => self.unlocks > 0,
+            Item::Trap(kind) => self.traps[kind.code() as usize] > 0,
         }
     }
 
@@ -1405,6 +1504,10 @@ impl Inventory {
             // The one count a rule really is built on: reaching the level at
             // `index` asks for `index` of these.
             Item::LevelUnlock => self.unlocks,
+            // Counted and never asked about. No rule may be built on this one
+            // even in principle: a rule that asked for a trap would be a seed
+            // that cannot be finished without being hurt first.
+            Item::Trap(kind) => self.traps[kind.code() as usize],
         }
     }
 
@@ -2425,7 +2528,8 @@ mod tests {
                 Item::Moves { .. }
                 | Item::Filler(_)
                 | Item::Consumable(_)
-                | Item::LevelUnlock => None,
+                | Item::LevelUnlock
+                | Item::Trap(_) => None,
             })
             .collect();
         let mut by_code = unlocks.clone();
@@ -3121,6 +3225,7 @@ mod tests {
             (3_001, "Inventory Item: Rainbow", Item::Consumable(Consumable::Rainbow)),
             (3_002, "Inventory Item: Cross Clear", Item::Consumable(Consumable::CrossClear)),
             (3_003, "Inventory Item: Rocket Cluster", Item::Consumable(Consumable::RocketCluster)),
+            (5_000, "Shuffle Trap", Item::Trap(Trap::Shuffle)),
         ];
         for (id, name) in [
             (4_000, "Level 1 AP Gem 1"),
@@ -3159,6 +3264,8 @@ mod tests {
                     ..CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32)
                     .contains(&item.id()),
                 Item::LevelUnlock => item.id() == LEVEL_UNLOCK_ID,
+                Item::Trap(_) =>
+                    (TRAP_ID_BASE..TRAP_ID_BASE + TRAPS.len() as u32).contains(&item.id()),
             }),
             "an item is numbered outside its own range",
         );
@@ -3212,6 +3319,11 @@ mod tests {
             Item::from_id(CONSUMABLE_ID_BASE + CONSUMABLES.len() as u32),
             None,
             "a fifth kind of bonus item does not exist yet",
+        );
+        assert_eq!(
+            Item::from_id(TRAP_ID_BASE + TRAPS.len() as u32),
+            None,
+            "a second trap does not exist yet",
         );
         // A move upgrade for a level past the end of the ladder reads back
         // cleanly on purpose: how long the ladder is is not this function's

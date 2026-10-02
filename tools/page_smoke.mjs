@@ -1433,8 +1433,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.ok(!options.classList.contains('hidden'), 'the testing menu has no switches');
   assert.equal(
     options.children.length,
-    5,
-    'the testing menu does not offer the five shortcuts it is meant to',
+    6,
+    'the testing menu does not offer the six shortcuts it is meant to',
   );
 
   // Nothing is applied until it is closed, so a tester can change their mind.
@@ -1520,6 +1520,36 @@ click(overlayButton('Close'), 'the level picker has no way out');
   );
   assert.ok(overlay.classList.contains('hidden'), 'the testing menu stayed up after closing');
   assert.ok(options.classList.contains('hidden'), 'the switches outlived the menu');
+
+  // The Shuffle Trap, which the testing menu is currently the only way to
+  // reach: traps are in the datapackage and in nobody's pool until the yaml
+  // percentage exists. Driven from the switch rather than by calling the
+  // engine, because the thing not yet covered anywhere is the wiring from a
+  // row in that menu through to the board.
+  {
+    const board = () => Array.from(engine.snapshot().cells);
+    const settled = board();
+    // Twenty again from scratch: closing the menu was a tap somewhere else,
+    // which is what resets the count.
+    for (let i = 0; i < 20; i += 1) {
+      tap(chip);
+    }
+    const shuffle = rowNamed('Spring a Shuffle Trap');
+    assert.ok(shuffle, 'the testing menu cannot spring a Shuffle Trap');
+    click(shuffle, 'the shuffle switch does not respond');
+    click(overlayButton('Close'), 'the testing menu has no way out');
+    assert.deepEqual(board(), settled, 'the board moved before a single frame had run');
+
+    // The gems are not rearranged until the shuffle phase ends, which is the
+    // whole point of the phase: the player watches the board churn and then
+    // sees where everything landed. SHUFFLE_MS is 700, so pump well past it.
+    pump(80);
+    assert.notDeepEqual(
+      board(),
+      settled,
+      'the trap was sprung from the menu and the board came out identical',
+    );
+  }
 }
 
 // The seam the victory screen hangs on: the engine deciding the run is over.

@@ -258,9 +258,21 @@ else:
 # sound moved in the sound bank, leaves both sides building, every item still
 # arriving, every name in the feed still correct, and every sound belonging to
 # the item next door.
-rust_noises = re.search(r"pub fn name\(self\) -> &'static str \{(.*?)\n    \}", progression_source, re.S)
+# Scoped to `impl Noise`, not searched across the file. `Trap` grew a `name`
+# of its own and sits above this one, so an unscoped search found the traps,
+# read no `Noise::` arms out of them and said the names could not be read.
+# Exactly what `rust_arms` takes a `within` for, and the same mistake it
+# already documents having made once with `code`.
+noise_impl = re.search(r"\nimpl Noise \{(.*?)\n\}", progression_source, re.S)
+rust_noises = (
+    re.search(r"pub fn name\(self\) -> &'static str \{(.*?)\n    \}", noise_impl.group(1), re.S)
+    if noise_impl
+    else None
+)
 js_noises = re.search(r"export const NOISES = \[(.*?)\n\];", read(ROOT / "web" / "js" / "sounds.js"), re.S)
-if not rust_noises:
+if not noise_impl:
+    problems.append("could not find impl Noise to read the filler item names from")
+elif not rust_noises:
     problems.append("could not find Noise::name to read the filler item names from")
 elif not js_noises:
     problems.append("could not find the NOISES table in sounds.js")

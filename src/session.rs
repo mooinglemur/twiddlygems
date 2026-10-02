@@ -11,7 +11,7 @@ use crate::options::{Kind, Options, SETTINGS, TOGGLE_LABELS};
 use crate::progression::{
     ap_gems_per_level, fill_seed, goal, item_index, item_name, item_pool, items, location_index,
     location_name, locations, solo_placement, Class, Consumable, Inventory, Item, Location, Reached,
-    Tier, LONGEST_CHAIN, LONGEST_MATCH, NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
+    Tier, Trap, LONGEST_CHAIN, LONGEST_MATCH, NO_LOCATION, SHORTEST_CHAIN, SHORTEST_MATCH,
 };
 use crate::rng::Rng;
 
@@ -565,6 +565,12 @@ impl Session {
         if is_new {
             self.refresh_specials();
             self.refresh_moves();
+            // A trap is the one item that does something rather than being
+            // held, so it is sprung here, where the run finds out about it.
+            // `spring_shuffle` only arms a flag; the board takes it when it is
+            // next idle, so this is safe to call at any moment including mid
+            // cascade.
+            self.spring(item);
             let levels = self.levels.len();
             let at = from
                 .and_then(|location| location_index(location, levels))
@@ -592,6 +598,25 @@ impl Session {
         let mut spec = self.levels[self.index].clone();
         self.inventory.apply(self.index, &mut spec);
         self.game.spec.rules.specials = spec.rules.specials;
+    }
+
+    /// Does whatever a trap does, and nothing for anything else.
+    ///
+    /// The seam between an item arriving and the board changing. Every other
+    /// kind of item is answered by the inventory alone and then read back off
+    /// it by [`Session::refresh_specials`] and friends; a trap has nothing to
+    /// read back, so this is where it happens.
+    ///
+    /// One match on the trap kind rather than a method on [`Trap`], because
+    /// what a trap does is the game's business and `progression.rs` deals in
+    /// what a run holds. A trap that knew how to shuffle a board would put the
+    /// board's rules in the item table.
+    fn spring(&mut self, item: Item) {
+        if let Item::Trap(kind) = item {
+            match kind {
+                Trap::Shuffle => self.game.spring_shuffle(),
+            }
+        }
     }
 
     /// Re-derives the level's move budget, handing the player the difference.
@@ -933,6 +958,63 @@ mod tests {
     /// `a_ladder_that_opens_by_item_does_not_open_by_clearing` and its pair.
     fn climbing(seed: u64) -> Session {
         Session::set_up(seed, Options { progressive_levels: 0, ..Options::default() })
+    }
+
+    #[test]
+    fn a_shuffle_trap_rearranges_the_board_once_it_is_idle() {
+        // The whole of what makes a trap a trap rather than a name in a feed:
+        // it has to reach the board the player is looking at.
+        let mut session = climbing(9);
+        session.set_remote(true);
+        // Settled, so the board is idle and nothing is mid-cascade.
+        session.update(16.0);
+        let before: Vec<u8> = session.game().cells_bytes().to_vec();
+
+        assert!(session.receive_id(Item::Trap(Trap::Shuffle).id()), "the trap was refused");
+        assert!(session.game().shuffle_armed(), "receiving the trap armed nothing");
+        // Not yet: the board is rearranged by the update that takes the flag,
+        // because the event announcing it has to be raised inside one.
+        assert_eq!(session.game().cells_bytes(), &before[..], "the board moved before a frame ran");
+
+        session.update(16.0);
+        assert!(!session.game().shuffle_armed(), "the trap stayed armed after being taken");
+        // The board's own stream, not the session's: the two are separate and
+        // the ABI packs them together. A shuffle is something the board did.
+        assert!(
+            session.game().events().iter().any(|e| e.kind == crate::game::EV_SHUFFLE),
+            "the shuffle was not announced, so the page would hear no sound",
+        );
+        // Run the shuffle out. The gems are not moved until the phase ends,
+        // which is the whole point of the phase: the player watches the board
+        // churn and then sees where everything landed. Driven until the board
+        // is idle rather than for a fixed number of frames, so a change to
+        // `SHUFFLE_MS` does not quietly turn this test into one that asserts
+        // the board was still mid-shuffle.
+        for _ in 0..200 {
+            if matches!(session.game().phase(), crate::game::Phase::Idle) {
+                break;
+            }
+            session.update(16.0);
+        }
+        assert_ne!(
+            session.game().cells_bytes(),
+            &before[..],
+            "the board came out of the shuffle exactly as it went in",
+        );
+    }
+
+    #[test]
+    fn a_shuffle_trap_is_refused_where_shuffling_would_break_the_level() {
+        // A level that says not to shuffle when stuck is one whose layout is
+        // the puzzle. Rearranging it is not a trap that hurts, it is a trap
+        // that throws the level away, so the item does nothing at all there.
+        let mut session = climbing(11);
+        session.set_remote(true);
+        session.update(16.0);
+        session.game_mut().spec.rules.shuffle_when_stuck = false;
+
+        assert!(session.receive_id(Item::Trap(Trap::Shuffle).id()), "the item was refused");
+        assert!(!session.game().shuffle_armed(), "a level that must not shuffle armed one anyway");
     }
 
     /// What an item event says, unpacked: which item, and where from.

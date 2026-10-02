@@ -133,6 +133,7 @@ const DEBUG_CHOICES = [
   { key: 'specials', label: 'Unlock all specials', hint: 'All five, on the next board' },
   { key: 'moves', label: 'Set moves to 99', hint: 'This level only' },
   { key: 'inventory', label: 'Fill inventory', hint: '99 of every bonus item' },
+  { key: 'shuffle', label: 'Spring a Shuffle Trap', hint: 'Rearranges the board' },
   { key: 'clear', label: 'Set objectives as met', hint: 'Wins this level now' },
 ];
 /** What "fill the inventory" fills it to. */
@@ -1202,6 +1203,12 @@ async function boot() {
       for (const kind of Object.values(Consumable)) {
         engine.restoreConsumables(kind, DEBUG_CONSUMABLES);
       }
+    }
+    // Before the clear below, and it does not matter: a trap armed on the
+    // frame a level is won waits for a board that is never idle again, which
+    // is the engine's own rule about not springing one into a flourish.
+    if (picked.has('shuffle')) {
+      engine.springShuffle();
     }
     // Last, and on its own frame's terms: this hands the level to the ordinary
     // settle, which announces the clear and starts the flourish.

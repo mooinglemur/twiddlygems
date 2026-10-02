@@ -941,6 +941,23 @@ pub unsafe extern "C" fn tg_force_clear(handle: *mut Handle) {
     handle.session.game_mut().force_clear();
 }
 
+/// Debug: spring a Shuffle Trap on the level in play.
+///
+/// For the testing menu. The ordinary way to receive one is the way every
+/// other item arrives, through [`tg_receive`], and this goes through the same
+/// `Game` call that path does rather than reaching past it: a shortcut that
+/// rearranged the board itself would be testing something the game never
+/// does. It takes effect on the next frame with the board idle, so nothing
+/// happens here that a player could see.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_spring_shuffle(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    handle.session.game_mut().spring_shuffle();
+}
+
 /// Debug: give the current level a different number of moves.
 ///
 /// # Safety

@@ -466,6 +466,17 @@ fn copies(item: Item, levels: usize) -> Copies {
             spare_percent: SPARE_UNLOCKS,
             only_when: PROGRESSIVE_LEVELS,
         },
+        // None yet, and none ever as a *count*. A trap will arrive the way a
+        // noise does, by topping up a leftover location, because the agreed
+        // design is that traps replace a share of the filler rather than
+        // adding items: a world has as many items as it has locations, and
+        // anything with a count of its own pushes something else out.
+        //
+        // What decides that share is a yaml percentage which does not exist
+        // yet, so for now a trap is in the datapackage and in nobody's pool.
+        // It is reachable from the testing menu, which is what it was built
+        // against.
+        Item::Trap(_) => Copies::Fixed(Count::Exactly(0)),
     }
 }
 
@@ -520,6 +531,13 @@ fn tops_up(item: Item) -> bool {
         // ladder, and a leftover location making one more would hand out a
         // level nobody's settings called for.
         Item::LevelUnlock => false,
+        // Not yet, and this is the one that will change. Traps are meant to
+        // take a share of the top-up rather than to add items, so they belong
+        // in this set; what is missing is the yaml percentage saying how big
+        // the share is. Turning this to `true` before that exists would put
+        // traps in every seed at the same rate as a noise, which nobody asked
+        // for and nobody could turn off.
+        Item::Trap(_) => false,
     }
 }
 

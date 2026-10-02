@@ -104,6 +104,7 @@ export const ItemKind = {
   NOISE: 2,
   CONSUMABLE: 3,
   LEVEL_UNLOCK: 4,
+  TRAP: 5,
 };
 
 /**
@@ -705,6 +706,16 @@ export class Engine {
   /// the ordinary end of a level: the clear, the beat, the flourish.
   forceClear() {
     this.wasm.tg_force_clear(this.handle);
+  }
+
+  /**
+   * Springs a Shuffle Trap, the way receiving the item would.
+   *
+   * Takes effect on the next frame with the board idle, so nothing visible
+   * happens on this call. A level whose rules say not to shuffle refuses it.
+   */
+  springShuffle() {
+    this.wasm.tg_spring_shuffle(this.handle);
   }
 
   /**
