@@ -24,6 +24,11 @@ import {
 /// little works, and far short of a session's worth.
 const FEED_LIMIT = 40;
 
+/// How long "Connected." stays up, and how long it then takes to go. The fade
+/// matches the transition in the stylesheet. See `showLink`.
+const LINK_HOLD_MS = 1_200;
+const LINK_FADE_MS = 500;
+
 /// The class marking each tier, matched in the stylesheet. Indexed by `Tier`.
 const TIER_CLASS = [null, 'tier-clear', 'tier-silver', 'tier-gold'];
 const TIER_CLASSES = TIER_CLASS.filter(Boolean);
@@ -129,6 +134,9 @@ export class Hud {
     /// a cell is actually tapped.
     this.armed = null;
     this.shownArmed = undefined;
+    /// The connection overlay's fade, waiting to run or part way through it.
+    /// Cancelled by anything that puts a new message up. See `showLink`.
+    this.linkTimer = null;
   }
 
   /**
@@ -987,22 +995,41 @@ export class Hud {
   }
 
   /**
-   * The state of the connection, over the top of the game.
+   * The state of the connection, over the top of the board.
    *
-   * Empty text puts it away, which is the state a working connection is in:
-   * a pill that said "connected" forever would be a pill nobody reads, and
-   * the one that matters is the one that appears when something has gone
-   * wrong.
+   * Empty text puts it away, which is the state a solo run is in. A wash over
+   * the board rather than a line in a bar, because a player whose checks are
+   * going nowhere has to be told plainly; deaf to the pointer, because being
+   * told is no reason to stop playing.
+   *
+   * `aside` is the part that changes on its own, like a countdown. It is kept
+   * out of the live region so a screen reader hears the state once instead of
+   * once a second. `fade` takes the whole thing away after a moment, which is
+   * what a connection coming back has to say.
    */
-  showLink(text, kind = '') {
-    const { link } = this.dom;
+  showLink(text, { kind = '', aside = '', fade = false } = {}) {
+    const { link, linkWord, linkAside } = this.dom;
+    if (this.linkTimer) {
+      clearTimeout(this.linkTimer);
+      this.linkTimer = null;
+    }
     if (!text) {
       link.classList.add('hidden');
       return;
     }
-    link.textContent = text;
+    linkWord.textContent = text;
+    linkAside.textContent = aside;
+    // Every class at once, which is also what clears `hidden` and the fade a
+    // previous message may have been part way through.
     link.className = kind;
-    link.classList.remove('hidden');
+    if (fade) {
+      this.linkTimer = setTimeout(() => {
+        link.classList.add('fading');
+        // Hidden only once it has finished fading, or the transition would be
+        // cut off at whatever opacity it had reached.
+        this.linkTimer = setTimeout(() => link.classList.add('hidden'), LINK_FADE_MS);
+      }, LINK_HOLD_MS);
+    }
   }
 
   /**

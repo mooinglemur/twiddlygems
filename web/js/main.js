@@ -197,6 +197,8 @@ const dom = {
   connectStatus: document.getElementById('connect-status'),
   connectBack: document.getElementById('connect-back'),
   link: document.getElementById('link'),
+  linkWord: document.getElementById('link-word'),
+  linkAside: document.getElementById('link-aside'),
 };
 
 /** The last room joined, so the form opens mostly filled in. */
@@ -796,6 +798,10 @@ async function boot() {
    */
   let mode = 'title';
 
+  /// What the connection overlay is already saying, so a frame that would say
+  /// the same thing touches nothing. See `showLink`.
+  let linkSaid = '';
+
   /**
    * The connection to a multiworld, made once and kept for the page's life.
    *
@@ -853,7 +859,7 @@ async function boot() {
     hud.hideOverlay();
     hud.hideSetup();
     hud.hideConnect();
-    hud.showLink('');
+    hideLink();
     dom.title.classList.remove('hidden');
     // The board is still laid out underneath so the canvas keeps its size;
     // hiding it from assistive tech is what stops it being read as content.
@@ -953,25 +959,70 @@ async function boot() {
   const onLinkState = (state, detail) => {
     if (state === Link.PLAYING) {
       hud.setConnectStatus('Connected', 'good');
-      hud.showLink('');
+      // Before the overlay is drawn, because until this has run there is no
+      // multiworld to draw it over.
       if (mode !== 'multiworld') {
         startMultiworld();
       }
+    } else if (state === Link.REFUSED) {
+      hud.setConnectStatus(detail ?? 'The room refused the connection', 'bad');
+    }
+    showLink();
+  };
+
+  /**
+   * What the overlay over the board should say about the connection.
+   *
+   * Every state says something, including the good one: a player who watched
+   * it fail wants to see it come back, so "Connected." is shown and then
+   * fades, which is the one message that goes away on its own.
+   */
+  const linkNow = () => {
+    if (client.state === Link.PLAYING) {
+      return { text: 'Connected.', kind: 'good', fade: true };
+    }
+    if (client.state === Link.REFUSED) {
+      return { text: client.error ?? 'The room refused the connection', kind: 'bad' };
+    }
+    if (client.state === Link.CONNECTING || client.state === Link.HANDSHAKING) {
+      return { text: 'Connecting…', kind: 'bad' };
+    }
+    const seconds = client.retrySeconds;
+    return {
+      text: 'Disconnected.',
+      kind: 'bad',
+      // Read off the client's own clock rather than one kept here, and held
+      // apart from the words: it changes every second, and a live region that
+      // changed every second would be read out every second.
+      aside: seconds === null ? '' : ` (reconnecting in ${seconds}s)`,
+    };
+  };
+
+  /**
+   * Keeps that overlay saying what is true now.
+   *
+   * Called on every state change and on every frame, for the countdown. The
+   * page is only written when the words change, which is once a second at the
+   * very most and on the overwhelming majority of frames is never.
+   */
+  const showLink = () => {
+    if (mode !== 'multiworld') {
       return;
     }
-    if (state === Link.REFUSED) {
-      const said = detail ?? 'The room refused the connection';
-      hud.setConnectStatus(said, 'bad');
-      // Already playing when it happened, which a version mismatch cannot be
-      // but a room being shut down mid-game can.
-      if (mode === 'multiworld') {
-        hud.showLink(said, 'bad');
-      }
+    const now = linkNow();
+    const said = `${now.kind}/${now.text}${now.aside ?? ''}`;
+    if (said === linkSaid) {
       return;
     }
-    if (mode === 'multiworld') {
-      hud.showLink(state === Link.LOST ? 'Connection lost, retrying…' : 'Reconnecting…', 'bad');
-    }
+    linkSaid = said;
+    hud.showLink(now.text, now);
+  };
+
+  /// Puts it away, for leaving the room: nothing about a connection is worth
+  /// saying once there is not one.
+  const hideLink = () => {
+    linkSaid = '';
+    hud.showLink('');
   };
 
   client = new ArchipelagoClient(engine, { onFeed: onSaid, onState: onLinkState });
@@ -979,7 +1030,7 @@ async function boot() {
   /// Leaves the room and puts the solo run back, which was never disturbed.
   const leaveMultiworld = () => {
     client.disconnect();
-    hud.showLink('');
+    hideLink();
     hud.clearFeed();
     const saved = readSave();
     seed = saved.seed;
@@ -1368,6 +1419,11 @@ async function boot() {
   const frame = (now) => {
     const dt = Math.min(now - last, MAX_FRAME_MS);
     last = now;
+
+    // Above the return below rather than beside the rest of the multiworld's
+    // frame: a connection can drop while the player is reading a finished
+    // level, and the countdown has to keep counting there too.
+    showLink();
 
     // The title screen holds the clock rather than running a level nobody can
     // see behind it. `last` is still moved on above, so choosing a mode does

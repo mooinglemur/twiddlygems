@@ -460,6 +460,17 @@ export class Engine {
   }
 
   /**
+   * The same, for an item this client has handed over before.
+   *
+   * A trap in it does not go off. For the part of a resent list that is the
+   * room's record rather than news: a player who reloaded is owed their
+   * inventory back, not every trap in its history again.
+   */
+  receiveQuietly(id) {
+    return this.wasm.tg_receive_quiet(this.handle, id) === 1;
+  }
+
+  /**
    * Empties what the run is holding, leaving what it has checked alone.
    *
    * For the one thing a multiworld says that nothing else does: this is your

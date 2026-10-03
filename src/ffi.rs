@@ -694,6 +694,25 @@ pub unsafe extern "C" fn tg_receive(handle: *mut Handle, id: u32) -> u32 {
     took as u32
 }
 
+/// The same, for an item the caller has handed over before.
+///
+/// A trap in it does not go off. Everything else about it is identical: the
+/// item is taken, the tally counts it, and the event is raised.
+///
+/// For the list a server resends on every reconnect. It is the room's whole
+/// record, not news, and a player who reloaded is owed the inventory rather
+/// than every trap in its history all over again.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_receive_quiet(handle: *mut Handle, id: u32) -> u32 {
+    let handle = session_mut!(handle, 0);
+    let took = handle.session.receive_id_quietly(id);
+    pack_run_events(handle);
+    took as u32
+}
+
 /// Empties what the run is holding, leaving what it has checked alone.
 ///
 /// For the sequence a reconnect takes: this, then every item the server listed.

@@ -329,6 +329,21 @@ for (const [name, metrics] of [
   await sleep(200);
   await shoot(`${name}-04-feed`);
 
+  // How the multiworld connection is doing, over the board it does not stop
+  // the player using. Shown directly rather than by losing a real connection,
+  // and the only way to see where it sits and what it covers: a stub DOM can
+  // check the words and the classes but has no geometry at all.
+  await evaluate(`
+    window.twiddlygems.hud.showLink('Disconnected.', {
+      kind: 'bad',
+      aside: ' (reconnecting in 4s)',
+    })
+  `);
+  await sleep(200);
+  await shoot(`${name}-04-link`);
+  await evaluate(`window.twiddlygems.hud.showLink('')`);
+  await sleep(120);
+
   // What the level can be beaten to, which lives behind a tap of the score
   // now. Nothing an ordinary run does opens it, so it is opened here.
   await evaluate(`document.getElementById('score-box').click()`);

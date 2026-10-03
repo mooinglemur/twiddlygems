@@ -68,7 +68,6 @@ function stubElement(id) {
     textContent: '',
     disabled: false,
     type: '',
-    className: '',
     classList: {
       set: new Set(),
       add(name) { this.set.add(name); },
@@ -79,6 +78,16 @@ function stubElement(id) {
         if (on) { this.set.add(name); } else { this.set.delete(name); }
         return on;
       },
+    },
+    // Two names for one thing, the way a browser has it. Kept apart, a page
+    // could set `className` and then be told by `classList` that the classes
+    // it had just replaced were all still there, which is a stub quietly
+    // disagreeing with every browser the game runs in.
+    get className() {
+      return [...this.classList.set].join(' ');
+    },
+    set className(names) {
+      this.classList.set = new Set(String(names).split(/\s+/).filter(Boolean));
     },
     append(...nodes) {
       for (const node of nodes) {
@@ -174,6 +183,7 @@ fxSurface = elements.get('fx');
 // The overlay starts hidden in the markup; the stub has to agree.
 elements.get('overlay').classList.add('hidden');
 
+const documentListeners = new Map();
 globalThis.document = {
   getElementById: (id) => {
     const element = elements.get(id);
@@ -181,6 +191,22 @@ globalThis.document = {
     return element;
   },
   createElement: (tag) => stubElement(`created:${tag}`),
+  // Whether anybody is looking. The multiworld connection reads it to decide
+  // whether reconnecting is worth doing, so a stub without it is a stub the
+  // page cannot boot against.
+  visibilityState: 'visible',
+  addEventListener(type, handler) {
+    documentListeners.set(type, [...(documentListeners.get(type) ?? []), handler]);
+  },
+  removeEventListener() {},
+};
+
+/// Acts like switching to another tab, or back.
+const look = (how) => {
+  globalThis.document.visibilityState = how;
+  for (const handler of documentListeners.get('visibilitychange') ?? []) {
+    handler({ type: 'visibilitychange' });
+  }
 };
 
 const store = new Map();
@@ -2471,6 +2497,90 @@ let flightFrames = 0;
   // fire on time for them to.
   ctx.currentTime += 5;
   assert.ok(burst.play('pop', { delay: 0 }), 'the voices never came back after the sound ended');
+}
+
+// ---- the connection overlay -----------------------------------------------
+//
+// What a player sees when the room stops listening. The words themselves are
+// put together in `main.js` against a live client, which is `ap_smoke`'s half;
+// this is the half that has to hold on the page: a wash that says one thing in
+// a live region and counts down outside it, and goes away on its own when the
+// room comes back.
+{
+  const { hud } = window.twiddlygems;
+  const link = elements.get('link');
+  const word = elements.get('link-word');
+  const aside = elements.get('link-aside');
+
+  // The countdown is the reason for the split. It changes every second, and a
+  // screen reader asked to read a live region every second is a game that
+  // cannot be played with one.
+  assert.match(
+    markup,
+    /id="link-word"[^>]*aria-live="polite"/,
+    'the connection state is not in a live region, so it is announced to nobody',
+  );
+  assert.match(
+    markup,
+    /id="link-aside"[^>]*aria-hidden="true"/,
+    'the countdown is inside the live region, so it would be read out every second',
+  );
+  assert.doesNotMatch(markup, /id="link"[^>]*aria-live/, 'the whole overlay is a live region');
+
+  hud.showLink('Disconnected.', { kind: 'bad', aside: ' (reconnecting in 2s)' });
+  assert.ok(!link.classList.contains('hidden'), 'the overlay stayed hidden while disconnected');
+  assert.ok(link.classList.contains('bad'), 'a lost connection was not marked as bad');
+  assert.equal(word.textContent, 'Disconnected.');
+  assert.equal(aside.textContent, ' (reconnecting in 2s)');
+
+  // Being told is no reason to be stopped from playing, which is the whole
+  // point of it being a wash rather than a dialog. The stylesheet is what
+  // makes that true, so that is what is read.
+  const style = await readFile(new URL('../web/css/style.css', import.meta.url), 'utf8');
+  const rule = /#link \{[^}]*\}/.exec(style);
+  assert.ok(rule, 'the overlay has no rule of its own in the stylesheet');
+  assert.match(rule[0], /pointer-events:\s*none/, 'the overlay would swallow taps meant for the board');
+  assert.match(rule[0], /position:\s*absolute/, 'the overlay is not laid over the board');
+
+  // Coming back says so and then gets out of the way. The only message that
+  // goes away on its own: every other one is a state the player is still in.
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  hud.showLink('Connected.', { kind: 'good', fade: true });
+  assert.ok(link.classList.contains('good'), 'coming back was not marked as good');
+  assert.ok(!link.classList.contains('hidden'), 'the good news was hidden before it was read');
+  await wait(1_900);
+  assert.ok(link.classList.contains('hidden'), '"Connected." never went away');
+
+  // And a message arriving part way through that fade is not swallowed by it.
+  // A room can drop again while the good news about the last one is still on
+  // its way out, and the timer that was going to hide that must not hide this.
+  hud.showLink('Connected.', { kind: 'good', fade: true });
+  await wait(1_300);
+  assert.ok(link.classList.contains('fading'), 'the fade never started, so this proves nothing');
+  hud.showLink('Disconnected.', { kind: 'bad' });
+  assert.ok(!link.classList.contains('hidden'), 'the next message inherited the fade before it');
+  assert.ok(!link.classList.contains('fading'), 'the next message started part way faded out');
+  assert.equal(aside.textContent, '', 'a countdown was left over from the message before');
+  await wait(600);
+  assert.ok(
+    !link.classList.contains('hidden'),
+    'a fade left over from the message before took this one away with it',
+  );
+
+  hud.showLink('');
+  assert.ok(link.classList.contains('hidden'), 'leaving the room left the overlay up');
+
+  // A held reconnection resumes because something asked to be told the tab was
+  // looked at. Nothing else here would notice if that were never registered,
+  // and the symptom would be a tab that stays disconnected until a reload.
+  assert.ok(
+    (documentListeners.get('visibilitychange') ?? []).length > 0,
+    'nothing on the page listens for the tab being looked at',
+  );
+  // And switching away and back is not something a run notices.
+  look('hidden');
+  look('visible');
+  assert.ok(link.classList.contains('hidden'), 'coming back to the tab put up a connection message');
 }
 
 console.log(

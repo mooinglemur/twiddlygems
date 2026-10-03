@@ -9,9 +9,9 @@
 //
 // The wire itself is not what this is about. What it checks is the part that
 // would be wrong in a way nobody notices: that a reconnection does not double
-// the items, that spent things stay spent, that the same check is never sent
-// twice, and that a seed built by a different version is refused rather than
-// played.
+// the items or spring their traps a second time, that spent things stay spent
+// across one, that the same check is never sent twice, and that a seed built
+// by a different version is refused rather than played.
 //
 //   make smoke
 
@@ -92,6 +92,9 @@ const ITEM = {
   RAINBOW_UNLOCK: AP + 4,
   LEVEL_UNLOCK: AP + 4_000,
   MOVES_1: AP + 1_000,
+  // The one trap whose effect can be read off the engine as a number, which
+  // is why the trap tests use this one rather than the other two.
+  SLOW_TRAP: AP + 5_002,
 };
 
 /** A room to connect to, as the server introduces it. */
@@ -123,24 +126,40 @@ function connected(engine, over = {}) {
   };
 }
 
-/** Opens a session and walks it as far as being in a room. */
-async function joinARoom({ cache = new MemoryCache(), feed = [], over = {} } = {}) {
+/** Where the room is, which has to be the same every time to be a reconnect. */
+const ROOM = { host: 'localhost', port: 38281, slot: 'twiddly' };
+
+/**
+ * Opens a session and walks it as far as being in a room.
+ *
+ * Every socket it opens is kept, because a reconnection is a second one and
+ * what the client said over which of them is the whole question in places.
+ */
+async function joinARoom({ cache = new MemoryCache(), feed = [], over = {}, watching } = {}) {
   const engine = await loadEngine('unused', 20260920);
-  let socket = null;
+  const sockets = [];
   const client = new ArchipelagoClient(engine, {
     cache,
     open: (url) => {
-      socket = new StubSocket(url);
-      return socket;
+      const made = new StubSocket(url);
+      sockets.push(made);
+      return made;
     },
     onFeed: (said) => feed.push(said),
+    ...(watching ? { watching } : {}),
   });
-  await client.connect({ host: 'localhost', port: 38281, slot: 'twiddly' });
-  socket.deliver(roomInfo());
+  await client.connect(ROOM);
+  await letUsIn(client, sockets, engine, over);
+  return { engine, client, sockets, socket: sockets.at(-1) };
+}
+
+/** The handshake, over whichever socket the client has opened most recently. */
+async function letUsIn(client, sockets, engine, over = {}) {
+  sockets.at(-1).deliver(roomInfo());
   await settle();
-  socket.deliver(connected(engine, over));
+  sockets.at(-1).deliver(connected(engine, over));
   await settle();
-  return { engine, client, socket };
+  return sockets.at(-1);
 }
 
 // ---- the address a player types ------------------------------------------
@@ -357,6 +376,138 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
   assert.ok(ids.every((id) => id >= AP), 'a location went out without the multiworld offset');
 }
 
+// ---- a trap goes off once, however many times it is sent ------------------
+
+{
+  const { engine, socket } = await joinARoom();
+  const trap = { item: ITEM.SLOW_TRAP, location: 1, player: 1, flags: 4 };
+  const runItOut = () => {
+    for (let i = 0; i < 4_000 && engine.slowLeftMs > 0; i += 1) {
+      engine.update(16);
+    }
+    assert.equal(engine.slowLeftMs, 0, 'the slow never ran out, so what follows proves nothing');
+  };
+
+  // Arriving for the first time, which has to work or the rest is vacuous.
+  socket.deliver({ cmd: 'ReceivedItems', index: 0, items: [trap] });
+  await settle();
+  engine.update(16);
+  assert.ok(engine.slowLeftMs > 0, 'a trap arriving for the first time did nothing');
+  runItOut();
+
+  // The reconnection. The server resends its whole list, exactly as it does
+  // with the items, and this one is a thing that happens rather than a thing
+  // held: springing it again would punish a player for reloading the page.
+  socket.deliver({ cmd: 'ReceivedItems', index: 0, items: [trap] });
+  await settle();
+  engine.update(16);
+  assert.equal(
+    engine.slowLeftMs,
+    0,
+    'a resent trap went off again, so every trap in a run would fire on reconnect',
+  );
+
+  // And the case in between: a list whose beginning is a resend and whose end
+  // is news, which is what a trap sent while the socket was down looks like.
+  socket.deliver({ cmd: 'ReceivedItems', index: 0, items: [trap, trap] });
+  await settle();
+  engine.update(16);
+  assert.ok(
+    engine.slowLeftMs > 0,
+    'a trap sent while the connection was down was forgiven along with the old ones',
+  );
+}
+
+// ---- a spend the socket was down for is not a spend that is lost ----------
+
+{
+  const key = `${GAME}_spent_${Consumable.ROCKET}_0_1`;
+  const rockets = [1, 2].map((at) => ({ item: ITEM.ROCKET, location: at, player: 1, flags: 2 }));
+  // Held rather than retrying on a clock, so the reconnection below is the
+  // only one and happens where the test can see it.
+  const { engine, client, sockets, socket } = await joinARoom({
+    watching: { now: () => false, watch: () => {} },
+  });
+
+  socket.deliver({ cmd: 'ReceivedItems', index: 0, items: rockets });
+  socket.deliver({ cmd: 'Retrieved', keys: { [key]: 0 } });
+  await settle();
+  assert.equal(engine.consumables(Consumable.ROCKET), 2, 'the rockets did not arrive');
+
+  // The room goes away, and the player fires one anyway. Which they can: the
+  // engine never stops for a connection, and a rocket that has gone off has
+  // gone off whether or not anybody was told.
+  socket.close();
+  await settle();
+  assert.equal(client.state, State.LOST);
+  client.spend(Consumable.ROCKET);
+  assert.equal(socket.ofKind('Set').length, 0, 'a Set went out over a socket that was closed');
+  assert.equal(
+    engine.consumables(Consumable.ROCKET),
+    1,
+    'firing one while disconnected left it on the counter',
+  );
+
+  // Back in. The spend has to go out before the question about what was
+  // spent, because the server answers that with whatever the key holds when
+  // the question reaches it.
+  await client.connect(ROOM);
+  const back = await letUsIn(client, sockets, engine);
+  assert.notEqual(back, socket, 'the reconnection reused the dead socket');
+  const set = back.sent.findIndex((packet) => packet.cmd === 'Set');
+  const get = back.sent.findIndex((packet) => packet.cmd === 'Get');
+  assert.notEqual(set, -1, 'the queued spend was never sent, so the room would hand it back');
+  assert.deepEqual(back.ofKind('Set')[0].operations, [{ operation: 'add', value: 1 }]);
+  assert.equal(back.ofKind('Set')[0].key, key);
+  assert.ok(set < get, 'the spend went out after the question it has to answer');
+
+  // The server now holds 1, which is what it would reply with.
+  back.deliver({ cmd: 'ReceivedItems', index: 0, items: rockets });
+  back.deliver({ cmd: 'Retrieved', keys: { [key]: 1 } });
+  await settle();
+  assert.equal(
+    engine.consumables(Consumable.ROCKET),
+    1,
+    'the reconnection handed back a rocket that was fired while it was down',
+  );
+  assert.equal(back.ofKind('Set').length, 1, 'the queue was sent twice over');
+  client.disconnect();
+}
+
+// ---- a tab nobody is looking at does not hammer the room ------------------
+
+{
+  let looking = false;
+  let told = () => {};
+  const { client, sockets, socket } = await joinARoom({
+    watching: { now: () => looking, watch: (fn) => (told = fn) },
+  });
+
+  socket.close();
+  await settle();
+  assert.equal(client.state, State.LOST);
+  assert.equal(sockets.length, 1, 'a hidden tab opened a socket nobody was waiting for');
+  assert.equal(client.retrySeconds, null, 'a held retry counted down to a moment it had not set');
+
+  // Somebody comes back. Immediately, rather than when the backoff happened
+  // to be due: the whole reason for holding is that being looked at is the
+  // signal.
+  looking = true;
+  told();
+  await settle();
+  assert.equal(sockets.length, 2, 'coming back to the tab did not reconnect it');
+  assert.equal(client.state, State.HANDSHAKING);
+
+  // And a visible tab still works off the clock, with something to say about
+  // when it will try, because that is what the overlay reads.
+  sockets.at(-1).close();
+  await settle();
+  assert.ok(sockets.length === 2, 'a visible tab reconnected before its own backoff');
+  assert.ok(client.retrySeconds >= 0 && client.retrySeconds <= 1, `counting down to ${client.retrySeconds}s`);
+  client.disconnect();
+  assert.equal(client.retrySeconds, null, 'leaving the room left a retry counting down');
+}
+
 // ---- a seed from another version is refused, loudly -----------------------
 
 {
@@ -442,5 +593,6 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
 
 console.log(
   'ap ok: handshake, datapackage cache, resync, spent items, checks sent once, ' +
+    'traps spring once, spends queued while down, a hidden tab holds its retry, ' +
     'unknown generator refused',
 );

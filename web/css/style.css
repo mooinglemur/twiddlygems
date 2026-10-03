@@ -20,6 +20,10 @@
   --tier-gold: #ffc233;
   --radius: 14px;
   --gap: clamp(6px, 1.6vw, 12px);
+  /* How long the connection overlay takes to go once it says the room is
+     back. Matched by `LINK_FADE_MS` in hud.js, which is what decides when it
+     is finally hidden. */
+  --link-fade: 500ms;
 }
 
 * { box-sizing: border-box; }
@@ -294,6 +298,10 @@ html, body {
   min-height: 0;
   display: grid;
   place-items: start center;
+  /* So the connection overlay can be laid over the board and nothing else.
+     It is absolute, so it takes no part in sizing this box and the board is
+     measured against the same space either way. */
+  position: relative;
 }
 
 #board {
@@ -847,26 +855,49 @@ button[disabled] { opacity: 0.4; cursor: default; }
 }
 #connect-buttons button { padding: 14px; font-size: 1.05rem; }
 
-/* How the connection is doing, shown only when it is worth saying. Pinned
-   over the top of the page rather than given a row of its own, so a message
-   arriving cannot resize the board mid-swipe. */
+/* How the connection is doing, shown only when it is worth saying.
+
+   A wash over the board with the words near the top of it. Absolute inside
+   the stage rather than a row of its own, so a message arriving cannot resize
+   the board mid-swipe, and `pointer-events: none` all the way down so the
+   board underneath takes every touch: being told the room is not listening is
+   no reason to be stopped from playing. */
 #link {
-  position: fixed;
-  top: calc(6px + env(safe-area-inset-top, 0px));
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 15;
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 10%;
+  background: rgb(10 12 20 / 45%);
+  pointer-events: none;
+  transition: opacity var(--link-fade) ease-out;
+}
+
+/* Coming back needs no wash: it is a word of reassurance over a board the
+   player is already looking at, and dimming it to say so would be perverse. */
+#link.good {
+  background: none;
+}
+
+#link.fading {
+  opacity: 0;
+}
+
+#link p {
+  margin: 0;
+  max-width: 90%;
   padding: 5px 12px;
   border-radius: 999px;
   background: var(--panel);
   color: var(--ink-dim);
   font-size: 0.74rem;
-  white-space: nowrap;
+  text-align: center;
   box-shadow: 0 2px 10px rgb(0 0 0 / 40%);
-  pointer-events: none;
 }
-#link.bad { color: var(--danger); }
-#link.good { color: var(--ok); }
+#link.bad p { color: var(--danger); }
+#link.good p { color: var(--ok); }
 
 /* What the room is saying. The item and player colors are the ones
    Archipelago's own clients use, so a name reads the same here as it does in

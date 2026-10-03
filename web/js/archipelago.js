@@ -232,6 +232,36 @@ export function addressesFor(host, port) {
   return [`wss://${where}`, `ws://${where}`];
 }
 
+/**
+ * Whether anybody is looking at this tab, and how to hear about that changing.
+ *
+ * Reached through this rather than straight off `document` so the file keeps
+ * its one rule: everything about a page comes in as a handler, which is also
+ * what makes a hidden tab something a test can pretend to be.
+ */
+const watchingHere = {
+  now: () => typeof document === 'undefined' || document.visibilityState !== 'hidden',
+  watch: (told) => {
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', told);
+    }
+  },
+};
+
+/**
+ * Whether two sets of connection details name the same slot in the same room.
+ *
+ * The password is deliberately not part of it: getting it wrong and typing it
+ * again is the same slot, and what this decides is whether the run carries
+ * over or starts clean.
+ */
+function sameRoom(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+  return a.host === b.host && String(a.port) === String(b.port) && a.slot === b.slot;
+}
+
 export class ArchipelagoClient {
   /**
    * @param engine the wasm session this connection plays into
@@ -239,6 +269,8 @@ export class ArchipelagoClient {
    * @param handlers.cache where the datapackage lives between visits
    * @param handlers.onFeed called with a formatted message the server sent
    * @param handlers.onState called when the connection's state changes
+   * @param handlers.watching whether anyone is looking at the page, and how to
+   *   be told when that changes
    */
   constructor(engine, handlers = {}) {
     this.engine = engine;
@@ -246,11 +278,36 @@ export class ArchipelagoClient {
     this.cache = handlers.cache ?? new DataPackageCache();
     this.onFeed = handlers.onFeed ?? (() => {});
     this.onState = handlers.onState ?? (() => {});
+    this.watching = handlers.watching ?? watchingHere;
     this.base = engine.apIdBase;
     this.state = State.OFFLINE;
     this.socket = null;
     this.retryAt = null;
+    this.nextTryAt = null;
+    this.retryIn = FIRST_RETRY_MS;
+    /// Waiting for somebody to come back and look, rather than on a clock.
+    /// See `retryLater`.
+    this.retryHeld = false;
+    this.leaveTheRoom();
     this.forget();
+    this.watching.watch(() => this.looked());
+  }
+
+  /**
+   * What belongs to the run rather than to one connection.
+   *
+   * Everything in `forget` is thrown away and asked for again on the way back
+   * in. These two cannot be, because they are what this client knows and the
+   * server does not: what it has spent and has not managed to say, and how
+   * much of the server's list it has already acted on. A reconnection is
+   * exactly when both matter.
+   */
+  leaveTheRoom() {
+    /// Spends the server has not been told about, by kind. See `spend`.
+    this.unsent = new Map();
+    /// How many items off the server's list this client has applied, ever.
+    /// See `onReceivedItems`.
+    this.itemsApplied = 0;
   }
 
   /** Everything about one connection, thrown away when it ends. */
@@ -284,9 +341,18 @@ export class ArchipelagoClient {
    * different kind of event from being disconnected an hour in.
    */
   async connect({ host, port, slot, password = '' }) {
+    const wanted = { host, port, slot, password };
+    // Before `disconnect`, which is what forgets where we were.
+    const elsewhere = !sameRoom(this.room, wanted);
     this.disconnect();
     this.forget();
-    this.room = { host, port, slot, password };
+    if (elsewhere) {
+      // A different slot's spends are not this one's to report, and its list
+      // of items is not one we have applied any of.
+      this.leaveTheRoom();
+      this.retryIn = FIRST_RETRY_MS;
+    }
+    this.room = wanted;
     this.setState(State.CONNECTING);
 
     let lastError = null;
@@ -392,15 +458,65 @@ export class ArchipelagoClient {
     this.retryLater();
   }
 
+  /**
+   * Arranges the next attempt, or waits to be looked at.
+   *
+   * A hidden tab is a tab nobody is reading, and a game nobody is playing
+   * cannot check a location or spend anything. Retrying in the background
+   * there buys nothing and costs a socket, a handshake and the whole
+   * datapackage conversation every thirty seconds for as long as the tab is
+   * open, so a hidden tab holds instead and goes the moment it is looked at.
+   *
+   * Held rather than slowed: the wait is not the point. What matters is being
+   * connected when somebody is there, which `looked` covers immediately.
+   *
+   * Nothing about this touches what is already connected. A tab that still has
+   * its socket keeps it, keeps receiving items and keeps making their noises.
+   */
   retryLater() {
     const wait = Math.min(this.retryIn ?? FIRST_RETRY_MS, LONGEST_RETRY_MS);
     this.retryIn = Math.min(wait * 2, LONGEST_RETRY_MS);
+    if (!this.watching.now()) {
+      this.retryHeld = true;
+      this.nextTryAt = null;
+      return;
+    }
+    this.nextTryAt = Date.now() + wait;
     this.retryAt = setTimeout(() => {
       this.retryAt = null;
-      if (this.room) {
-        this.connect(this.room).catch(() => this.retryLater());
-      }
+      this.tryAgain();
     }, wait);
+  }
+
+  /** Somebody is looking at the tab again. */
+  looked() {
+    if (!this.retryHeld || !this.watching.now()) {
+      return;
+    }
+    this.retryHeld = false;
+    // From the top, because the backoff was counting down to a moment nobody
+    // was waiting for. Being looked at is the signal, not the clock.
+    this.retryIn = FIRST_RETRY_MS;
+    this.tryAgain();
+  }
+
+  tryAgain() {
+    this.nextTryAt = null;
+    if (this.room) {
+      this.connect(this.room).catch(() => this.retryLater());
+    }
+  }
+
+  /**
+   * How long until the next attempt, in whole seconds, for something to say
+   * so. Null when there is no attempt coming: connected, refused, or held
+   * until the tab is looked at.
+   */
+  get retrySeconds() {
+    if (this.nextTryAt === null) {
+      return null;
+    }
+    return Math.max(0, Math.ceil((this.nextTryAt - Date.now()) / 1000));
   }
 
   cancelRetry() {
@@ -408,7 +524,8 @@ export class ArchipelagoClient {
       clearTimeout(this.retryAt);
       this.retryAt = null;
     }
-    this.retryIn = FIRST_RETRY_MS;
+    this.nextTryAt = null;
+    this.retryHeld = false;
     this.room = null;
   }
 
@@ -607,10 +724,21 @@ export class ArchipelagoClient {
     // what the level picker reads.
     this.restoreChecks(packet.checked_locations ?? []);
 
+    // Anything spent while the socket was down, before the question below
+    // rather than after it. The server answers a `Get` with what the key held
+    // when the question reached it, so asking first would be answered with a
+    // total that predates these and hand the player back what they had
+    // already fired.
+    this.flushSpending();
+
     // How many of the things this run can spend it has already spent. The
     // server sends what it gave us, forever, and has no idea we fired any of
     // them; without this a reload hands the player back everything they spent.
     this.askWhatWasSpent();
+
+    // We are in, so the next drop starts its backoff from the top rather than
+    // from however long this one took to recover.
+    this.retryIn = FIRST_RETRY_MS;
 
     this.setState(State.PLAYING);
     // Last: everything this run has checked, in one go. The one full send per
@@ -637,6 +765,15 @@ export class ArchipelagoClient {
    * is built from the server's own `PrintJSON`, which is only ever sent live,
    * so a reconnection quietly puts fifty items back rather than announcing
    * them all over again.
+   *
+   * Traps follow the same rule, and `itemsApplied` is what makes it possible
+   * to tell a resend from news. The list's own numbering does it: an item is
+   * news exactly when it sits past everything this client has already acted
+   * on. So a trap sent while the socket was down still goes off on the way
+   * back in, and one from an hour ago does not. A reload loses the count and
+   * forgives them all, which is the right way round: a trap is an event, and
+   * firing a stale one at somebody who just opened the page is the same
+   * mistake as replaying an hour of item noises at them.
    */
   onReceivedItems(packet) {
     const whole = packet.index === 0;
@@ -649,9 +786,17 @@ export class ArchipelagoClient {
     // spendable things and it already worked it out. On the whole-list path
     // this starts from nothing, so the difference below is the total.
     const before = this.heldNow();
-    for (const item of packet.items ?? []) {
-      this.engine.receive(item.item - this.base);
+    const items = packet.items ?? [];
+    const from = whole ? 0 : packet.index;
+    for (let at = 0; at < items.length; at += 1) {
+      const id = items[at].item - this.base;
+      if (from + at < this.itemsApplied) {
+        this.engine.receiveQuietly(id);
+      } else {
+        this.engine.receive(id);
+      }
     }
+    this.itemsApplied = Math.max(this.itemsApplied, from + items.length);
     const after = this.heldNow();
     for (const kind of SPENDABLE) {
       const arrived = after.get(kind) - before.get(kind);
@@ -719,7 +864,7 @@ export class ArchipelagoClient {
     }
     for (const kind of SPENDABLE) {
       const sent = this.received.get(kind) ?? 0;
-      const gone = this.spent.get(kind) ?? 0;
+      const gone = (this.spent.get(kind) ?? 0) + (this.unsent.get(kind) ?? 0);
       this.engine.restoreConsumables(kind, Math.max(0, sent - gone));
     }
   }
@@ -729,18 +874,59 @@ export class ArchipelagoClient {
    * player picking the game up in another browser gets the run as they left
    * it.
    *
-   * An atomic add rather than a new total, because two windows on one slot
-   * would otherwise overwrite each other's arithmetic.
+   * Queued first and sent second, because the socket may be down: a rocket
+   * fired while the connection was lost has still been fired, and a `Set` that
+   * quietly failed to go out would hand it back on the way in. What is queued
+   * counts against the run exactly as what the server has been told does, so
+   * the player sees no difference between the two.
    */
   spend(kind) {
-    this.spent.set(kind, (this.spent.get(kind) ?? 0) + 1);
-    this.send({
-      cmd: 'Set',
-      key: spentKey(this.team, this.slot, kind),
-      default: 0,
-      want_reply: false,
-      operations: [{ operation: 'add', value: 1 }],
-    });
+    this.unsent.set(kind, (this.unsent.get(kind) ?? 0) + 1);
+    this.flushSpending();
+    // The engine has already taken it off the counter, by being the thing the
+    // player fired it from. This agrees with that rather than changing it, and
+    // is here so that the arithmetic has one home: what the run holds is what
+    // the server sent less what this has spent, whoever happens to ask.
+    this.reconcileSpending();
+  }
+
+  /**
+   * Tells the server about every spend it has not heard.
+   *
+   * An atomic add of the whole queue rather than a new total, because two
+   * windows on one slot would otherwise overwrite each other's arithmetic, and
+   * because what is queued is a number of spends rather than a running count.
+   *
+   * Nothing leaves the queue until the send reports that it went, and one that
+   * did not stops the loop: the only reason a send fails is that there is no
+   * socket, so the kinds after it would fail too.
+   *
+   * What moves out of `unsent` moves into `spent` in the same step, so what the
+   * run is holding does not flicker: the two added together are what
+   * `reconcileSpending` subtracts, and this leaves that sum alone.
+   */
+  flushSpending() {
+    if (this.slot === null) {
+      return;
+    }
+    for (const kind of SPENDABLE) {
+      const owed = this.unsent.get(kind) ?? 0;
+      if (owed === 0) {
+        continue;
+      }
+      const went = this.send({
+        cmd: 'Set',
+        key: spentKey(this.team, this.slot, kind),
+        default: 0,
+        want_reply: false,
+        operations: [{ operation: 'add', value: owed }],
+      });
+      if (!went) {
+        return;
+      }
+      this.unsent.set(kind, 0);
+      this.spent.set(kind, (this.spent.get(kind) ?? 0) + owed);
+    }
   }
 
   onRoomUpdate(packet) {

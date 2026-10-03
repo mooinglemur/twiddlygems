@@ -39,6 +39,17 @@
 
   <main id="stage">
     <canvas id="board" aria-label="Game board" role="img"></canvas>
+    <!-- How the multiworld connection is doing, when there is something to
+         say. Over the board, because a player whose checks are going nowhere
+         needs telling plainly, and deaf to the pointer so that every swipe
+         under it still lands. The countdown is kept out of the live region:
+         it changes every second, and announcing that every second would make
+         the game unusable with a screen reader. -->
+    <div id="link" class="hidden">
+      <!-- Set tight against each other: whitespace between them would render
+           as a space on top of the one the countdown already carries. -->
+      <p><span id="link-word" role="status" aria-live="polite"></span><span id="link-aside" aria-hidden="true"></span></p>
+    </div>
   </main>
 
   <footer id="bottombar">
@@ -50,12 +61,6 @@
     <button id="retry-button" class="text-button" type="button">Restart</button>
   </footer>
 </div>
-
-<!-- How the multiworld connection is doing, when there is something to say.
-     Fixed rather than a row in the bar: the playfield is sized against what
-     is above and below it, and a message that came and went would resize the
-     board under the player's thumb. -->
-<div id="link" class="hidden" role="status" aria-live="polite"></div>
 
 <!-- What a clear sends to the goal it counted toward. Over the whole page
      rather than inside the board, because that is the journey it makes. -->

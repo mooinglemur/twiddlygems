@@ -452,7 +452,7 @@ impl Session {
     /// next deal: an unlock that arrives mid level should be usable in that
     /// level, which is what receiving it means.
     pub fn receive(&mut self, item: Item) -> bool {
-        self.receive_from(item, None)
+        self.receive_from(item, None, true)
     }
 
     /// The same, by the item's number, which is how a multiworld names one.
@@ -474,6 +474,24 @@ impl Session {
     /// to be able to say what it alone was worth: without the clear, the tenth
     /// call would hand the page all ten again.
     pub fn receive_id(&mut self, id: u32) -> bool {
+        self.take_id(id, true)
+    }
+
+    /// The same, without springing a trap.
+    ///
+    /// For the list a server resends every time it says hello, which is its
+    /// record rather than news. A trap in it was sprung when it first arrived,
+    /// and springing it again would shuffle the board of a player who did
+    /// nothing but reload. The feed and the filler noises are built from live
+    /// messages for the same reason.
+    ///
+    /// The item is still taken, so the tally stays the server's: only the
+    /// effect is skipped.
+    pub fn receive_id_quietly(&mut self, id: u32) -> bool {
+        self.take_id(id, false)
+    }
+
+    fn take_id(&mut self, id: u32, spring: bool) -> bool {
         self.events.clear();
         let Some(item) = Item::from_id(id) else { return false };
         // An item for a level past the end of this ladder reads back cleanly
@@ -484,7 +502,7 @@ impl Session {
         if item_index(item, self.levels.len()).is_none() {
             return false;
         }
-        self.receive(item)
+        self.receive_from(item, None, spring)
     }
 
     /// Empties what the run is holding, leaving what it has checked alone.
@@ -565,7 +583,10 @@ impl Session {
     ///
     /// `None` is an item that came from no location on this board, which is
     /// what a multiworld handing one over looks like.
-    fn receive_from(&mut self, item: Item, from: Option<Location>) -> bool {
+    ///
+    /// `spring` is whether a trap in it goes off. See
+    /// [`Session::receive_id_quietly`].
+    fn receive_from(&mut self, item: Item, from: Option<Location>, spring: bool) -> bool {
         let is_new = self.inventory.receive(item);
         if is_new {
             self.refresh_specials();
@@ -575,7 +596,9 @@ impl Session {
             // `spring_shuffle` only arms a flag; the board takes it when it is
             // next idle, so this is safe to call at any moment including mid
             // cascade.
-            self.spring(item);
+            if spring {
+                self.spring(item);
+            }
             let levels = self.levels.len();
             let at = from
                 .and_then(|location| location_index(location, levels))
@@ -651,7 +674,7 @@ impl Session {
         }
         self.checked.push(id);
         if let Some(item) = self.holds(location) {
-            self.receive_from(item, Some(location));
+            self.receive_from(item, Some(location), true);
         }
     }
 
@@ -946,7 +969,7 @@ mod tests {
     use crate::board::{Gem, Pos, Special};
     use crate::game::Phase;
     use crate::options::{setting_index, Goal, PROGRESSIVE_LEVELS};
-    use crate::progression::{Noise, CONSUMABLES, NOISES};
+    use crate::progression::{Noise, CONSUMABLES, NOISES, TRAPS};
     use crate::level::Objective;
     use crate::rules::SpecialSet;
 
@@ -1233,6 +1256,51 @@ mod tests {
             &before[..],
             "the board came out of the shuffle exactly as it went in",
         );
+    }
+
+    #[test]
+    fn a_resent_trap_is_taken_without_going_off() {
+        // What a reconnect is made of. The server's list is its whole record
+        // of what it ever sent, so every trap in a player's history arrives
+        // again: springing those would hand somebody who reloaded the page a
+        // shuffled board, a stripped board and thirty seconds of treacle at
+        // once, for doing nothing.
+        let mut session = climbing(9);
+        session.set_remote(true);
+        session.update(16.0);
+        let before: Vec<u8> = session.game().cells_bytes().to_vec();
+
+        for trap in TRAPS {
+            assert!(
+                session.receive_id_quietly(Item::Trap(trap).id()),
+                "{} was refused, so the run would be short an item it was sent",
+                trap.name(),
+            );
+            // Still taken: the tally is the server's, and only the effect is
+            // skipped.
+            assert_eq!(
+                session.inventory().count(Item::Trap(trap)),
+                1,
+                "{} was not counted, so the two sides disagree about what the run holds",
+                trap.name(),
+            );
+        }
+
+        assert!(!session.game().shuffle_armed(), "a resent Shuffle Trap armed itself");
+        assert!(!session.game().strip_armed(), "a resent Remove Specials Trap armed itself");
+
+        // Driven on, because none of the three does anything until an update
+        // takes it: a flag that was never checked would pass the asserts above
+        // and still shuffle the board a frame later.
+        for _ in 0..200 {
+            session.update(16.0);
+        }
+        assert_eq!(
+            session.game().cells_bytes(),
+            &before[..],
+            "the board was rearranged by a trap the player had already been sent",
+        );
+        assert_eq!(session.game().slow_left_ms(), 0.0, "a resent Slow Trap slowed the board");
     }
 
     #[test]
