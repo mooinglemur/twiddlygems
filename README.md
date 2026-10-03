@@ -1,14 +1,13 @@
 # Twiddly Gems
 
-A match-3 puzzle game that is also an Archipelago apworld. Sixteen levels, played
-in a phone or desktop browser, on its own or as a slot in a multiworld.
+A match-3 puzzle game that is also an Archipelago apworld. Sixteen levels,
+played in a phone or desktop browser, on its own or as a slot in a multiworld.
 
 The engine is a dependency-free Rust crate compiled straight to
 `wasm32-unknown-unknown`. There is no wasm-bindgen, no wasm-pack and no npm:
-the ABI in [`src/ffi.rs`](src/ffi.rs) is crafted `extern "C"`, so a build
-is a plain `cargo build --target wasm32-unknown-unknown` and a copy. The engine
-owns the rules and the clock; the page draws what it is told and sends taps
-back.
+the ABI in [`src/ffi.rs`](src/ffi.rs) is crafted `extern "C"`, so a build is a
+plain `cargo build --target wasm32-unknown-unknown` and a copy. The engine owns
+the rules and the clock; the page draws what it is told and sends taps back.
 
 ## How to play
 
@@ -25,55 +24,66 @@ A bigger match leaves behind a "special":
 | an L or a T | a gem that takes out a row and a column together (**cross clear**) |
 | five in a line | a **rainbow** wheel |
 
-A new run can make none of these specials. Each of the five is an **unlock** to be found,
-so the early levels are plain matching and play differently when you come back
-to them. Two specials swapped together set each other off. A rainbow has no
-color of its own: swapped against a gem it takes that whole color, against a
-clearing gem it turns every gem of that color into a copy of it, and against
-another rainbow it takes out the board.
+A new run can make none of these specials. Each of the five is an **unlock** to
+be found, so the early levels are plain matching and play differently when you
+come back to them. Two specials swapped together set each other off. A rainbow
+has no color of its own: swapped against a gem it takes that whole color,
+against a clearing gem it turns every gem of that color into a copy of it, and
+against another rainbow it takes out the board.
 
 **What gets in the way.** Jelly has to be cleared off the board, in one layer
-or two. A brick holds its cell and never moves, but breaks in two hits if something clears
-beside it or a beam passes through it. A seal is a brick keyed to one color,
-and only that color clearing beside it counts, though a beam still shoots it.
+or two. A brick holds its cell and never moves, but breaks in two hits if
+something clears beside it or a beam passes through it. A seal is a brick keyed
+to one color, and only that color clearing beside it counts, though a beam
+still shoots it.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
 score, clear so many gems of one color, clear every cell of jelly, break every
 brick, or break every seal of one color. A board with no legal move on it
 reshuffles rather than ending the level.
 
-## The cash-in and flourish
-**Beating a level spends cashes in your remaining moves.**  In groups of up
-to 10 at a time, a remaining move turns
-a gem somewhere on the board into a special that you have unlocked, and all of the specials on the board go off at once, then allowing the board to settle. Then the process repeats for the next 10 remaining moves, and so on, until the move count reaches 0.  At this point, the specials keep getting activated, round after round for as long as that
-keeps leaving more behind. The score climbs the whole way, making
-early finishes worth more on most boards.
+Progress is kept in the browser for solo games, and entirely on the Archipelago
+server for multiworld games. The hamburger menu lists the levels and offers the
+way back to the title, which ends the run.
 
-Progress is kept in the browser for solo games, and entirely on the Archipelago server for multiworld games. The hamburger menu lists the levels and offers
-the way back to the title, which ends the run.
+## The cash-in and flourish
+
+**Beating a level cashes in your remaining moves.** In groups of up to 10 at a
+time, a remaining move turns a gem somewhere on the board into a special that
+you have unlocked, and all of the specials on the board go off at once, then
+allowing the board to settle. Then the process repeats for the next 10
+remaining moves, and so on, until the move count reaches 0. At this point, the
+specials keep getting activated, round after round for as long as that keeps
+leaving more behind. The score climbs the whole way, making early finishes
+worth more on most boards.
 
 ## What a run is looking for
 
 Items are found at **locations**:
+
 - clearing each level,
-- clearing it past each of its two score marks (Silver and Gold)
+- clearing it past each of its two score marks (Silver and Gold),
 - reaching a chain of each length from two to twelve,
-- lining up exactly three to six gems in one swap
-- collecting the AP gems that fall in with the refill by clearing next to it 
+- lining up exactly three to six gems in one swap,
+- collecting the AP gems that fall in with the refill by clearing next to it.
 
 What can be found:
 
 - the **five unlocks** above,
 - a **moves upgrade** per level, topping up that level's budget,
-- **inventory items**: one-time-use consumables to spend on the board: a rocket, a rainbow, a cross clear, a cluster of rockets,
+- **inventory items**: one-time-use consumables to spend on the board: a
+  rocket, a rainbow, a cross clear, a cluster of rockets,
 - **named filler**, items that change nothing in gameplay, but make a sound,
-- **traps**, which happen to the board in front of you, only if you're looking at a playable board: Shuffle, Remove Specials, Slow.
+- **traps**, which happen to the board in front of you, only if you're looking
+  at a playable board: Shuffle, Remove Specials, Slow.
 
 A moves upgrade is never required to clear any level. Every level has to be
-beatable without it, though later levels are logically behind having unlocked certain specials.
+beatable without it, though later levels are logically behind having unlocked
+certain specials.
 
 Solo deals its own placement from the run's seed, so every run is a different
-game. In a multiworld the items are the room's to send and come from the AP seed.
+game. In a multiworld the items are the room's to send and come from the AP
+seed.
 
 ## Building and running
 
