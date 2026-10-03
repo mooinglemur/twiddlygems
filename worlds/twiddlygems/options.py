@@ -1,23 +1,6 @@
 """The settings a player can choose, built from the engine's own table.
 
-A module of its own, and named ``options``, because Archipelago requires it.
-Option values are pickled into WebHost's database and read back through
-``Utils.RestrictedUnpickler``, which refuses every class it is not sure of and
-decides by looking at where the class says it lives::
-
-    # pep 8 specifies that modules should have "all-lowercase names"
-    if module.lower().endswith("options"):
-
-So an option class outside a module whose name ends in ``options`` cannot be
-unpickled, whatever else is true of it, and a world holding one cannot be
-hosted. These used to be built in ``__init__.py``, which meant they claimed
-``worlds.twiddlygems`` and were refused.
-
-Generated rather than written out because the rules point at these classes by
-name: a rule that depends on a setting carries the dotted path to its class and
-imports it, so the class has to exist here, under exactly the name the engine
-said it would. Writing them by hand would mean two lists to keep in step, which
-is the arrangement this whole world exists to avoid.
+A module of its own named ``options``, because Archipelago requires it.
 """
 
 from __future__ import annotations
@@ -43,15 +26,7 @@ def _build_options() -> type[PerGameCommonOptions]:
         body: dict[str, Any] = {
             "display_name": setting["label"],
             "__doc__": setting["about"],
-            # Where this class lives, said out loud because nothing else will
-            # say it correctly.
-            #
-            # A class built by `type()` takes its `__module__` from the frame
-            # that built it, and Archipelago's option metaclass descends from
-            # `ABCMeta`, whose `__new__` does the building from inside `abc.py`.
-            # So every option here came out claiming to live in `abc`, and
-            # pickle, which finds a class by looking its name up on the module
-            # it names, failed with "attribute lookup Goal on abc failed".
+            # Where this class lives,
             "__module__": __name__,
         }
         # A number for most, and a mapping for a set of weights, which carries

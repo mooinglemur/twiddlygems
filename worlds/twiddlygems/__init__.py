@@ -1,21 +1,10 @@
 """Twiddly Gems, as Archipelago sees it.
 
-Nothing in this package decides anything. What the items are, where they can be
-found and what each place asks for first are settled in the engine, in
-``src/progression.rs``, because the solo game answers those same questions from
-those same tables and the two have to be one answer rather than two. The engine
-writes them out with ``cargo run --bin apworld``; ``data/`` next to this file is
-that output, and everything below is the reading of it.
+The source of truth for the logic sits in Rust code, which generates the
+JSON bundled with the apworld.
 
-The rules come over as rules, not as prose to be reimplemented. Archipelago's
-rule builder serializes to dicts and reads them back with ``rule_from_dict``, so
-a requirement written once in Rust arrives here as the real thing: ``And``,
-``Has``, ``CanReachLocation``, ``True_``. Regenerate the data and the logic here
-follows, with nothing to keep in step by hand.
-
-``data/`` holds four files: the items, the locations with their rules, the
-settings a player can choose, and the world itself (its name, its ladder and
-its goal). None of them are checked in.
+``cargo run --bin apworld`` regenerates the data/*.json, none of which are
+committed to the repo.
 """
 
 from __future__ import annotations
@@ -60,11 +49,11 @@ ITEMS_BY_NAME = {item["name"]: item for item in ITEMS}
 
 #: The items there may be more of than the pool asks for. The engine says
 #: which, for the same reason it says everything else here. They are the
-#: noises, which do nothing but make a sound, and a world with none of them
+#: filler, which do nothing but make a sound, and a world with none of them
 #: could not fill its own locations, so this is checked at import rather than
 #: found out during a generation.
 TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
-assert TOP_UP_NAMES, "the engine named no item that may top up empty locations"
+assert TOP_UP_NAMES, "the engine named no top_up filler items"
 
 #: The traps, which take a share of that top-up rather than a count of their
 #: own. Read off the classification the engine already writes, so a trap added
@@ -81,8 +70,7 @@ TRAP_NAMES = [item["name"] for item in ITEMS if item["classification"] == "trap"
 # The settings live in `options.py`, which is not a matter of taste: WebHost
 # pickles an option value into its database and reads it back through a
 # restricted unpickler that refuses any class outside a module whose name ends
-# in "options". Built here, they were refused, and the world could not have
-# been hosted. Imported after the data above, which that module reads.
+# in "options".
 from .options import TwiddlyGemsOptions  # noqa: E402
 
 
@@ -100,9 +88,9 @@ class TwiddlyGemsWorld(World):
     A new run matches and clears normally and leaves nothing behind: the line
     clearers, the cross, the rainbow and the rocket are all items. Each level
     is worth three checks, for clearing it and for clearing it past two score
-    marks. Long chains are checks of their own. The ladder opens by clearing
-    the level below, or, with progressive level unlock on, by finding the
-    items that open it.
+    marks (Gold and Silver). Long chains are checks of their own. The ladder
+    opens by clearing the level below, or, with progressive level unlock on, by
+    finding the items that open it.
     """
 
     game = GAME_DATA["game"]
@@ -121,17 +109,12 @@ class TwiddlyGemsWorld(World):
     _shares_drawn: dict[str, int] | None = None
 
     def _ap_gems_per_level(self) -> int:
-        """How many of each level's ten AP gems this run plays over.
+        """The minimum number of AP gems per level.
 
         The setting is a floor, not a count: every item has to have somewhere
         to go, and the options deciding how many items there are do not know
         how many places there are to put them. So when the pool outgrows
         everywhere else, the gems make up the difference.
-
-        The engine works the same number out the same way for a solo run. Both
-        sides have to land on it exactly, or a seed's locations and the game's
-        would not be the same set, which is why this counts every other
-        location rather than only the ones a solo fill likes.
         """
         levels = len(GAME_DATA["levels"])
         pool = sum(self._count(item) for item in ITEMS)
@@ -189,14 +172,12 @@ class TwiddlyGemsWorld(World):
 
     def create_regions(self) -> None:
         menu = Region(self.origin_region_name, self.player, self.multiworld)
-        # A run can ask for nothing worth finding to be placed behind a score
+        # A run can ask for filler/traps to be placed behind a score
         # mark, which is the same thing as naming every Silver and Gold in
-        # `exclude_locations` and a great deal less typing. Archipelago's own
+        # `exclude_locations` and a great deal less verbose. Archipelago's own
         # EXCLUDED is what says it: the location still exists and is still
         # checked, and the fill refuses to put anything advancement or useful
-        # there. The engine raises the Archipelago gem floor to match, because
-        # shutting two locations a level takes them away from exactly the items
-        # that need somewhere to go.
+        # there.
         shut_marks = bool(self.options.exclude_gold_and_silver)
         for at in self._locations_in_play():
             location = TwiddlyGemsLocation(self.player, at["name"], at["id"], menu)
@@ -212,28 +193,9 @@ class TwiddlyGemsWorld(World):
         )
 
     def get_filler_item_name(self) -> str:
-        """What goes in a location with nothing better in it.
-
-        The engine says which items may be made up like this, the same way it
-        says everything else here. A spare unlock would be a second answer to a
-        question the rules have settled, and a spare moves upgrade is worth
-        nothing, since a level's upgrade lands whole and once. What is left is
-        the noises, every one of which does nothing but make its own sound.
-
-        Drawn rather than taken in turn, and drawn on this slot's own generator
-        rather than the global one, so two slots in a room do not get the same
-        noises in the same order. Archipelago calls this for every leftover
-        location, and a run of thirty identical names in a feed would read as a
-        bug in the fill.
-        """
         return self.random.choice(TOP_UP_NAMES)
 
     def _option(self, ap_class: str) -> int:
-        """What one setting is set to, named by the class the engine gave it.
-
-        The tables point at settings by class path rather than by key, because
-        that is what the rules do, and one way of naming a setting is enough.
-        """
         key = next(setting["key"] for setting in SETTINGS if setting["ap_class"] == ap_class)
         return int(getattr(self.options, key).value)
 
@@ -242,15 +204,12 @@ class TwiddlyGemsWorld(World):
 
         Some items have no count of their own. The bonus items are four kinds
         splitting one total: the setting says how many there are altogether,
-        and which kind each one turns out to be is a draw at equal chance. So
-        the split is rolled, here, with this slot's own generator: it belongs
-        to one run, and the tables the engine writes are the same for every
-        run there will ever be.
+        and which kind each one turns out to be is a draw at weighted chance.
+        So the split is rolled, here, with this slot's own generator: it
+        belongs to one run, and the tables the engine writes are the same for
+        every run there will ever be.
 
-        Rolled once and kept. The pool gets counted more than once, and
-        `_ap_gems_per_level` reads the count to decide which locations this
-        world has at all: a second roll answering differently would hand the
-        run a different set of places to look than the one it built.
+        Rolled once and kept.
         """
         if self._shares_drawn is not None:
             return self._shares_drawn
@@ -316,15 +275,7 @@ class TwiddlyGemsWorld(World):
     def _ladder(self, count: dict[str, Any]) -> int:
         """How many progressive level unlocks this run's pool holds.
 
-        One per level past the first, which is what it takes to reach the top,
-        plus the spares the setting asks for as a percentage of that, rounded
-        to the nearest whole item. None at all when the run is not opening the
-        ladder that way, and then nothing gates on them either.
-
-        The engine works the same number out in `level_unlocks`. Neither side
-        can read the other, so the table hands over the three numbers and both
-        do the sum: they have to land on the same answer or this world submits
-        a different number of items than it has places to put them.
+        One per level past the first, unless progress_levels is false.
         """
         switch = count["only_when"]
         if self._option(switch["option"]) != int(switch["is"]):
@@ -342,24 +293,11 @@ class TwiddlyGemsWorld(World):
         # room for other worlds' items, and here it means topping up with
         # filler until the two match.
         #
-        # Against the locations this run has rather than every name in the
-        # table: the gems it did not ask for are not in its world, and filling
-        # for them would submit more items than there are places.
-        #
-        # Some share of the top-up is a trap instead, which is the whole of
-        # what `trap_percent` does. Traps replace filler rather than adding
-        # items, for the reason this loop exists at all: the pool has to come
-        # out the same length as the location list, so anything added pushes
-        # something else out. At 100 every leftover is a trap and not one item
-        # that matters is touched.
+        # Optionally, some share of the top-up is a trap instead, gated by
+        # `trap_percent`.
         #
         # Rolled per item rather than worked out as a quota, so a seed holds
-        # roughly the share asked for and not exactly it. The engine's own fill
-        # does the same thing the same way; see `solo_placement`.
-        # Read straight off the options rather than through `_option`, which
-        # takes a class path because the tables it serves point at settings
-        # that way. Nothing points at this one: it is named here, once, by the
-        # key the engine gave it.
+        # roughly the share asked for.
         traps = int(self.options.trap_percent.value) if TRAP_NAMES else 0
         while len(pool) < len(self._locations_in_play()):
             if traps and self.random.randrange(100) < traps:
@@ -377,21 +315,9 @@ class TwiddlyGemsWorld(World):
         """Every setting this run was rolled with, keyed the way the engine keys it.
 
         The engine is set up by walking its own settings table and handing each
-        line a number, which is what the solo screen does. A client can do the
-        same thing with this: one key here for one line there, so a setting
-        added to the engine later crosses the wire with nothing on either side
-        edited to let it through.
-
-        Which means the keys have to be the engine's, and for one setting they
-        are not the same as ours. A set of relative weights is a single option
-        in a yaml, spelled as a mapping with a line per kind, and four separate
-        settings in the engine, one per kind. So it is expanded back out here.
-
-        Read through `_weight` rather than off the mapping directly, because a
-        missing line means nothing rather than the default: writing one line is
-        how a file asks for only that kind. Two readings of that would be one
-        reading too many, and the run this is describing was built with that
-        one.
+        line a number, which is what the solo screen does. The AP client
+        portion can do the same thing with this: one key here for one line
+        there, so a setting added to the engine later passes.
         """
         sent: dict[str, int] = {}
         for setting in SETTINGS:
@@ -407,30 +333,13 @@ class TwiddlyGemsWorld(World):
     def fill_slot_data(self) -> dict[str, Any]:
         """What the game itself is told when it connects.
 
-        Enough to put the run into the shape this seed was generated for,
-        holding nothing else back. A browser that has never seen this seed and
-        a browser coming back to it get the same thing, because none of this is
-        remembered anywhere: the settings decide how many items there are, what
-        the rules ask for and how the ladder opens, and a client that had to
-        keep its own copy of them would be a copy that could go stale.
+        Enough to inform the engine the relevant options.
 
         `ap_gems_per_level` is the odd one out: it is worked out from the
-        settings rather than set by anybody, so sending it is sending the same
-        fact twice. That is deliberate, and it is a check rather than a source.
-        Both sides derive it, by counting the pool against the places to put
-        it, and if they ever land on different numbers the failure is silent
-        and nasty: the board spawns gems for locations this seed does not have,
-        and the checks behind them go nowhere. Better for a client to compare
-        the two and refuse than to play a game that is subtly not the one that
-        was generated.
+        settings and may be higher than the minimum.
 
-        `generator` is the first thing the game reads and the first thing it
-        can refuse on. Everything else here is only meaningful if the two sides
-        agree about what the numbers in it mean, and nothing in a seed says so
-        by itself: an item id is an integer whichever generation wrote it, and
-        a setting's value is an integer whichever list it was an index into. So
-        the generation says so explicitly, and a game that does not know the
-        number stops rather than playing somebody else's rules.
+        `generator` is an integer, and the client makes the decision whether to
+        continue to connect based on what compatibility it knows how to handle.
         """
         return {
             "generator": GAME_DATA["generator"],
