@@ -1,11 +1,11 @@
 # Twiddly Gems
 
-A match-3 puzzle game that is also an Archipelago world. Sixteen levels, played
+A match-3 puzzle game that is also an Archipelago apworld. Sixteen levels, played
 in a phone or desktop browser, on its own or as a slot in a multiworld.
 
 The engine is a dependency-free Rust crate compiled straight to
 `wasm32-unknown-unknown`. There is no wasm-bindgen, no wasm-pack and no npm:
-the ABI in [`src/ffi.rs`](src/ffi.rs) is hand-written `extern "C"`, so a build
+the ABI in [`src/ffi.rs`](src/ffi.rs) is crafted `extern "C"`, so a build
 is a plain `cargo build --target wasm32-unknown-unknown` and a copy. The engine
 owns the rules and the clock; the page draws what it is told and sends taps
 back.
@@ -15,72 +15,65 @@ back.
 Swap two neighboring gems to line up three or more, or to close a 2x2 square.
 Tap a gem and then a neighbor, or swipe one toward it.
 
-A bigger match leaves something behind:
+A bigger match leaves behind a "special":
 
 | match | leaves |
 |---|---|
-| a 2x2 square | a **rocket**, which flies off once the cascade ends and takes one other gem |
-| four in a row | a gem that clears **downward** |
-| four in a column | a gem that clears **across** |
-| an L or a T | a gem that takes a row and a column together |
-| five in a line | a **rainbow** |
+| a 2x2 square | a **rocket**, which flies off once the cascade ends and takes out one other gem |
+| four in a row | a gem that clears a column (**vertical line clear**) |
+| four in a column | a gem that clears a row (**horizontal line clear**) |
+| an L or a T | a gem that takes out a row and a column together (**cross clear**) |
+| five in a line | a **rainbow** wheel |
 
-The two line clearers run against the grain on purpose: you finish a row by
-sliding a gem in from above or below, so the gem you are left with clears the
-way you were already moving.
-
-A new run can make none of them. Each of the five is an **unlock** to be found,
+A new run can make none of these specials. Each of the five is an **unlock** to be found,
 so the early levels are plain matching and play differently when you come back
 to them. Two specials swapped together set each other off. A rainbow has no
 color of its own: swapped against a gem it takes that whole color, against a
 clearing gem it turns every gem of that color into a copy of it, and against
-another rainbow it takes the board.
+another rainbow it takes out the board.
 
 **What gets in the way.** Jelly has to be cleared off the board, in one layer
-or two. A brick holds its cell and never moves, but breaks if something clears
+or two. A brick holds its cell and never moves, but breaks in two hits if something clears
 beside it or a beam passes through it. A seal is a brick keyed to one color,
 and only that color clearing beside it counts, though a beam still shoots it.
-That makes it something to bring the right gems to rather than something to
-reach.
 
 Each level gives a fixed number of moves and one or more objectives: reach a
 score, clear so many gems of one color, clear every cell of jelly, break every
 brick, or break every seal of one color. A board with no legal move on it
 reshuffles rather than ending the level.
 
-**Beating a level spends what is left of the moves.** One move per 300ms turns
-a gem somewhere into a special, and when the counter reaches zero everything
-inert on the board goes off at once, round after round for as long as that
-keeps leaving more behind. The score climbs the whole way, which is what makes
-finishing a level early worth more than merely finishing it.
+## The cash-in and flourish
+**Beating a level spends cashes in your remaining moves.**  In groups of up
+to 10 at a time, a remaining move turns
+a gem somewhere on the board into a special that you have unlocked, and all of the specials on the board go off at once, then allowing the board to settle. Then the process repeats for the next 10 remaining moves, and so on, until the move count reaches 0.  At this point, the specials keep getting activated, round after round for as long as that
+keeps leaving more behind. The score climbs the whole way, making
+early finishes worth more on most boards.
 
-Progress is kept in the browser. The hamburger menu lists the levels and offers
+Progress is kept in the browser for solo games, and entirely on the Archipelago server for multiworld games. The hamburger menu lists the levels and offers
 the way back to the title, which ends the run.
 
 ## What a run is looking for
 
-Items are found at **locations**: clearing each level, clearing it past each of
-its two score marks, reaching a chain of each length from two to twelve,
-lining up exactly three to six gems in one swap, and collecting the
-Archipelago gems that fall in with the refill.
+Items are found at **locations**:
+- clearing each level,
+- clearing it past each of its two score marks (Silver and Gold)
+- reaching a chain of each length from two to twelve,
+- lining up exactly three to six gems in one swap
+- collecting the AP gems that fall in with the refill by clearing next to it 
 
 What can be found:
 
 - the **five unlocks** above,
 - a **moves upgrade** per level, topping up that level's budget,
-- **inventory items** to spend on the board: a rocket, a rainbow, a cross
-  clear, a cluster of rockets,
-- **named filler**, sixteen items that change nothing and each make one sound,
-- **traps**, which happen to the board in front of you: Shuffle, Remove
-  Specials, Slow.
+- **inventory items**: one-time-use consumables to spend on the board: a rocket, a rainbow, a cross clear, a cluster of rockets,
+- **named filler**, items that change nothing in gameplay, but make a sound,
+- **traps**, which happen to the board in front of you, only if you're looking at a playable board: Shuffle, Remove Specials, Slow.
 
-A moves upgrade is never needed to clear anything. Every level has to be
-beatable on its own budget or the ladder dead-ends, so what an upgrade buys is
-a better run at a level rather than a first clear.
+A moves upgrade is never required to clear any level. Every level has to be
+beatable without it, though later levels are logically behind having unlocked certain specials.
 
 Solo deals its own placement from the run's seed, so every run is a different
-game and the same seed is the same game. In a multiworld the items are the
-room's to send.
+game. In a multiworld the items are the room's to send and come from the AP seed.
 
 ## Building and running
 
@@ -114,7 +107,7 @@ inventory, spring each trap, win this level now, and a list of every filler
 sound to play one at a time. It is a gesture rather than a query string so that
 it works on a phone.
 
-## The Archipelago world
+## The Archipelago apworld
 
 The apworld holds no logic. What the items are, where they can be found and
 what each place asks for are settled in [`src/progression.rs`](src/progression.rs),
