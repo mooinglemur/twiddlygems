@@ -16,6 +16,11 @@ use crate::rules::{Rules, MAX_COLORS};
 /// How long each animated phase lasts, in milliseconds. These are paced to be
 /// followed by eye rather than to get out of the way.
 pub const SWAP_MS: f32 = 190.0;
+
+/// How long a Slow Trap lasts, in milliseconds of real time.
+pub const SLOW_TRAP_MS: f32 = 30_000.0;
+/// How much longer a swap and a drop take while one is running.
+pub const SLOW_TRAP_FACTOR: f32 = 5.0;
 /// How long one gem takes to swell and vanish. A clear lasts this plus however
 /// long its blast takes to spread; see [`matching::SPREAD_STEP_MS`].
 pub const POP_MS: f32 = 300.0;
@@ -282,6 +287,14 @@ pub const EV_CASH_IN: u8 = 17;
 /// different things. This one is the check being taken, which is what the
 /// session turns into an item and what a multiworld is told about.
 pub const EV_AP_CLEAR: u8 = 18;
+/// A Remove Specials Trap took the markings off the board, carrying how many
+/// it took. Never raised for nothing, so the page can say so unconditionally.
+pub const EV_SPECIALS_LOST: u8 = 19;
+/// A Slow Trap started, carrying how many seconds it runs for.
+pub const EV_SLOW: u8 = 20;
+/// A Slow Trap ran out. The page has a countdown to take down, and the board
+/// going back to full speed on its own is not obvious enough to leave unsaid.
+pub const EV_SLOW_OVER: u8 = 21;
 
 /// Something worth seeing or hearing. Positions are 255 when the event is not
 /// about one cell.
@@ -536,6 +549,24 @@ pub struct Game {
     /// it is gone again before anything looks at it. What every objective does
     /// go through is [`Game::objectives_met`], so that is where to say so.
     forced_clear: bool,
+    /// A Remove Specials Trap has arrived and the board owes it a stripping.
+    trap_strip: bool,
+    /// A Slow Trap has arrived and the clock below has yet to be started.
+    trap_slow: bool,
+    /// How much longer a Slow Trap has to run, in milliseconds.
+    ///
+    /// The one thing in here measured against a clock rather than a phase.
+    /// Everything else is driven by how far through its own animation the
+    /// board is, which is the right model for animation and no model at all
+    /// for "thirty seconds": a player who makes one move in that time and a
+    /// player who makes ten have both waited the same thirty seconds. So this
+    /// is counted down by the `dt` [`Game::update`] is handed, which is real
+    /// time, and it is the only state here that moves while nothing happens.
+    ///
+    /// Not carried across levels: a new level builds a new `Game`. It *is*
+    /// carried across a retry, because `Game::restart` leaves it alone, which
+    /// stops a player waiting the trap out by restarting.
+    slow_left_ms: f32,
     /// A Shuffle Trap has arrived and the board owes it a shuffle.
     ///
     /// Armed from outside and spent by [`Game::update`] once the board is
@@ -611,7 +642,10 @@ impl Game {
             announced_clear: false,
             minted_this_wave: 0,
             forced_clear: false,
+            trap_strip: false,
             trap_shuffle: false,
+            trap_slow: false,
+            slow_left_ms: 0.0,
             swap_match: 0,
             tallied: false,
             goal_hold_ms: 0.0,
@@ -946,20 +980,55 @@ impl Game {
             self.phase = Phase::Shuffling { elapsed: 0.0 };
             self.events.push(Event::plain(EV_SHUFFLE, SHUFFLE_BY_TRAP));
         }
+        // And the other trap that changes the board, on the same terms. Two
+        // arriving together cannot collide: the shuffle above takes the board
+        // out of Idle, so this one waits for the frame after it lands.
+        if self.trap_strip && matches!(self.phase, Phase::Idle) && self.status == Status::Playing {
+            self.trap_strip = false;
+            let taken = self.strip_specials();
+            if taken > 0 {
+                self.events.push(Event::plain(EV_SPECIALS_LOST, taken as u16));
+            }
+        }
         // Before the phase loop, because an idle board runs none of it and a
         // level that opens on its last few moves has to say so anyway.
         self.announce_low_moves();
         let mut remaining = if dt_ms.is_finite() { dt_ms.clamp(0.0, 250.0) } else { 0.0 };
+
+        // A Slow Trap starting. Taken here rather than where it was sprung so
+        // the announcement survives the line at the top of this function.
+        if self.trap_slow && self.status == Status::Playing {
+            self.trap_slow = false;
+            self.slow_left_ms = SLOW_TRAP_MS;
+            self.events.push(Event::plain(EV_SLOW, (SLOW_TRAP_MS / 1000.0) as u16));
+        }
+        // Its clock, run off the same `dt` the phases are, and the clamped
+        // one: a backgrounded tab hands back one enormous frame, and without
+        // the clamp half the trap would be spent on a tab nobody was looking
+        // at. It runs down whether or not the player is doing anything, which
+        // is what makes it thirty seconds rather than thirty seconds of play.
+        else if self.slow_left_ms > 0.0 && self.status == Status::Playing {
+            self.slow_left_ms -= remaining;
+            if self.slow_left_ms <= 0.0 {
+                self.slow_left_ms = 0.0;
+                self.events.push(Event::plain(EV_SLOW_OVER, 0));
+            }
+        }
 
         // A long frame may span several phases; the cap stops a pathological
         // dt from grinding through an unbounded number of cascades at once.
         for _ in 0..24 {
             let (duration, elapsed) = match self.phase {
                 Phase::Idle | Phase::Finished => break,
-                Phase::Swapping { elapsed, .. } => (SWAP_MS, elapsed),
+                // The two a Slow Trap stretches, and only these two: a swap
+                // and a drop are the movements the player is waiting on. The
+                // clear, the launch and the beats at the end of a level are
+                // the game talking back, and slowing those would read as the
+                // page struggling rather than as something done to the board.
+                Phase::Swapping { elapsed, .. } => (SWAP_MS * self.slowdown(), elapsed),
                 Phase::Clearing { elapsed } => (self.clear_ms, elapsed),
                 Phase::Launching { elapsed } => (self.launch_ms, elapsed),
-                Phase::Falling { elapsed } => (self.fall_ms, elapsed),
+                Phase::Falling { elapsed } => (self.fall_ms * self.slowdown(), elapsed),
                 Phase::Shuffling { elapsed } => (SHUFFLE_MS, elapsed),
                 Phase::CashingIn { elapsed } => (CASH_IN_STEP_MS, elapsed),
                 Phase::Finishing { elapsed } => (END_HOLD_MS, elapsed),
@@ -2164,6 +2233,115 @@ impl Game {
     /// Whether a Shuffle Trap is waiting for the board to settle.
     pub fn shuffle_armed(&self) -> bool {
         self.trap_shuffle
+    }
+
+    /// Springs a Slow Trap: swaps and drops take five times as long for the
+    /// next thirty seconds.
+    ///
+    /// Armed and taken by the next [`Game::update`], which is where the event
+    /// has to be raised. Unlike the other two it does not wait for an idle
+    /// board: there is nothing to interrupt, because all it changes is how
+    /// long a phase lasts, and a phase already running simply has further to
+    /// go. Received mid-cascade the player watches the rest of that cascade
+    /// crawl, which is the trap working rather than a seam in it.
+    ///
+    /// A second one restarts the thirty seconds rather than adding to them.
+    /// Two traps should not mean a minute: the first is still running, and
+    /// what the second does is make sure it runs from now.
+    pub fn spring_slow(&mut self) {
+        if self.status != Status::Playing {
+            return;
+        }
+        self.trap_slow = true;
+    }
+
+    /// How much longer a swap and a drop take right now: 1 normally, and
+    /// [`SLOW_TRAP_FACTOR`] while a Slow Trap runs.
+    fn slowdown(&self) -> f32 {
+        if self.slow_left_ms > 0.0 {
+            SLOW_TRAP_FACTOR
+        } else {
+            1.0
+        }
+    }
+
+    /// How much longer a Slow Trap has to run, in milliseconds. Zero when none
+    /// is running, which is what the page shows a countdown from.
+    pub fn slow_left_ms(&self) -> f32 {
+        self.slow_left_ms
+    }
+
+    /// Springs a Remove Specials Trap: takes back what the player built up.
+    ///
+    /// Armed and taken by the next idle [`Game::update`], for the reasons
+    /// [`Game::spring_shuffle`] gives.
+    pub fn spring_remove_specials(&mut self) {
+        if self.status != Status::Playing {
+            return;
+        }
+        self.trap_strip = true;
+    }
+
+    /// Whether a Remove Specials Trap is waiting for the board to settle.
+    pub fn strip_armed(&self) -> bool {
+        self.trap_strip
+    }
+
+    /// Takes the markings off every special the board is holding, and says how
+    /// many it took.
+    ///
+    /// Rockets are left alone: one is already on its way, and its window is a
+    /// moment. An Archipelago gem is a location wearing a gem's clothes rather
+    /// than anything the player built.
+    ///
+    /// The markings come off first and cannot make a match, because a line
+    /// clear keeps its own color. Only the rainbow has no color and has to be
+    /// given one, so those go afterwards, against a board that has stopped
+    /// moving.
+    fn strip_specials(&mut self) -> usize {
+        let mut taken = 0;
+        let mut rainbows = Vec::new();
+        for p in self.board.occupied() {
+            let Some(gem) = self.board.gem(p) else { continue };
+            match gem.special {
+                Special::LineH | Special::LineV | Special::Cross => {
+                    self.board.set_gem(p, Some(Gem::plain(gem.color)));
+                    taken += 1;
+                }
+                Special::Rainbow => rainbows.push(p),
+                Special::Rocket | Special::Archipelago | Special::None => {}
+            }
+        }
+        for p in rainbows {
+            let color = self.quiet_color(p);
+            self.board.set_gem(p, Some(Gem::plain(color)));
+            taken += 1;
+        }
+        taken
+    }
+
+    /// A color for `p` that leaves no match on the board, or any color this
+    /// level deals when every one of them would make one.
+    ///
+    /// A rainbow becoming an ordinary gem is the only part of the trap that
+    /// can set off a clear, and a trap that handed the player a free cascade
+    /// would be a present. Each candidate is tried on the board and judged by
+    /// the matcher rather than by the deal's own `would_start_a_shape`, which
+    /// only looks up and to the left: that is sound while filling top to
+    /// bottom and wrong in the middle of a settled board, where a match can
+    /// close in any direction.
+    fn quiet_color(&mut self, p: Pos) -> u8 {
+        let was = self.board.gem(p);
+        let count = (self.spec.rules.colors as usize).clamp(1, crate::rules::MAX_COLORS);
+        for color in self.spec.rules.palette[..count].to_vec() {
+            self.board.set_gem(p, Some(Gem::plain(color)));
+            if matching::find_matches(&self.board, &self.spec.rules).is_empty() {
+                self.board.set_gem(p, was);
+                return color;
+            }
+        }
+        self.board.set_gem(p, was);
+        self.spec.rules.draw_color(&mut self.rng)
     }
 
     /// Debug: hand the level a different number of moves.

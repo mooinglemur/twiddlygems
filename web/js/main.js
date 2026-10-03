@@ -145,6 +145,8 @@ const DEBUG_CHOICES = [
   { key: 'moves', label: 'Set moves to 99', hint: 'This level only' },
   { key: 'inventory', label: 'Fill inventory', hint: '99 of every bonus item' },
   { key: 'shuffle', label: 'Spring a Shuffle Trap', hint: 'Rearranges the board' },
+  { key: 'strip', label: 'Spring a Remove Specials Trap', hint: 'Takes the markings off' },
+  { key: 'slow', label: 'Spring a Slow Trap', hint: 'Swaps and drops crawl for 30s' },
   { key: 'clear', label: 'Set objectives as met', hint: 'Wins this level now' },
 ];
 /** What "fill the inventory" fills it to. */
@@ -576,6 +578,17 @@ async function boot() {
         // to the length of the animation, so the rattle runs for exactly as
         // long as the gems are moving.
         audio.play('shuffle', { duration: SHUFFLE_SOUND_S });
+      } else if (event.kind === EventKind.SLOW) {
+        // Dragged down and stretched, which is the sound of the board being
+        // put in treacle.
+        audio.play('shuffle', { detune: -1400, duration: 1.8 });
+      } else if (event.kind === EventKind.SLOW_OVER) {
+        audio.play('ding', { detune: -200 });
+      } else if (event.kind === EventKind.SPECIALS_LOST) {
+        // The shuffle's rattle pitched well down, which reads as something
+        // being taken away rather than rearranged. One sound for a trap that
+        // has no animation of its own: the board simply changes.
+        audio.play('shuffle', { detune: -900, duration: 0.9 });
       } else if (event.kind === EventKind.LOW_MOVES) {
         audio.play('ding');
       } else if (event.kind === EventKind.CLEARED) {
@@ -1222,6 +1235,12 @@ async function boot() {
     // is the engine's own rule about not springing one into a flourish.
     if (picked.has('shuffle')) {
       engine.springShuffle();
+    }
+    if (picked.has('strip')) {
+      engine.springRemoveSpecials();
+    }
+    if (picked.has('slow')) {
+      engine.springSlow();
     }
     // Last, and on its own frame's terms: this hands the level to the ordinary
     // settle, which announces the clear and starts the flourish.

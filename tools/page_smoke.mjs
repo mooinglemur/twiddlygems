@@ -1433,8 +1433,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.ok(!options.classList.contains('hidden'), 'the testing menu has no switches');
   assert.equal(
     options.children.length,
-    6,
-    'the testing menu does not offer the six shortcuts it is meant to',
+    8,
+    'the testing menu does not offer the eight shortcuts it is meant to',
   );
 
   // Nothing is applied until it is closed, so a tester can change their mind.

@@ -1,6 +1,6 @@
 [package]
 name = "twiddlygems"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "A match-3 puzzle engine with a browser front end"
 license = "MIT"

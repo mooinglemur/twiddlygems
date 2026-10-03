@@ -975,8 +975,14 @@ double take. That is the whole brief for these names in one item.
 
 ### Traps
 
-The other thing a leftover location can hold. **Shuffle Trap** is the first:
-it rearranges every gem on the board, exactly as a stuck board already does.
+The other thing a leftover location can hold. Three of them:
+
+- **Shuffle Trap** rearranges every gem, exactly as a stuck board already does.
+- **Remove Specials Trap** takes the markings off every line clear, cross and
+  rainbow. A rocket is spared, because one is already on its way and its
+  window is a moment.
+- **Slow Trap** makes swaps and drops take five times as long, for thirty
+  seconds.
 
 A trap is the only item here that is an **event rather than a holding**.
 Everything else a run receives it then has — an unlock teaches the board, a
@@ -988,12 +994,20 @@ Three separate items rather than one carrying a kind, so a tracker and a feed
 can name which one hit you, and "Trap" is in each name rather than left to the
 feed's coloring, which is Archipelago's own convention.
 
-They are armed rather than done: the board springs one when it is next idle.
-Rearranging mid-cascade would mean moving gems that something is in the middle
-of clearing, and a trap that lands a moment later is the same trap. A level
-whose rules say not to shuffle refuses the trap outright, because those are the
-ones where the layout is the puzzle and rearranging it would not hurt the
-player so much as throw the level away.
+The two that change the board are armed rather than done, and spring when the
+board is next idle: moving or stripping gems mid-cascade would touch gems
+something is in the middle of clearing, and a trap that lands a moment later is
+the same trap. The Slow Trap does not wait, because all it changes is how long
+a phase lasts, and a phase already running simply has further to go.
+
+A level whose rules say not to shuffle refuses the Shuffle Trap outright, since
+those are the ones where the layout is the puzzle: rearranging it would not
+hurt the player so much as throw the level away.
+
+The Slow Trap is the only thing in the engine measured against a clock rather
+than against the board. Everything else is driven by how far through its own
+animation something is, which is the right model for animation and no model at
+all for "thirty seconds".
 
 How many a run holds is the **Traps** setting, a percentage, off by default.
 Traps take the place of the named filler rather than adding items, so turning
@@ -1031,8 +1045,8 @@ to the item next door.
    `Inventory`, so "can this be cleared from here" is one question asked of one
    thing. The apworld is emitted from those same tables and generates real
    seeds. The bonus items, the settings and the client that connects a run to
-   a server all landed since this was written. Still to come: the other two
-   traps, Remove Specials and Slow.
+   a server, the named filler and the three traps all landed since this was
+   written. This step is done.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles

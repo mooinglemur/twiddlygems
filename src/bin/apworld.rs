@@ -101,8 +101,8 @@ fn manifest() -> Json {
         ("game", Json::Str(GAME.to_string())),
         // The apworld's own version, which is this crate's. Not [`GENERATOR`]:
         // that one says whether a seed and a client agree about items, and it
-        // is deliberately allowed to stay at zero across releases that change
-        // everything else.
+        // moves only for a change that would make an old seed play wrongly,
+        // so most releases leave it alone.
         ("world_version", Json::Str(env!("CARGO_PKG_VERSION").to_string())),
         ("authors", Json::Arr(vec![Json::Str("MooingLemur".to_string())])),
         // The floor is the version this is tested against, which is the only

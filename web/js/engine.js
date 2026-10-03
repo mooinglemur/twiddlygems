@@ -79,6 +79,13 @@ export const EventKind = {
   /// An Archipelago gem was collected. Distinct from `CLEAR`, which says a gem
   /// left the board: one struck by a beam raises both.
   AP_CLEAR: 18,
+  /// A Remove Specials Trap stripped the board. `value` is how many it took,
+  /// and it is never raised for nothing.
+  SPECIALS_LOST: 19,
+  /// A Slow Trap started. `value` is how many seconds it runs for.
+  SLOW: 20,
+  /// A Slow Trap ran out.
+  SLOW_OVER: 21,
 };
 
 /// The location an item event names when it came from no location here at
@@ -731,6 +738,23 @@ export class Engine {
    */
   springShuffle() {
     this.wasm.tg_spring_shuffle(this.handle);
+  }
+
+  /// Springs a Remove Specials Trap, the way receiving the item would. Takes
+  /// effect on the next frame with the board idle.
+  springRemoveSpecials() {
+    this.wasm.tg_spring_remove_specials(this.handle);
+  }
+
+  /// Springs a Slow Trap, the way receiving the item would.
+  springSlow() {
+    this.wasm.tg_spring_slow(this.handle);
+  }
+
+  /// How long a Slow Trap has left, in milliseconds, or 0 for none. Asked
+  /// each frame rather than counted here, so there is one account of it.
+  get slowLeftMs() {
+    return this.wasm.tg_slow_left_ms(this.handle);
   }
 
   /**

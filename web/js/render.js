@@ -261,6 +261,16 @@ export class Renderer {
           text: event.value === ShuffleWhy.TRAP ? 'Shuffle Trap!' : 'No moves, shuffling',
           at: now,
         };
+      } else if (event.kind === EventKind.SPECIALS_LOST) {
+        // Never raised for nothing, so the count is always worth saying.
+        const n = event.value;
+        this.toast = { text: `Specials lost: ${n}`, at: now };
+      } else if (event.kind === EventKind.SLOW) {
+        this.toast = { text: `Slow Trap! ${event.value}s`, at: now };
+      } else if (event.kind === EventKind.SLOW_OVER) {
+        // Worth saying: the board going back to full speed on its own is not
+        // obvious while nothing is moving.
+        this.toast = { text: 'Back to normal speed', at: now };
       } else if (event.kind === EventKind.LOW_MOVES) {
         const left = event.value;
         this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };

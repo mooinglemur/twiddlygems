@@ -620,6 +620,8 @@ impl Session {
         if let Item::Trap(kind) = item {
             match kind {
                 Trap::Shuffle => self.game.spring_shuffle(),
+                Trap::RemoveSpecials => self.game.spring_remove_specials(),
+                Trap::Slow => self.game.spring_slow(),
             }
         }
     }
@@ -963,6 +965,231 @@ mod tests {
     /// `a_ladder_that_opens_by_item_does_not_open_by_clearing` and its pair.
     fn climbing(seed: u64) -> Session {
         Session::set_up(seed, Options { progressive_levels: 0, ..Options::default() })
+    }
+
+    #[test]
+    fn a_slow_trap_stretches_a_swap_and_then_runs_out() {
+        use crate::game::{SLOW_TRAP_FACTOR, SLOW_TRAP_MS, SWAP_MS};
+        let mut session = climbing(5);
+        session.set_remote(true);
+        session.update(16.0);
+
+        // How many frames a swap takes at full speed, measured rather than
+        // worked out, so this follows `SWAP_MS` rather than restating it.
+        let frames_to_swap = |session: &mut Session| {
+            let hint = session.game_mut().hint().expect("the board has a move on it");
+            assert!(session.game_mut().try_swap(hint.0, hint.1), "the hinted swap was refused");
+            let mut frames = 0;
+            while matches!(session.game().phase(), crate::game::Phase::Swapping { .. }) {
+                session.update(16.0);
+                frames += 1;
+                assert!(frames < 2_000, "the swap never finished");
+            }
+            frames
+        };
+
+        let quick = frames_to_swap(&mut session);
+        assert!(quick > 1, "a swap that takes one frame cannot be seen to slow down");
+
+        assert!(session.receive_id(Item::Trap(Trap::Slow).id()), "the trap was refused");
+        session.update(16.0);
+        assert!(session.game().slow_left_ms() > 0.0, "the trap did not start its clock");
+        assert!(
+            session.game().events().iter().any(|e| e.kind == crate::game::EV_SLOW),
+            "the trap did not announce itself",
+        );
+
+        // Let the board settle from the first swap before timing the second.
+        for _ in 0..200 {
+            if matches!(session.game().phase(), crate::game::Phase::Idle) {
+                break;
+            }
+            session.update(16.0);
+        }
+        let slow = frames_to_swap(&mut session);
+        // Not exactly five times: the first and last frames of a phase are
+        // partial, and the settle between swaps has eaten some of the clock.
+        // What matters is that it is far longer, not that it is a precise
+        // multiple of a frame count.
+        assert!(
+            slow as f32 > quick as f32 * (SLOW_TRAP_FACTOR - 2.0),
+            "a swap took {slow} frames under the trap against {quick} without it, which is not \
+             {SLOW_TRAP_FACTOR} times slower",
+        );
+        assert!(
+            SWAP_MS * SLOW_TRAP_FACTOR < SLOW_TRAP_MS,
+            "a swap under the trap lasts longer than the trap, so this cannot be measured",
+        );
+
+        // And it ends on its own, saying so.
+        for _ in 0..4_000 {
+            if session.game().slow_left_ms() <= 0.0 {
+                break;
+            }
+            session.update(16.0);
+        }
+        assert_eq!(session.game().slow_left_ms(), 0.0, "the trap never ran out");
+        let after = frames_to_swap(&mut session);
+        assert!(
+            after < slow,
+            "a swap still took {after} frames after the trap ended, against {slow} during it",
+        );
+    }
+
+    #[test]
+    fn a_remove_specials_trap_takes_the_markings_and_spares_the_rocket() {
+        use crate::board::{Gem, Special};
+        let mut session = climbing(5);
+        session.set_remote(true);
+        session.update(16.0);
+
+        // Put one of each on the board, so the trap has something to take and
+        // something it must leave alone.
+        let spots: Vec<_> = session.game().board.occupied().into_iter().take(5).collect();
+        assert_eq!(spots.len(), 5, "the board is too small to set this up");
+        let planted = [
+            Special::LineH,
+            Special::LineV,
+            Special::Cross,
+            Special::Rainbow,
+            Special::Rocket,
+        ];
+        // Colors cycled through the level's own palette, so planting five in a
+        // row does not itself make a match: a run of three needs three the
+        // same, and no two of these neighbors share one.
+        let palette: Vec<u8> = {
+            let rules = session.game().rules().clone();
+            let count = (rules.colors as usize).clamp(1, crate::rules::MAX_COLORS);
+            rules.palette[..count].to_vec()
+        };
+        for (at, (p, special)) in spots.iter().zip(planted).enumerate() {
+            let color = if special == Special::Rainbow {
+                crate::board::NO_COLOR
+            } else {
+                palette[at % palette.len()]
+            };
+            session.game_mut().board.set_gem(*p, Some(Gem { color, special }));
+        }
+        // The precondition, so what the check at the end proves is that the
+        // trap made no match rather than that this setup happened to be clean.
+        assert!(
+            crate::matching::find_matches(&session.game().board, session.game().rules())
+                .is_empty(),
+            "the setup put a match on the board before the trap ran",
+        );
+
+        assert!(session.receive_id(Item::Trap(Trap::RemoveSpecials).id()), "the trap was refused");
+        assert!(session.game().strip_armed(), "receiving the trap armed nothing");
+        session.update(16.0);
+        assert!(!session.game().strip_armed(), "the trap stayed armed after being taken");
+
+        let left: Vec<Special> =
+            spots.iter().map(|p| session.game().board.gem(*p).unwrap().special).collect();
+        assert_eq!(
+            left,
+            vec![
+                Special::None,
+                Special::None,
+                Special::None,
+                Special::None,
+                // Already on its way, and its window is a moment.
+                Special::Rocket,
+            ],
+            "the trap took the wrong set",
+        );
+        // Four taken, which is what the page is told.
+        assert!(
+            session
+                .game()
+                .events()
+                .iter()
+                .any(|e| e.kind == crate::game::EV_SPECIALS_LOST && e.value == 4),
+            "the trap did not say how many it took",
+        );
+        // The rainbow had no color and now has one, so it is the only part of
+        // this that could set off a clear. A trap that handed out a free
+        // cascade would be a present.
+        assert!(
+            crate::matching::find_matches(
+                &session.game().board,
+                session.game().rules(),
+            )
+            .is_empty(),
+            "stripping the board left a match on it",
+        );
+    }
+
+    #[test]
+    fn a_stripped_rainbow_does_not_complete_a_match_it_could_avoid() {
+        // The rainbow is the only part of this trap that can set off a clear:
+        // it has no color, so it has to be given one. Put it at the end of a
+        // pair and the obvious color is the one that must not be chosen.
+        use crate::board::{Gem, Special};
+        use crate::board::Pos;
+        let mut session = climbing(5);
+        session.set_remote(true);
+        session.update(16.0);
+
+        let rules = session.game().rules().clone();
+        let count = (rules.colors as usize).clamp(1, crate::rules::MAX_COLORS);
+        let palette = &rules.palette[..count];
+        assert!(palette.len() > 2, "a level dealing two colors cannot dodge anything");
+
+        // Three in a row that all hold a gem.
+        let (rows, cols) = (rules.rows, rules.cols);
+        let trio = (0..rows)
+            .flat_map(|r| (0..cols.saturating_sub(2)).map(move |c| (r, c)))
+            .find(|(r, c)| {
+                (0..3).all(|d| session.game().board.gem(Pos::new(*r, *c + d)).is_some())
+            })
+            .expect("no three adjacent gems anywhere on the board");
+        let (r, c) = trio;
+
+        session.game_mut().board.set_gem(Pos::new(r, c), Some(Gem::plain(palette[0])));
+        session.game_mut().board.set_gem(Pos::new(r, c + 1), Some(Gem::plain(palette[0])));
+        session.game_mut().board.set_gem(
+            Pos::new(r, c + 2),
+            Some(Gem { color: crate::board::NO_COLOR, special: Special::Rainbow }),
+        );
+        assert!(
+            crate::matching::find_matches(&session.game().board, session.game().rules())
+                .is_empty(),
+            "two of a color is not a match, so this setup should be clean",
+        );
+
+        assert!(session.receive_id(Item::Trap(Trap::RemoveSpecials).id()));
+        session.update(16.0);
+
+        let filled = session.game().board.gem(Pos::new(r, c + 2)).unwrap();
+        assert_eq!(filled.special, Special::None, "the rainbow survived the trap");
+        assert_ne!(
+            filled.color, palette[0],
+            "the rainbow took the one color that completes the pair beside it",
+        );
+        assert!(
+            crate::matching::find_matches(&session.game().board, session.game().rules())
+                .is_empty(),
+            "the trap handed the player a free clear",
+        );
+    }
+
+    #[test]
+    fn a_remove_specials_trap_on_a_bare_board_says_nothing() {
+        // Nothing to take is not an event. The feed still tells the player the
+        // item arrived; the board has no business claiming something happened.
+        let mut session = climbing(5);
+        session.set_remote(true);
+        session.update(16.0);
+        assert!(session.receive_id(Item::Trap(Trap::RemoveSpecials).id()));
+        session.update(16.0);
+        assert!(
+            !session
+                .game()
+                .events()
+                .iter()
+                .any(|e| e.kind == crate::game::EV_SPECIALS_LOST),
+            "a trap that took nothing announced that it had",
+        );
     }
 
     #[test]

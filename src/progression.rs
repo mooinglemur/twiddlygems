@@ -159,10 +159,10 @@ pub enum Noise {
 /// Every noise, in the order the item table numbers them. Appending is safe;
 /// reordering is not, for the reason [`Item::id`] gives.
 ///
-/// Dropping one costs what it costs by *where* it is. Off the end, nothing:
-/// no surviving noise changes number. Swapped in place, one number changes
-/// meaning. Cut from the middle, every noise after it is renumbered. Prefer
-/// them in that order, and none of them at all once a seed has been rolled.
+/// This list is published, so none of it may move: see [`GENERATOR`].
+/// Appending a noise is free. Dropping one, swapping one in place or cutting
+/// one from the middle all break a rolled seed, in that order of badness, and
+/// all of them need the generator version moved with them.
 pub const NOISES: [Noise; 16] = [
     Noise::DoorKnock,
     Noise::BusySignal,
@@ -205,11 +205,24 @@ pub enum Trap {
     /// it and raises `EV_SHUFFLE`, which the page already has a sound for. The
     /// trap does not get its own anything.
     Shuffle,
+    /// Takes the markings off every line clear, cross and rainbow the board is
+    /// holding.
+    ///
+    /// The one that costs the player something they earned. A rocket is spared
+    /// because one is already on its way and its window is a moment, and an
+    /// Archipelago gem is a location rather than anything they built.
+    RemoveSpecials,
+    /// Swaps and drops take five times as long for half a minute.
+    ///
+    /// The only one measured against a clock rather than against the board,
+    /// and the only one whose effect outlasts the frame it lands on. See
+    /// `Game::spring_slow`.
+    Slow,
 }
 
 /// Every trap, in the order the item table numbers them. Appending is safe;
 /// reordering is not, for the reason [`Item::id`] gives.
-pub const TRAPS: [Trap; 1] = [Trap::Shuffle];
+pub const TRAPS: [Trap; 3] = [Trap::Shuffle, Trap::RemoveSpecials, Trap::Slow];
 
 impl Trap {
     /// Its place in [`TRAPS`], which is what its id and its event are built
@@ -230,6 +243,8 @@ impl Trap {
     pub fn name(self) -> &'static str {
         match self {
             Trap::Shuffle => "Shuffle Trap",
+            Trap::RemoveSpecials => "Remove Specials Trap",
+            Trap::Slow => "Slow Trap",
         }
     }
 }
@@ -279,10 +294,10 @@ impl Item {
     /// location.
     ///
     /// What Archipelago calls it by in a datapackage, which is the same kind
-    /// of promise: a number that moves once a seed has been rolled hands the
-    /// player somebody else's item. Each kind gets its own thousand so a new
-    /// kind of item, a trap say, cannot renumber the ones already out there.
-    /// An unlock takes the special's own code, which is already fixed.
+    /// of promise: a number that moves hands the player somebody else's item.
+    /// Each kind gets its own thousand so that adding one, as the traps were
+    /// added, cannot renumber the ones already out there. An unlock takes the
+    /// special's own code, which is already fixed.
     pub fn id(self) -> u32 {
         match self {
             Item::Unlock(special) => special.code() as u32,
@@ -688,11 +703,17 @@ pub const AP_ID_BASE: u32 = 7_477_000;
 /// up as something the other side has never heard of, which both sides already
 /// refuse one at a time.
 ///
-/// Still 0, and deliberately not yet 1: nothing has been published, so there
-/// is no seed anywhere that has to keep working, and the shape of the apworld
-/// is still being settled. It goes to 1 when the generation side is called
-/// stable, and after that it only ever moves for a real break.
-pub const GENERATOR: u32 = 0;
+/// **1 as of the first published build.** Everything below this line was
+/// development: version 0 seeds were never anybody's but ours, and this build
+/// refuses them rather than reading their numbers as its own.
+///
+/// What that makes permanent is the whole of [`items`] and [`locations`]: the
+/// names, the numbers and the order. From here a kind of item can be appended
+/// and a level can be added, because both sides already refuse something they
+/// have never heard of. What cannot happen without moving this number is
+/// renaming an item, renumbering one, cutting one from the middle of a list,
+/// or changing what a setting means.
+pub const GENERATOR: u32 = 1;
 
 /// Which generations this build of the game can play.
 ///
@@ -2432,6 +2453,26 @@ mod tests {
             }
             assert!(left.is_empty(), "{} pool items had nowhere to go", left.len());
             assert!(traps > 0, "a run at a hundred percent traps was given none");
+            // And all of them turn up, rather than one kind over and over.
+            // Across three seeds there are hundreds of draws from a list of
+            // three, so a kind missing here means it cannot be drawn at all.
+            let mut kinds: Vec<u32> = placed
+                .iter()
+                .flatten()
+                .filter_map(|held| match held {
+                    Item::Trap(kind) => Some(kind.code()),
+                    _ => None,
+                })
+                .collect();
+            kinds.sort_unstable();
+            kinds.dedup();
+            assert_eq!(
+                kinds.len(),
+                TRAPS.len(),
+                "only {} of the {} traps can be drawn",
+                kinds.len(),
+                TRAPS.len(),
+            );
             // And no noise at all, which is what "replace" means.
             assert!(
                 !placed.iter().flatten().any(|held| matches!(held, Item::Filler(_))),
@@ -3262,6 +3303,8 @@ mod tests {
             (3_002, "Inventory Item: Cross Clear", Item::Consumable(Consumable::CrossClear)),
             (3_003, "Inventory Item: Rocket Cluster", Item::Consumable(Consumable::RocketCluster)),
             (5_000, "Shuffle Trap", Item::Trap(Trap::Shuffle)),
+            (5_001, "Remove Specials Trap", Item::Trap(Trap::RemoveSpecials)),
+            (5_002, "Slow Trap", Item::Trap(Trap::Slow)),
         ];
         for (id, name) in [
             (4_000, "Level 1 AP Gem 1"),
@@ -3317,6 +3360,14 @@ mod tests {
             !plays_generator(GENERATOR + 1),
             "a seed from a later generator would be played as though it were this one",
         );
+        // Generator 0 was development, and this build's tables are not the
+        // ones any 0 seed was rolled against. Named rather than left to the
+        // loop below, which only checks the list agrees with itself: adding 0
+        // back would pass that and quietly make a development seed playable.
+        assert!(
+            !plays_generator(0),
+            "a seed from before the first published build is playable, which it must not be",
+        );
         // Older ones are a list rather than everything below the current
         // number, because supporting one is a claim about having the code to
         // read it. Whatever the list says, it has to be deliberate.
@@ -3359,7 +3410,7 @@ mod tests {
         assert_eq!(
             Item::from_id(TRAP_ID_BASE + TRAPS.len() as u32),
             None,
-            "a second trap does not exist yet",
+            "a fourth trap does not exist yet",
         );
         // A move upgrade for a level past the end of the ladder reads back
         // cleanly on purpose: how long the ladder is is not this function's

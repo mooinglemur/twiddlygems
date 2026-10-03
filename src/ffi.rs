@@ -958,6 +958,40 @@ pub unsafe extern "C" fn tg_spring_shuffle(handle: *mut Handle) {
     handle.session.game_mut().spring_shuffle();
 }
 
+/// Debug: spring a Remove Specials Trap. See [`tg_spring_shuffle`].
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_spring_remove_specials(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    handle.session.game_mut().spring_remove_specials();
+}
+
+/// Debug: spring a Slow Trap. See [`tg_spring_shuffle`].
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_spring_slow(handle: *mut Handle) {
+    let handle = session_mut!(handle, ());
+    handle.session.game_mut().spring_slow();
+}
+
+/// How many milliseconds a Slow Trap has left to run, or 0 for none.
+///
+/// For the countdown the page shows. Read every frame rather than tracked on
+/// the page off the events, because a timer on that side would be a second
+/// account of the same fact and the two would drift the moment a frame was
+/// dropped.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_slow_left_ms(handle: *const Handle) -> f32 {
+    session!(handle, 0.0).session.game().slow_left_ms()
+}
+
 /// Debug: give the current level a different number of moves.
 ///
 /// # Safety
