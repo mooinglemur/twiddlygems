@@ -623,11 +623,10 @@ export class Hud {
     const { engine, dom } = this;
     // Only the ones the engine says to draw, which it says per setting rather
     // than by kind. Four weights whose only meaning is their share of a total
-    // are not a control anybody wants to meet on a phone, and neither is a row
-    // offering to put traps in your own game; the runs they describe are the
-    // ones a solo player gets by leaving them alone. They are still in the
-    // table and still carry their own places in it, which is what
-    // `option.index` is: skipping them here cannot shift anything else.
+    // are not a control anybody wants on a phone, and a run gets the ones it
+    // would have chosen by leaving them alone. They are still in the table and
+    // still carry their own places in it, which is what `option.index` is:
+    // skipping them here cannot shift anything else.
     const rows = engine.options.filter((option) => option.onScreen).map((option) => {
       const row = document.createElement('div');
       row.className = 'setup-option';

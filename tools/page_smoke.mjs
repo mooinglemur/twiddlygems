@@ -1631,10 +1631,10 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const rows = elements.get('setup-options').children;
   assert.ok(rows.length > 0, 'the setup screen has no settings on it');
 
-  // Not every setting, though. Some are a yaml's business: four weights whose
-  // only meaning is their share of a total, and the trap percentage. A run
-  // gets the ones it would have chosen by leaving them alone, and their places
-  // in the table are untouched, which is what the engine sets them by.
+  // Not every setting, though: the four weights are a yaml's business, since
+  // shares of a total are no use on a phone. A run gets the ones it would have
+  // chosen by leaving them alone, and their places in the table are untouched,
+  // which is what the engine sets them by.
   //
   // Counted off `onScreen` rather than off the kind, so a setting hidden for a
   // new reason needs nothing done here.
@@ -1672,6 +1672,13 @@ click(overlayButton('Close'), 'the level picker has no way out');
           + `which is none of ${JSON.stringify(named)}`,
       );
     }
+
+    // The trap percentage is one of the drawn ones, and it is the only
+    // setting here that can make a run worse. Worth naming rather than
+    // trusting the count: it has been on both sides of this line.
+    const traps = drawn.find((option) => option.key === 'trap_percent');
+    assert.ok(traps, 'the setup screen does not offer the trap percentage');
+    assert.equal(engine.optionValue(traps.index), 0, 'traps did not default to none');
   }
 
   // Every control is built by walking the engine's table, so each row should

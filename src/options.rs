@@ -262,9 +262,9 @@ pub struct Setting {
     /// Whether the solo setup screen draws a control for it.
     ///
     /// A property of the setting rather than of its kind, which is why it is a
-    /// field and not another [`Kind`]: the weights are hidden because four
-    /// shares of a total are no use on a phone, the trap percentage because it
-    /// belongs in a yaml. Same behavior, unrelated reasons.
+    /// field and not another [`Kind`]. Only the weights are hidden today, and
+    /// they are hidden because four shares of a total are no use on a phone,
+    /// not because of what type they are.
     ///
     /// Hidden is not absent. Every setting crosses the ABI and keeps its place
     /// in [`SETTINGS`], because what the page sets a setting by is its index;
@@ -518,18 +518,12 @@ pub static SETTINGS: &[Setting] = &[
     },
     Setting {
         key: TRAP_PERCENT,
-        label: "Trap percentage",
-        about: "What share of the leftover items are traps instead of \
-                harmless named filler. Traps replace that filler rather than \
-                adding items, so this takes nothing away from the items that \
-                matter.",
+        label: "Traps",
+        about: "What percentage of your filler is replaced by a \
+                trap, default is 0, which places no traps.",
         kind: Kind::Range { low: 0, high: 100, step: 5 },
         default: 0,
-        // Off the solo screen. That screen is the few decisions somebody makes
-        // before tapping start, and a row offering to make the game worse does
-        // not belong among them. A yaml can still set it, so what is missing
-        // is the control rather than the ability.
-        on_screen: false,
+        on_screen: true,
     },
     // The four weights, which a yaml takes as one option and the solo screen
     // does not take at all. In the order the kinds are numbered, because

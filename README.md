@@ -995,10 +995,11 @@ whose rules say not to shuffle refuses the trap outright, because those are the
 ones where the layout is the puzzle and rearranging it would not hurt the
 player so much as throw the level away.
 
-Traps are in the datapackage and in nobody's pool yet: what decides how many a
-seed holds is a yaml percentage that does not exist, and they are meant to
-replace a share of the filler rather than add items. Until then the testing
-menu springs one.
+How many a run holds is the **Traps** setting, a percentage, off by default.
+Traps take the place of the named filler rather than adding items, so turning
+it up never costs you an item that matters: a world submits as many items as
+it has locations, and anything with a count of its own pushes something else
+out. At 100 every leftover is a trap.
 
 Which one a leftover location gets is a draw rather than a rotation, on the
 fill's own stream in solo and on the slot's generator in a multiworld. The
@@ -1030,8 +1031,8 @@ to the item next door.
    `Inventory`, so "can this be cleared from here" is one question asked of one
    thing. The apworld is emitted from those same tables and generates real
    seeds. The bonus items, the settings and the client that connects a run to
-   a server all landed since this was written. Still to come: the rest of the
-   traps, and the yaml percentage that decides how many of them a seed holds.
+   a server all landed since this was written. Still to come: the other two
+   traps, Remove Specials and Slow.
 3. **Polish.** Particles, sound, music, and the visual pass. The engine already
    emits an event stream (clears, specials made and fired, cascades, shuffles)
    that the page currently reads and drops; that is where sound and particles
