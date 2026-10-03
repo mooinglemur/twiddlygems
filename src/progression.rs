@@ -57,15 +57,10 @@ pub enum Item {
     /// honest something: each one is a named thing that makes its own sound
     /// and changes nothing a run may do.
     ///
-    /// It was a spare moves upgrade before, which stopped meaning anything the
-    /// moment an upgrade started landing whole and once: a second copy changed
-    /// nothing, so a run could clear a level, be handed an item it already had
-    /// all of, and be none the wiser.
-    ///
-    /// It was then a single item literally called "Filler", which was honest
-    /// and dull. These names land in *other people's* feeds, so they are worth
-    /// being things rather than a label: a room reads "Troy found Sad Trombone"
-    /// and gets the joke without having to know this game at all.
+    /// The names land in *other people's* feeds, so they are things rather
+    /// than labels: a room reads "found Sad Trombone" and gets the joke
+    /// without knowing this game at all. None of them describes its own
+    /// effect, because it has none.
     Filler(Noise),
     /// Something to spend, kept until the player spends it.
     ///
@@ -164,25 +159,10 @@ pub enum Noise {
 /// Every noise, in the order the item table numbers them. Appending is safe;
 /// reordering is not, for the reason [`Item::id`] gives.
 ///
-/// Six were cut from the middle of this on 2026-09-30, after Troy heard them:
-/// Boing, Record Scratch, Cash Register, Elevator Music, Jeweler's Loupe and
-/// Coin in a Fountain. That renumbered every noise after each of them, which
-/// is exactly what the line above says not to do, and it was free only because
-/// no seed has ever been generated from this game. Once one has, a cut noise
-/// has to stay in the list with its number, however bad it sounded.
-///
-/// One was swapped in place rather than cut: Busy Signal took Pebble Drop's
-/// slot, so 2001 means something new and nothing else moved. That is the
-/// cheaper of the two kinds of change and the one to prefer once seeds exist,
-/// because only the players holding that one item are affected rather than
-/// everybody holding anything after it. It is still a change a rolled seed
-/// cannot survive.
-///
-/// Four more came off the **end** on 2026-10-01, Troy's call that the rest
-/// were more than enough: Music Box Fragment, Polishing Cloth, Pocketful of
-/// Gravel and A Satisfying Click. Truncating costs nothing at all, because no
-/// surviving noise changes number. Of the three ways to shorten this list it
-/// is much the cheapest, and the one to reach for first.
+/// Dropping one costs what it costs by *where* it is. Off the end, nothing:
+/// no surviving noise changes number. Swapped in place, one number changes
+/// meaning. Cut from the middle, every noise after it is renumbered. Prefer
+/// them in that order, and none of them at all once a seed has been rolled.
 pub const NOISES: [Noise; 16] = [
     Noise::DoorKnock,
     Noise::BusySignal,
@@ -204,9 +184,9 @@ pub const NOISES: [Noise; 16] = [
 
 /// Something a run would rather not have been sent. See [`Item::Trap`].
 ///
-/// Three distinct items rather than one carrying a kind, Troy's call: a
-/// tracker and a feed both name the item, so "Shuffle Trap" tells a player
-/// what happened to them where "Trap" would only tell them that something did.
+/// Three distinct items rather than one carrying a kind, so a tracker and a
+/// feed can name which one hit you: "Shuffle Trap" says what happened where
+/// "Trap" would only say that something did.
 ///
 /// A trap is the one kind of item here that is an **event rather than a
 /// holding**. Everything else a run receives it then has: an unlock teaches
@@ -273,9 +253,6 @@ impl Noise {
     pub fn name(self) -> &'static str {
         match self {
             Noise::DoorKnock => "Door Knock",
-            // Replaced Pebble Drop here, which Troy did not like and which was
-            // only ever the board's thud pitched up. This number has changed
-            // meaning rather than moved: see the note on `NOISES`.
             Noise::BusySignal => "Busy Signal",
             Noise::WindChime => "Wind Chime",
             Noise::TinyBell => "Tiny Bell",
@@ -285,11 +262,8 @@ impl Noise {
             Noise::DeflatingBalloon => "Deflating Balloon",
             Noise::CricketChirp => "Cricket Chirp",
             Noise::DialTone => "Dial Tone",
-            // Written as Distant Thunder and renamed once Troy heard it as the
-            // sea, which it is. The name is the better joke by a long way: a
-            // room with a Pokemon player in it reads "found Surf" and takes a
-            // second look at the feed, which is exactly what these names are
-            // for.
+            // A room with a Pokemon player in it reads "found Surf" and takes
+            // a second look, which is what these names are for.
             Noise::Surf => "Surf",
             Noise::BarkingSpider => "Barking Spider",
             Noise::KitchenTimer => "Kitchen Timer",
@@ -1118,9 +1092,8 @@ pub fn location_name(location: Location) -> String {
         Location::LevelSilver(index) => format!("Level {} Silver", index + 1),
         Location::LevelGold(index) => format!("Level {} Gold", index + 1),
         Location::Chain(length) => format!("{length} Chain"),
-        // Troy's wording, 2026-09-24. Not "{n} Match", which would read like
-        // the chains above it: what these ask for is a thing to go and do,
-        // and the verb is what says so.
+        // Not "{n} Match", which would read like the chains above it: what
+        // these ask for is a thing to go and do, and the verb says so.
         Location::Match(gems) => format!("Activate {gems} match"),
         // "AP Gem" rather than the word spelled out: this is what the feed
         // shows while a level is being played, where a line has to be read at
@@ -1784,12 +1757,22 @@ pub fn solo_placement(levels: usize, seed: u64, options: &Options) -> Vec<Option
     // locations are walked in table order here, so handing them out in turn
     // would put the same noise on the same location in every run there will
     // ever be, and the opening level would always knock on the same door.
+    //
+    // Some share of them is a trap instead, which is the whole of what
+    // `trap_percent` does: a trap replaces a leftover rather than adding an
+    // item, because a world has as many items as it has locations and anything
+    // added pushes something else out. Rolled per location rather than taken
+    // as a quota, so a run holds roughly the share asked for and not exactly
+    // it. The Python does the same thing the same way; see `create_items`.
     expand(&rules, &inventory, &mut reached, options);
     for at in &usable {
         let Some(index) = location_index(*at, levels) else { continue };
         if held[index].is_none() && reached.has(*at) {
-            let noise = NOISES[rng.below(NOISES.len() as u32) as usize];
-            held[index] = Some(Item::Filler(noise));
+            held[index] = Some(if rng.below(100) < options.trap_percent {
+                Item::Trap(TRAPS[rng.below(TRAPS.len() as u32) as usize])
+            } else {
+                Item::Filler(NOISES[rng.below(NOISES.len() as u32) as usize])
+            });
         }
     }
     held
@@ -1860,7 +1843,7 @@ fn expand(
 mod tests {
     use super::*;
     use crate::level::Objective;
-    use crate::options::{setting_index, Kind, SETTINGS};
+    use crate::options::{setting_index, Kind, SETTINGS, TRAP_PERCENT};
     use crate::rules::Rules;
 
     /// A level with a move budget and an upgrade, for the arithmetic below.
@@ -2336,6 +2319,13 @@ mod tests {
             // a different branch of the completion rule and all four have to
             // be walked.
             let mut values: Vec<u32> = match setting.kind {
+                // Left where it is, and it decides nothing these checks are
+                // about: a trap and a noise are both things no location asks
+                // for, so swapping one for the other cannot move reachability
+                // or the gem floor. Sweeping it would triple every run here
+                // to prove that. `a_run_full_of_traps_still_places_everything`
+                // covers the one thing that could go wrong.
+                _ if setting.key == TRAP_PERCENT => vec![setting.default],
                 Kind::Range { low, high, .. } => vec![low, setting.default, high],
                 // Both of them, always: two is a handful.
                 Kind::Toggle => vec![0, 1],
@@ -2414,6 +2404,52 @@ mod tests {
                 item_name(left[0]),
             );
         }
+    }
+
+    #[test]
+    fn a_run_full_of_traps_still_places_everything() {
+        // Traps replace leftovers, so at a hundred percent every location that
+        // would have held a noise holds a trap and nothing the rules care
+        // about moves. The thing worth checking is that the pool is unaffected:
+        // a trap must never take a place a real item needed.
+        let levels = 13;
+        let options = Options { trap_percent: 100, ..Options::default() };
+        for seed in [1_u64, 2, 3] {
+            let placed = solo_placement(levels, seed, &options);
+            let mut left = item_pool(levels, seed, &options);
+            let mut traps = 0;
+            for held in placed.iter().flatten() {
+                if let Some(at) = left.iter().position(|wanted| wanted == held) {
+                    left.swap_remove(at);
+                    continue;
+                }
+                assert!(
+                    matches!(*held, Item::Trap(_)),
+                    "{} was placed but is not in the pool",
+                    item_name(*held),
+                );
+                traps += 1;
+            }
+            assert!(left.is_empty(), "{} pool items had nowhere to go", left.len());
+            assert!(traps > 0, "a run at a hundred percent traps was given none");
+            // And no noise at all, which is what "replace" means.
+            assert!(
+                !placed.iter().flatten().any(|held| matches!(held, Item::Filler(_))),
+                "a leftover was a noise in a run that asked for nothing but traps",
+            );
+        }
+    }
+
+    #[test]
+    fn no_traps_is_the_default_and_means_none() {
+        // The default has to be inert, or every run anybody has ever dealt
+        // changes under them.
+        let levels = 13;
+        let placed = solo_placement(levels, 7, &Options::default());
+        assert!(
+            !placed.iter().flatten().any(|held| matches!(held, Item::Trap(_))),
+            "a run that asked for no traps was given one",
+        );
     }
 
     #[test]

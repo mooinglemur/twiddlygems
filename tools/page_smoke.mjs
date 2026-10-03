@@ -1076,8 +1076,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
     `the level never said it was cleared, only ${JSON.stringify([...toasts])}`,
   );
   // And the fanfare sounded with it, on the same frame. Nothing here has an
-  // opinion about what it sounds like, which is Troy's to settle by ear; what
-  // is checked is only that the two are still one moment.
+  // opinion about what it sounds like; what is checked is that the two are
+  // still one moment.
   audio.play = realPlay;
   assert.notEqual(fanfareFrame, null, 'the level was cleared in silence');
   assert.equal(
@@ -1368,7 +1368,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // Replaying the level the goal fell on is not a thing anybody wants offered
   // at the end of a run, and the panel has no business suggesting it.
   assert.ok(!overlayButton('Replay'), 'the victory panel offers to replay the level');
-  // What it says is Troy's to word. What it must do is name the level and the
+  // The wording is free to change. What it must do is name the level and the
   // score, because that is the only thing on the panel a player cannot read
   // off the board behind it. Matched loosely on purpose: this pinned the exact
   // sentence once and failed the moment the wording was improved, which is a
@@ -1527,6 +1527,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // engine, because the thing not yet covered anywhere is the wiring from a
   // row in that menu through to the board.
   {
+    const { Phase } = await import(path.resolve('web/js/engine.js'));
     const board = () => Array.from(engine.snapshot().cells);
     const settled = board();
     // Twenty again from scratch: closing the menu was a tap somewhere else,
@@ -1540,10 +1541,21 @@ click(overlayButton('Close'), 'the level picker has no way out');
     click(overlayButton('Close'), 'the testing menu has no way out');
     assert.deepEqual(board(), settled, 'the board moved before a single frame had run');
 
-    // The gems are not rearranged until the shuffle phase ends, which is the
-    // whole point of the phase: the player watches the board churn and then
-    // sees where everything landed. SHUFFLE_MS is 700, so pump well past it.
-    pump(80);
+    // One frame to take the flag, which is what puts the board into the
+    // shuffle phase, and then run that phase out: the gems are not rearranged
+    // until it ends, since the player watches the board churn and then sees
+    // where everything landed.
+    //
+    // Driven until idle rather than for a fixed count, so a change to
+    // `SHUFFLE_MS` cannot quietly turn this into a test that asserts the board
+    // was still mid-shuffle. The first pump has to be unconditional: the board
+    // is idle before the flag is taken, so a loop that checks first exits
+    // without running anything.
+    pump(1);
+    assert.equal(engine.phase, Phase.SHUFFLING, 'the trap did not start a shuffle');
+    for (let i = 0; i < 400 && engine.phase !== Phase.IDLE; i += 1) {
+      pump(1);
+    }
     assert.notDeepEqual(
       board(),
       settled,
@@ -1619,32 +1631,34 @@ click(overlayButton('Close'), 'the level picker has no way out');
   const rows = elements.get('setup-options').children;
   assert.ok(rows.length > 0, 'the setup screen has no settings on it');
 
-  // Not every setting, though: the weights are a yaml's business. Four
-  // numbers whose only meaning is their share of a total do not belong on a
-  // phone, and a run gets the ones it would have chosen by leaving them
-  // alone. Their place in the table is untouched, which is what the engine
-  // sets them by.
+  // Not every setting, though. Some are a yaml's business: four weights whose
+  // only meaning is their share of a total, and the trap percentage. A run
+  // gets the ones it would have chosen by leaving them alone, and their places
+  // in the table are untouched, which is what the engine sets them by.
+  //
+  // Counted off `onScreen` rather than off the kind, so a setting hidden for a
+  // new reason needs nothing done here.
   {
     const { engine } = window.twiddlygems;
-    const weights = engine.options.filter((option) => option.kind === 'weight');
-    assert.ok(weights.length > 0, 'nothing in the table is a weight, so this checks nothing');
+    const hidden = engine.options.filter((option) => !option.onScreen);
+    assert.ok(hidden.length > 0, 'nothing in the table is hidden, so this checks nothing');
     assert.equal(
       rows.length,
-      engine.options.length - weights.length,
+      engine.options.length - hidden.length,
       'the setup screen is drawing settings it was meant to leave out',
     );
-    for (const weight of weights) {
+    for (const option of hidden) {
       assert.equal(
-        engine.optionValue(weight.index),
-        weight.default,
-        `${weight.key} is not at its default, so the screen is not the only way to move it`,
+        engine.optionValue(option.index),
+        option.default,
+        `${option.key} is not at its default, so the screen is not the only way to move it`,
       );
     }
 
     // And a setting that names its values shows the name, not the number. A
     // toggle carries Off and On across the ABI for exactly this: a row
     // reading 1 tells a player nothing about what it is set to.
-    const drawn = engine.options.filter((option) => option.kind !== 'weight');
+    const drawn = engine.options.filter((option) => option.onScreen);
     for (const [at, option] of drawn.entries()) {
       if (!option.choices) {
         continue;

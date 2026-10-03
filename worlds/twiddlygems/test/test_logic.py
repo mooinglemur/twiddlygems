@@ -26,6 +26,12 @@ LADDER = "Progressive Level Unlock"
 #: decides, rather than listed here where the list would go stale.
 TOP_UP = {item["name"] for item in ITEMS_BY_NAME.values() if item["top_up"]}
 
+#: The traps, which take a share of that top-up instead of a count of their
+#: own. Read off the classification the engine writes.
+TRAPS = {
+    item["name"] for item in ITEMS_BY_NAME.values() if item["classification"] == "trap"
+}
+
 #: How many levels from the bottom go down bare-handed. Read from the engine
 #: rather than written here, because it is the engine's decision and a second
 #: copy would be one to keep in step.
@@ -822,3 +828,50 @@ class TestWhatAnUnusualSlotIsTold(TwiddlyGemsTestBase):
     def test_the_gem_count_sent_is_this_run_s_own(self) -> None:
         data = self.world.fill_slot_data()
         self.assertEqual(data["ap_gems_per_level"], 4)
+
+
+class TestNoTrapsByDefault(TwiddlyGemsTestBase):
+    """A run that said nothing about traps carries none."""
+
+    def test_the_pool_holds_no_traps(self) -> None:
+        mine = [item for item in self.multiworld.itempool if item.player == self.player]
+        self.assertTrue(TRAPS, "the engine named no traps, so this checks nothing")
+        self.assertEqual(
+            [item.name for item in mine if item.name in TRAPS],
+            [],
+            "a run that asked for no traps was given some",
+        )
+
+
+class TestEveryLeftoverIsATrap(TwiddlyGemsTestBase):
+    """At a hundred percent, traps take every leftover and nothing else.
+
+    `WorldTestBase` fills a real multiworld in `setUp`, so reaching any
+    assertion here means the fill succeeded with traps in place of all the
+    filler. That is most of the point: a trap must not take a place a real
+    item needed.
+    """
+
+    options = {"trap_percent": 100}
+
+    def test_the_traps_replaced_the_filler_rather_than_adding_to_it(self) -> None:
+        mine = [item for item in self.multiworld.itempool if item.player == self.player]
+        # The length is the claim: a pool as long as the location list means
+        # nothing was pushed out to make room.
+        self.assertEqual(len(mine), len(self.world._locations_in_play()))
+
+        names = [item.name for item in mine]
+        self.assertGreater(len([n for n in names if n in TRAPS]), 0, "no traps were placed")
+        self.assertEqual(
+            [n for n in names if n in TOP_UP],
+            [],
+            "filler survived in a run where every leftover should be a trap",
+        )
+
+    def test_they_are_classified_as_traps(self) -> None:
+        # What colors them in a feed and what tells Archipelago it may put one
+        # where nobody has to go.
+        mine = [item for item in self.multiworld.itempool if item.player == self.player]
+        for item in mine:
+            if item.name in TRAPS:
+                self.assertTrue(item.trap, f"{item.name} is not classified as a trap")

@@ -963,10 +963,10 @@ that change nothing about the run and each make one sound. Door Knock, Sad
 Trombone, Busy Signal, Barking Spider, Cricket Chirp, Kitchen Timer.
 
 The names are the point, and they are aimed outward. A filler item in a
-multiworld is read mostly by other people: what a room sees is "Troy found Sad
-Trombone", and that lands without anybody needing to know what this game is.
-An item called "Filler" is honest and says nothing. So these are things rather
-than labels, and none of them describes its own effect, because it has none.
+multiworld is read mostly by other people: a room sees "found Sad Trombone",
+and that lands without anybody needing to know what this game is. An item
+called "Filler" is honest and says nothing. So these are things rather than
+labels, and none of them describes its own effect, because it has none.
 
 The best of them is **Surf**, which is a wave going over and was written as
 distant thunder until it turned out to sound like the sea. A room usually has

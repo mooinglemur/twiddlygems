@@ -66,6 +66,17 @@ ITEMS_BY_NAME = {item["name"]: item for item in ITEMS}
 TOP_UP_NAMES = [item["name"] for item in ITEMS if item["top_up"]]
 assert TOP_UP_NAMES, "the engine named no item that may top up empty locations"
 
+#: The traps, which take a share of that top-up rather than a count of their
+#: own. Read off the classification the engine already writes, so a trap added
+#: there needs nothing done here.
+#:
+#: Deliberately *not* folded into ``TOP_UP_NAMES``. That list is what
+#: ``get_filler_item_name`` draws from, and Archipelago calls that for its own
+#: purposes as well as ours: filling a location somebody excluded, for one. A
+#: trap reachable through it would turn up at a rate nobody set and nobody
+#: could turn off, which is the opposite of what the percentage is for.
+TRAP_NAMES = [item["name"] for item in ITEMS if item["classification"] == "trap"]
+
 
 # The settings live in `options.py`, which is not a matter of taste: WebHost
 # pickles an option value into its database and reads it back through a
@@ -334,8 +345,27 @@ class TwiddlyGemsWorld(World):
         # Against the locations this run has rather than every name in the
         # table: the gems it did not ask for are not in its world, and filling
         # for them would submit more items than there are places.
+        #
+        # Some share of the top-up is a trap instead, which is the whole of
+        # what `trap_percent` does. Traps replace filler rather than adding
+        # items, for the reason this loop exists at all: the pool has to come
+        # out the same length as the location list, so anything added pushes
+        # something else out. At 100 every leftover is a trap and not one item
+        # that matters is touched.
+        #
+        # Rolled per item rather than worked out as a quota, so a seed holds
+        # roughly the share asked for and not exactly it. The engine's own fill
+        # does the same thing the same way; see `solo_placement`.
+        # Read straight off the options rather than through `_option`, which
+        # takes a class path because the tables it serves point at settings
+        # that way. Nothing points at this one: it is named here, once, by the
+        # key the engine gave it.
+        traps = int(self.options.trap_percent.value) if TRAP_NAMES else 0
         while len(pool) < len(self._locations_in_play()):
-            pool.append(self.create_filler())
+            if traps and self.random.randrange(100) < traps:
+                pool.append(self.create_item(self.random.choice(TRAP_NAMES)))
+            else:
+                pool.append(self.create_filler())
         self.multiworld.itempool += pool
 
     def set_rules(self) -> None:

@@ -99,6 +99,11 @@ fn option_table_text() -> Vec<u8> {
             setting.key.to_string(),
             setting.label.to_string(),
             setting.about.to_string(),
+            // Whether the solo screen draws it. Carried for every setting
+            // rather than inferred from the kind, which is what the page used
+            // to do: it skipped the weights because they were weights, and
+            // then a hidden *range* turned up. See `Setting::on_screen`.
+            if setting.on_screen { "yes" } else { "no" }.to_string(),
         ];
         match setting.kind {
             // The step is left out on purpose: the screen asks the engine to

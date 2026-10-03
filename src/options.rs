@@ -61,6 +61,24 @@ pub struct Options {
     /// than chase scores should not have to beat sixteen levels twice over to
     /// find out how the story ends.
     pub exclude_gold_and_silver: u32,
+    /// What share of the leftover items are traps, as a percentage.
+    ///
+    /// **A share of the leftovers rather than of everything, and a
+    /// replacement rather than an addition.** A world submits as many items as
+    /// it has locations, so anything with a count of its own pushes something
+    /// else out; what traps take the place of is the named filler, which is
+    /// the only thing here that exists because the count has to be made up.
+    /// At 100 every leftover is a trap and not one item that matters is
+    /// touched.
+    ///
+    /// Rolled per item rather than worked out as a quota, so a seed holds
+    /// roughly this share and not exactly it. That is what a percentage means
+    /// in a yaml everywhere else in Archipelago, and a quota would need the
+    /// engine and the apworld to agree on a rounding rule for no gain.
+    ///
+    /// Off by default. Somebody who says nothing gets no traps, because being
+    /// hurt is the kind of thing to opt into.
+    pub trap_percent: u32,
     /// How likely each kind of bonus item is, relative to the others.
     ///
     /// In the order [`crate::progression::CONSUMABLES`] lists them, which
@@ -90,6 +108,10 @@ impl Default for Options {
             // Off: the marks hold items by default, which is how the game has
             // always been and what somebody who says nothing should get.
             exclude_gold_and_silver: 0,
+            // None. A player who has not asked to be hurt is not hurt, and
+            // this is also what keeps every existing seed and every test that
+            // does not name it reading exactly as it did.
+            trap_percent: 0,
             // Even, which is what they were before there was a way to say
             // otherwise. Fifty rather than one because that is the number a
             // yaml usually carries, and a player reaching for this wants room
@@ -159,6 +181,7 @@ impl Options {
             PROGRESSIVE_LEVELS => Some(self.progressive_levels),
             SPARE_UNLOCKS => Some(self.spare_unlocks),
             EXCLUDE_GOLD_AND_SILVER => Some(self.exclude_gold_and_silver),
+            TRAP_PERCENT => Some(self.trap_percent),
             key => weight_at(key).map(|slot| self.inventory_weights[slot]),
         }
     }
@@ -177,6 +200,7 @@ impl Options {
             PROGRESSIVE_LEVELS => self.progressive_levels = value,
             SPARE_UNLOCKS => self.spare_unlocks = value,
             EXCLUDE_GOLD_AND_SILVER => self.exclude_gold_and_silver = value,
+            TRAP_PERCENT => self.trap_percent = value,
             GOAL => match Goal::from_value(value) {
                 Some(goal) => self.goal = goal,
                 None => return false,
@@ -202,6 +226,8 @@ pub const INVENTORY_ITEMS: &str = "inventory_items";
 pub const PROGRESSIVE_LEVELS: &str = "progressive_levels";
 /// The key of the setting that decides [`Options::spare_unlocks`].
 pub const SPARE_UNLOCKS: &str = "spare_unlocks";
+/// The key of the setting that decides [`Options::trap_percent`].
+pub const TRAP_PERCENT: &str = "trap_percent";
 /// The key of the setting that decides [`Options::exclude_gold_and_silver`].
 ///
 /// Named for what it does rather than for who wants it. A key is read in
@@ -233,6 +259,18 @@ pub struct Setting {
     pub about: &'static str,
     pub kind: Kind,
     pub default: u32,
+    /// Whether the solo setup screen draws a control for it.
+    ///
+    /// A property of the setting rather than of its kind, which is why it is a
+    /// field and not another [`Kind`]: the weights are hidden because four
+    /// shares of a total are no use on a phone, the trap percentage because it
+    /// belongs in a yaml. Same behavior, unrelated reasons.
+    ///
+    /// Hidden is not absent. Every setting crosses the ABI and keeps its place
+    /// in [`SETTINGS`], because what the page sets a setting by is its index;
+    /// the screen filters the list it draws from. And the yaml has every one
+    /// of them either way, since the apworld reads the same table.
+    pub on_screen: bool,
 }
 
 impl Setting {
@@ -365,6 +403,7 @@ pub static SETTINGS: &[Setting] = &[
             Choice { key: "gold_on_every_level", label: "Gold on every level", value: 3 },
         ]),
         default: 1,
+        on_screen: true,
     },
     Setting {
         key: AP_GEMS,
@@ -379,6 +418,7 @@ pub static SETTINGS: &[Setting] = &[
         // that number is a datapackage and cannot move.
         kind: Kind::Range { low: 0, high: 10, step: 1 },
         default: 1,
+        on_screen: true,
     },
     Setting {
         key: AP_GEM_ODDS,
@@ -397,6 +437,7 @@ pub static SETTINGS: &[Setting] = &[
         // playthroughs per gem.
         kind: Kind::Range { low: 50, high: 200, step: 10 },
         default: 100,
+        on_screen: true,
     },
     Setting {
         key: INVENTORY_ITEMS,
@@ -416,6 +457,7 @@ pub static SETTINGS: &[Setting] = &[
         // setting at its ends and are what would say so.
         kind: Kind::Range { low: 0, high: 20, step: 1 },
         default: 10,
+        on_screen: true,
     },
     Setting {
         key: PROGRESSIVE_LEVELS,
@@ -430,6 +472,7 @@ pub static SETTINGS: &[Setting] = &[
         // somebody who wants to play it straight through.
         kind: Kind::Toggle,
         default: 1,
+        on_screen: true,
     },
     Setting {
         key: SPARE_UNLOCKS,
@@ -450,6 +493,7 @@ pub static SETTINGS: &[Setting] = &[
         // allow.
         kind: Kind::Range { low: 0, high: 100, step: 5 },
         default: 20,
+        on_screen: true,
     },
     Setting {
         key: EXCLUDE_GOLD_AND_SILVER,
@@ -470,6 +514,22 @@ pub static SETTINGS: &[Setting] = &[
         // places left to put them, and the generator would refuse the seed.
         kind: Kind::Toggle,
         default: 0,
+        on_screen: true,
+    },
+    Setting {
+        key: TRAP_PERCENT,
+        label: "Trap percentage",
+        about: "What share of the leftover items are traps instead of \
+                harmless named filler. Traps replace that filler rather than \
+                adding items, so this takes nothing away from the items that \
+                matter.",
+        kind: Kind::Range { low: 0, high: 100, step: 5 },
+        default: 0,
+        // Off the solo screen. That screen is the few decisions somebody makes
+        // before tapping start, and a row offering to make the game worse does
+        // not belong among them. A yaml can still set it, so what is missing
+        // is the control rather than the ability.
+        on_screen: false,
     },
     // The four weights, which a yaml takes as one option and the solo screen
     // does not take at all. In the order the kinds are numbered, because
@@ -480,6 +540,7 @@ pub static SETTINGS: &[Setting] = &[
         about: "How likely a bonus item is a rocket.",
         kind: Kind::Weight { group: INVENTORY_CHANCE },
         default: 50,
+        on_screen: false,
     },
     Setting {
         key: INVENTORY_WEIGHTS[1],
@@ -487,6 +548,7 @@ pub static SETTINGS: &[Setting] = &[
         about: "How likely a bonus item is a rainbow.",
         kind: Kind::Weight { group: INVENTORY_CHANCE },
         default: 50,
+        on_screen: false,
     },
     Setting {
         key: INVENTORY_WEIGHTS[2],
@@ -494,6 +556,7 @@ pub static SETTINGS: &[Setting] = &[
         about: "How likely a bonus item is a cross clear.",
         kind: Kind::Weight { group: INVENTORY_CHANCE },
         default: 50,
+        on_screen: false,
     },
     Setting {
         key: INVENTORY_WEIGHTS[3],
@@ -501,6 +564,7 @@ pub static SETTINGS: &[Setting] = &[
         about: "How likely a bonus item is a rocket cluster.",
         kind: Kind::Weight { group: INVENTORY_CHANCE },
         default: 50,
+        on_screen: false,
     },
     // A level's moves upgrade has no setting of its own yet. Each level
     // declares what its upgrade is worth and one item carries the whole of it,
@@ -587,6 +651,7 @@ mod tests {
             about: "A range, for the check below.",
             kind: Kind::Range { low: 1, high: 4, step: 1 },
             default: 2,
+            on_screen: true,
         };
         assert!(!span.allows(0), "a range took a value below its floor");
         assert!(!span.allows(5), "a range took a value past its ceiling");
@@ -606,6 +671,7 @@ mod tests {
             about: "A range, for the check below.",
             kind: Kind::Range { low: 1, high: 4, step: 1 },
             default: 2,
+            on_screen: true,
         };
         assert_eq!(span.step(4, 1), 4, "a range walked past its ceiling");
         assert_eq!(span.step(1, -1), 1, "a range walked past its floor");
@@ -621,6 +687,7 @@ mod tests {
             about: "A range in tens.",
             kind: Kind::Range { low: 50, high: 200, step: 10 },
             default: 100,
+            on_screen: true,
         };
         assert_eq!(tens.step(100, 1), 110, "a range in tens moved by one");
         assert_eq!(tens.step(100, -1), 90);

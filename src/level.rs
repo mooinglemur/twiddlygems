@@ -504,8 +504,8 @@ pub fn levels() -> Vec<LevelSpec> {
             // paying a bare run anything (with no unlocks there is nothing to
             // mint, so there is no flourish at all) the bare tail fell well
             // under the silver, and no bare run in 138 has reached it. The
-            // permission stays because it is Troy's call rather than the
-            // measurement's, and the tail is what it always was.
+            // permission stays as a design decision rather than a measured
+            // one, and the tail is what it always was.
             .tiers(30_000, 41_000)
             .upgrade(2),
         LevelSpec::new("Ruby Hunt", 8, vec![Objective::Color { color: 0, count: 30 }])

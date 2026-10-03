@@ -91,6 +91,9 @@ export const Tier = { NONE: 0, CLEAR: 1, SILVER: 2, GOLD: 3 };
 
 export const ObjectiveKind = { SCORE: 0, COLOR: 1, JELLY: 2, BRICK: 3, SEAL: 4 };
 
+/// Why the board is rearranging itself, which decides what the toast says.
+export const ShuffleWhy = { STUCK: 0, TRAP: 1 };
+
 /// How much the world cares about an item, which is what its name is colored
 /// by in the feed. Archipelago's own four; see `Class` in the engine.
 export const ItemClass = { FILLER: 0, USEFUL: 1, PROGRESSION: 2, TRAP: 3 };
@@ -552,8 +555,20 @@ export class Engine {
   get options() {
     this.optionCache ??= this.blob(this.wasm.tg_options_ptr, this.wasm.tg_options_len).map(
       (line, index) => {
-        const [key, label, about, kind, fallback, ...rest] = line.split('\t');
-        const option = { index, key, label, about, kind, default: Number(fallback) };
+        const [key, label, about, screen, kind, fallback, ...rest] = line.split('\t');
+        const option = {
+          index,
+          key,
+          label,
+          about,
+          kind,
+          // Whether the setup screen draws a control for it. Not every
+          // setting is drawn, and the ones that are not still cross this
+          // list in their own places: what the page sets a setting by is its
+          // index.
+          onScreen: screen === 'yes',
+          default: Number(fallback),
+        };
         if (kind === 'range') {
           option.low = Number(rest[0]);
           option.high = Number(rest[1]);

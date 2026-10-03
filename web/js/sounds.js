@@ -350,6 +350,14 @@ export const SOUNDS = {
   shuffle: {
     gain: 0.42,
     voiceCap: 2,
+    // Its natural length: the closing tock lands at 0.46 and rings for 0.12.
+    // Declared so the page can stretch the whole gesture to the length of the
+    // animation rather than this sound carrying a length of its own, which is
+    // the same arrangement the rocket's whistle has with its flight time. The
+    // rattle spreads out with it, which is what doubling it is for: the
+    // strikes are the gesture, and a gesture played at the old speed under a
+    // slower animation finishes while the board is still moving.
+    duration: 0.58,
     layers: [
       {
         // The gesture under the strikes, darkening as the board settles.
@@ -590,8 +598,7 @@ export const SOUNDS = {
   /// slightly detuned, which is the wobble a real bell has and the reason two
   /// struck together never sound like one tone.
   ///
-  /// Troy has said he will tune the character of this; the numbers below are
-  /// a first pass at the shape rather than a settled sound.
+  /// The numbers below are a first pass at the shape, not a settled sound.
   bell: {
     gain: 0.16,
     // Several are ringing at once: at 300ms apart and a second of decay,
@@ -951,24 +958,17 @@ export const SOUNDS = {
 
   /// Four tubes knocking together, each ringing on for seconds.
   ///
-  /// Its own sound, where this used to be three plays of the board's `chime`.
-  /// That was wrong twice over, and Troy heard both: a chime in this game means
-  /// a chain paying out, so a filler item that played it was the board talking;
-  /// and that sound is built to get out of the way, with a lowpass closing to
-  /// 20Hz inside 0.7s, where the whole character of a wind chime is that it
-  /// will not stop.
+  /// Partials at 1 : 2.756 : 5.404, the free-free bar modes. Not whole
+  /// multiples of anything, so there is no harmonic series and no firm pitch,
+  /// just metal: a tidy octave and fifth would be a church bell and a plain
+  /// sine a flute. Upper modes die far faster than the fundamental, hence
+  /// three decays rather than one filter sweep.
   ///
-  /// **The partials are 1 : 2.756 : 5.404**, which are the free-free bar modes
-  /// and the reason a chime is a chime. They are not whole multiples of
-  /// anything, so there is no harmonic series to hear and no firm pitch, just
-  /// metal. A tidy octave and fifth here would be a church bell, and a plain
-  /// sine would be a flute. Upper modes shed energy far faster than the
-  /// fundamental, which is why the sound brightens at the strike and mellows
-  /// into a hum: hence the three decays rather than one filter sweep.
+  /// Pentatonic so any order of tubes is consonant, and struck at uneven
+  /// gaps, because wind does not play scales.
   ///
-  /// Tuned to a pentatonic set so that any order of tubes is consonant, and
-  /// struck in no order, because wind does not play scales. The gaps are
-  /// uneven for the same reason.
+  /// Its own sound rather than the board's `chime`, which means a chain
+  /// paying out and is built to be gone inside a second.
   /// The three modes of a strike do not start together, and that is not a
   /// detail. Written with the same instant and the same near-zero attack they
   /// summed coherently, and twelve sines across four overlapping strikes spiked
@@ -1035,14 +1035,9 @@ export const SOUNDS = {
 
   /// Air moving past, in two passes rather than one steady hiss.
   ///
-  /// Five times its first length, Troy's ear, and the band endpoints are
-  /// untouched: what was right was how far the sweep travels and what was
-  /// wrong was how long it took. So every time here is multiplied and no
-  /// frequency is, which is also why the swell is written out at length rather
-  /// than played through the `duration` option. That option deliberately
-  /// leaves attacks alone, since a transient that stretches stops being one,
-  /// and this sound's attack is not a transient: it is the gust arriving, and
-  /// it has to grow with the rest of it.
+  /// Written out at length rather than stretched through the `duration`
+  /// option, which leaves attacks alone. This sound's attack is not a
+  /// transient: it is the gust arriving, and it has to grow with the rest.
   wind: {
     gain: 0.3,
     voiceCap: 2,
@@ -1071,13 +1066,10 @@ export const SOUNDS = {
     ],
   },
 
-  /// Up the slide and off the end, which is the sound of a foot going out from
-  /// under somebody. Played by **Banana Peel**.
+  /// Up the slide and off the end: a foot going out from under somebody.
+  /// Played by **Banana Peel**.
   ///
-  /// Half its first length, Troy's ear, so the whole thing goes up twice as
-  /// fast over the same two octaves. The pitches are untouched and every time
-  /// is halved. It is a slip rather than a tour of the slide: a cartoon foot
-  /// leaves the ground quickly.
+  /// Fast, because a slip is fast. Two octaves in 0.22s.
   whistleSlide: {
     gain: 0.24,
     voiceCap: 3,
@@ -1171,9 +1163,8 @@ export const SOUNDS = {
 
   /// The real pair, 350 and 440 together, which is what a dial tone is.
   ///
-  /// Half again as long as it first was, Troy's ear. The attack is left where
-  /// it is: at eight milliseconds it is the tone switching on, which is what a
-  /// line does, and stretching that would make it fade up like a synthesizer.
+  /// The 8ms attack is the tone switching on, which is what a line does.
+  /// Stretching it would make this fade up like a synthesizer.
   dialTone: {
     gain: 0.14,
     voiceCap: 2,
@@ -1218,43 +1209,23 @@ export const SOUNDS = {
   /// Waves on a beach: a long swell rising and going out again. Played by
   /// **Surf**.
   ///
-  /// Written as distant thunder and not changed by a note, because Troy heard
-  /// the sea in it and he is right. The two are the same thing to a speaker:
-  /// dense low noise with no transient at the front, swelling and receding over
-  /// seconds. What makes thunder thunder is the crack, and the crack was
-  /// deliberately left out here, since a transient at this level would be the
-  /// loudest thing in the game. Take that away and what is left is water.
+  /// No crack at the front: a transient at this level would be the loudest
+  /// thing in the game, and without one dense low noise is water rather than
+  /// weather.
   ///
-  /// The name went the other way instead, which is the better joke by a
-  /// distance: see `Noise::Surf` in the engine.
+  /// **The longest sound in the game**, fifteen seconds of envelope for ten
+  /// audible. Nothing hushes it, so `voiceCap` holds it at two.
   ///
-  /// **The longest sound in the game**, which is as long as the whole victory
-  /// tune. Troy's call: the swell three times what it was, and then five more
-  /// seconds of it going out. A wave is mostly a matter of how long it takes
-  /// to stop, so this is the one thing here that is allowed to outlast several
-  /// moves of play. Nothing hushes it, so two arriving together overlap for the
-  /// duration, which is what `voiceCap` is holding at two.
-  ///
-  /// **The fade is the body's own decay, not a layer of its own, and that was
-  /// a real bug.** Written as a third layer starting at six seconds with a
-  /// 1.2s attack, it faded in *after* the other two had gone: the envelope
-  /// summed to 0.0007 at six seconds and came back to 0.40 at seven, so the
-  /// sound stopped and then restarted at nearly half volume. Troy heard it
-  /// at once. The arithmetic was there to be done and I had not done it: an
-  /// `exponentialRampToValueAtTime(0.0001)` is an eighty decibel fall, so a
-  /// layer is inaudible well before its decay nominally ends, and "it comes up
-  /// underneath as the roll ends" was a comment about something that was not
-  /// happening.
-  ///
-  /// Fixed by lengthening the swell rather than by starting the tail sooner,
-  /// also Troy's call and the better one: an earlier tail would have hidden the
-  /// seam instead of removing it. One envelope that rises once and falls once
-  /// cannot come back, whatever the numbers in it are.
+  /// **The fade is the body's own decay, not a layer of its own.** A tail
+  /// layer fading in at six seconds restarted the sound at 0.40 after the
+  /// others had reached 0.0007: `exponentialRampToValueAtTime(0.0001)` is an
+  /// eighty decibel fall, so a layer is inaudible long before its decay
+  /// nominally ends. One envelope that rises once and falls once cannot come
+  /// back, whatever the numbers are.
   surf: {
-    // High for this file, and it still comes out one of the quietest things in
-    // it. Dense low noise has a peak close to its average where a struck note
-    // has a peak many times its own, so the number here and the number it
-    // measures at are further apart than anywhere else in the bank.
+    // High for this file and still one of the quietest things in it: dense
+    // low noise peaks close to its average where a struck note peaks many
+    // times its own.
     gain: 0.75,
     voiceCap: 2,
     duration: 15.3,
@@ -1295,31 +1266,20 @@ export const SOUNDS = {
 
   /// A fart. Played by **Barking Spider**.
   ///
-  /// Written as a creaking floorboard and shipped as one for about an hour,
-  /// until Troy heard it: "It is definitely a fart, and a good one at that."
-  /// He is right, and the two are the same sound for the same reason. Both are
-  /// stick and slip rather than a note: something catches, lets go, catches
-  /// again, and the pitch jumps about while it does. A deep slow `waver` over a
-  /// rising glide is that, where the rocket's shallow fast one is a steady
-  /// whistle refusing to sit still.
+  /// Stick and slip rather than a note: something catches, lets go, catches
+  /// again, and the pitch jumps about while it does. A deep slow `waver` over
+  /// a rising glide is that, where the rocket's shallow fast one is a whistle
+  /// refusing to sit still. Same mechanism as a creaking floorboard, which is
+  /// what this was first written as.
   ///
-  /// The name of the item is the euphemism and the name of the sound is what it
-  /// is, which is the right way round: one of them lands in other people's
-  /// feeds and the other one only has to tell whoever is editing this file what
-  /// they are editing.
+  /// The item's name is the euphemism and the sound's is what it is. One of
+  /// them lands in other people's feeds; the other only has to tell whoever is
+  /// editing this file what they are editing.
   ///
-  /// Twice its first length at Troy's ear, at the same rate of climb: 1081
-  /// cents a second, which is where it started, so twice the time means twice
-  /// the distance and 165Hz now ends at 395 rather than 240.
-  ///
-  /// **The sweep deliberately carries no `time`.** Left at the 0.6s it had
-  /// when the sound was 0.7s long, the pitch arrived at 240 and then sat dead
-  /// still for the remaining 0.8s, which Troy heard at once: "incorrectly
-  /// stops changing pitch at some point." The waver stops with the glide, so
-  /// what went flat was not only the climb but the wobble, which on a sound
-  /// that is nothing but wobble is most of it. Omitting `time` glides over the
-  /// layer's whole envelope instead, so this cannot come apart again if the
-  /// envelope is retuned: nothing has to agree with anything.
+  /// **The sweep carries no `time` on purpose.** A waver is steps along the
+  /// glide, so a glide that ends early takes the wobble with it and the rest
+  /// of the note sits dead still. Omitting `time` glides across the whole
+  /// envelope, so nothing has to agree with anything when the envelope moves.
   fart: {
     // High for the same reason the surf is: a narrow band of sawtooth that
     // never holds a pitch has no transient to peak on.
@@ -1344,16 +1304,12 @@ export const SOUNDS = {
 
   /// One burst of four. Played three times over by **Kitchen Timer**.
   ///
-  /// Four rather than three and closer together than they were, Troy's ear,
-  /// which is the difference between a microwave announcing itself once and a
-  /// timer that wants attention. The burst is the sound and the repeating is
-  /// the item's, the same way the cricket is built: what a burst is belongs
-  /// here, and how insistent the thing is belongs next to the name.
+  /// The burst is the sound and the repeating is the item's, the same split
+  /// the cricket uses: what a burst is belongs here, how insistent the thing
+  /// is belongs next to the name.
   beep: {
     gain: 0.14,
-    // Three plays per item, so one item fills three of these. Six leaves room
-    // for a second one arriving while the first is still going, which a
-    // multiworld can do.
+    // Three plays per item; six leaves room for a second arriving on top.
     voiceCap: 6,
     layers: [0, 0.12, 0.24, 0.36].map((delay) => ({
       source: 'square',
@@ -1373,38 +1329,28 @@ export const SOUNDS = {
   // `bass` above. Same contract: no `note` of their own, and a `duration` the
   // sequencer stretches to the written length of each note.
 
-  /// A muted trombone, Troy's ear on all three parts of it.
+  /// A muted trombone.
   ///
-  /// **The "wah" is the filter, not the pitch.** It was a pitch glide down, so
-  /// every note sagged off its own note and the thing read as a slide
-  /// whistle with ambitions. What a plunger actually does is open and shut the
+  /// **The "wah" is the filter, not the pitch.** A plunger opens and shuts the
   /// bell, which changes how much of the harmonic series gets out and changes
-  /// the pitch not at all. So the character is a resonant lowpass climbing
-  /// from nearly shut to open across the note: dark and nasal to bright and
-  /// open, which is the vowel.
+  /// the pitch not at all: a resonant lowpass climbing from nearly shut to
+  /// open across the note, dark and nasal to bright, which is the vowel.
   ///
-  /// A lowpass and not a bandpass, Troy's call and the right one. A bandpass
-  /// at the formant throws away everything under it including the fundamental,
-  /// which thins a low brass note to a buzz; a resonant lowpass puts a peak at
-  /// the same place and keeps the whole body of the note below it. It is also
-  /// how a real wah pedal is built.
+  /// A lowpass and not a bandpass. A bandpass at the formant throws away
+  /// everything under it including the fundamental, thinning a low brass note
+  /// to a buzz; a resonant lowpass puts a peak in the same place and keeps the
+  /// body below it. Also how a real wah pedal is built.
   ///
-  /// **Every note scoops up into pitch** rather than away from it, which is
-  /// `sweep.from`, added for this. A tone and a half below, arriving in 75ms:
-  /// fast, because a slide arrives fast, and the note is then in tune for all
-  /// of itself except the approach. Sliding *off* a note is a different
-  /// gesture and was the wrong one.
+  /// **Every note scoops up into pitch**, which is what `sweep.from` is for.
+  /// A tone and a half below arriving in 75ms, so the note is in tune for all
+  /// of itself except the approach.
   ///
-  /// **The long note leans into a vibrato half a second in**, which is
-  /// `vibrato`, also added for this. `after` is in absolute seconds, so the
-  /// three short notes at 0.47s never reach it and the held one has it for
-  /// most of its length. One voice, no duplicate definition, and the coupling
-  /// is the musical one: lengthen a short note past half a second and it will
-  /// start to waver too, which is what a player would do anyway.
+  /// **The long note leans into a vibrato half a second in.** `after` is in
+  /// absolute seconds, so the three short notes at 0.47s never reach it and
+  /// one voice covers the whole figure.
   brass: {
-    // Down from 0.3. The resonant lowpass puts a peak on the fundamental at
-    // the closed end, and the held note got longer, which together made this
-    // the loudest sound in the bank by average level.
+    // The resonant lowpass peaks on the fundamental at the closed end, which
+    // made this the loudest sound in the bank before the trim.
     gain: 0.23,
     duration: 0.5,
     layers: [
@@ -1441,36 +1387,25 @@ export const SOUNDS = {
     ],
   },
 
-  /// A kazoo, built on the Barking Spider's timbre at Troy's ear, which is the
-  /// obvious thing in hindsight: both are a membrane buzzing against moving
-  /// air, and they only ever differed here because they were written days
-  /// apart without being held up against each other.
+  /// A kazoo: `fart`'s recipe with the note coming from outside, since both
+  /// are a membrane buzzing against moving air. One sawtooth through one
+  /// narrow band at a fixed 760Hz over a gentle highpass.
   ///
-  /// So this is now `fart`'s recipe with the note coming from outside: one
-  /// sawtooth through one narrow band at a fixed 760Hz, over a gentle highpass.
-  /// The fixed band is what does the work. A sawtooth's harmonics slide past a
-  /// stationary formant as the note changes, which is a nasal honk rather than
-  /// a tone, and it is also how a real kazoo behaves, since the membrane
-  /// resonates where it resonates whatever you hum at it.
+  /// The fixed band does the work. A sawtooth's harmonics slide past a
+  /// stationary formant as the note changes, which is a nasal honk rather
+  /// than a tone, and is how a real kazoo behaves: the membrane resonates
+  /// where it resonates whatever you hum at it.
   ///
-  /// **The waver is the one thing not copied across.** The fart wavers 28%
-  /// deep, which is four semitones of random walk, and that is the whole point
-  /// of a sound that is not a note. This one has a tune to play: at that depth
-  /// the Triumphant Kazoo would not be recognizably C-E-G-C. 4% is about two
-  /// thirds of a semitone, which warbles audibly and leaves the melody
-  /// standing. It is the dial to turn if this still wants to be fartier.
+  /// **The waver is shallower than the fart's on purpose.** 28% is four
+  /// semitones of random walk, fine for something that is not a note; this
+  /// has a tune to play, so 4% warbles audibly and leaves the melody
+  /// standing. It is the dial if this wants to be fartier.
   ///
-  /// The second layer is gone with the rest. It was a sawtooth an octave up
-  /// through a band at 2600, which was most of what made this bright and
-  /// clean, and bright and clean is what Troy did not want.
-  ///
-  /// The small sag in pitch stays, partly because a kazoo does sag, and partly
-  /// because a `waver` needs a glide to walk along. No `time` on it: a glide
-  /// that ends early takes the waver with it, which is the fault Troy caught
-  /// on the Barking Spider.
+  /// The sag in pitch is partly that a kazoo sags and partly that a `waver`
+  /// needs a glide to walk along. No `time` on it, for the reason `fart`
+  /// gives.
   kazoo: {
-    // Up from 0.2, because a q of 3.4 throws away most of a sawtooth and the
-    // bright layer that used to make up the difference is gone.
+    // A q of 3.4 throws away most of a sawtooth.
     gain: 0.44,
     duration: 0.32,
     layers: [
@@ -1514,24 +1449,15 @@ export const SOUNDS = {
 ///   figure  `{ tempo, parts }` for `Audio.sequence`: a written tune, for the
 ///           handful of these that are tunes
 export const NOISES = [
-  // The first few are built from sounds the game already had, and those are
-  // shifted well away from the pitch the board plays them at: a filler item
-  // that sounds exactly like a refused swap reads as the board talking rather
-  // than as an item arriving.
-  //
-  // Door Knock was one of them and is not any more. It was the clack twice,
-  // which Troy heard as nothing like a door, and he was right: see `knock`.
+  // Some of these are built from sounds the game already had, shifted well
+  // away from the pitch the board plays them at: a filler item that sounds
+  // like a refused swap reads as the board talking rather than as an item.
   { name: 'Door Knock', plays: [{ sound: 'knock' }] },
   {
     name: 'Busy Signal',
-    // Half a second on, half a second off, three times. The starts are exactly
-    // a second apart because that is the cadence, sixty interruptions a
-    // minute, rather than a gap picked by ear the way the cricket's and the
-    // kitchen timer's are.
-    //
-    // This replaced Pebble Drop, which Troy did not like. That one was the
-    // board's thud pitched up two octaves, which made it a small hard thing
-    // landing but never made it a thing of its own.
+    // Half a second on, half off, three times. The starts are exactly a
+    // second apart because that is the real cadence, sixty interruptions a
+    // minute, rather than a gap picked by ear like the cricket's.
     plays: [
       { sound: 'busy' },
       { sound: 'busy', delay: 1 },
@@ -1540,9 +1466,6 @@ export const NOISES = [
   },
   {
     name: 'Wind Chime',
-    // Its own sound now. It was three plays of the board's `chime` held well
-    // down, which was cheap and wrong: that sound means a chain paying out and
-    // is built to be gone in under a second. See `windChime`.
     plays: [{ sound: 'windChime' }],
   },
   // Two octaves up, where the bell's long decay reads as small and bright
@@ -1550,31 +1473,20 @@ export const NOISES = [
   { name: 'Tiny Bell', plays: [{ sound: 'bell', detune: 2400, gain: 0.8 }] },
   {
     name: 'Sour Note',
-    // Three notes held for two seconds, a semitone and a bit apart, an octave
-    // and a half below where this started. Troy asked for dissonant and
-    // obvious, and this is both for a reason worth writing down: at G#3 a
-    // semitone is 12Hz, and the ear's critical band up there is nearer 90, so
-    // the two fall well inside one band and come out as roughness rather than
-    // as two notes. The same interval two octaves higher would be an interval;
-    // down here it is a noise complaint.
+    // Three notes a semitone or so apart, held, low. The register is what
+    // makes it rough rather than merely dissonant: at G#3 a semitone is 12Hz
+    // against a critical band nearer 90, so the pair falls inside one band.
+    // Two octaves up the same notes would just be a minor second.
     //
-    // The third sits 42 cents under the top note, so it is out of tune with
-    // both of the others as well as being part of the clash. One wrong note is
-    // a mistake; three of them not agreeing on what the mistake is, is sour.
+    // The third sits 42 cents under the top one, out of tune with both. One
+    // wrong note is a mistake; three that disagree about the mistake is sour.
     //
-    // It was two copies of one note 58 cents apart, which beat against each
-    // other and read as a piano that wanted tuning. Too subtle to be a joke
-    // another player would get from the name alone.
+    // Rolled a couple of hundredths apart, like a fumbled chord, and each
+    // voice well down: three sustained notes at full level would be the
+    // loudest thing in the game.
     //
-    // Rolled by a couple of hundredths rather than struck together, like a
-    // hand that fumbled the chord, and each voice well down: three sustained
-    // notes at full level would be the loudest thing in the game by a distance.
-    // `duration` stretches the holds and decays and leaves the attack alone,
-    // so what lengthens is the ringing and not the strike.
-    // 2.6 and not 2 because the decay is exponential: asked for two seconds of
-    // envelope, the last half of the second is under -48dB and nobody hears
-    // it, which measured as a 1.48s sound. This is two seconds of *audible*
-    // note, which is what was actually wanted.
+    // 2.6 and not 2 because the decay is exponential, so the last half second
+    // is under -48dB. This is two seconds of *audible* note.
     plays: [
       { sound: 'keys', note: 'G#3', duration: 2.6, gain: 0.4 },
       { sound: 'keys', note: 'A3', duration: 2.6, delay: 0.02, gain: 0.36 },
@@ -1598,20 +1510,12 @@ export const NOISES = [
     ],
   },
   { name: 'Dial Tone', plays: [{ sound: 'dialTone' }] },
-  // Written as Distant Thunder, renamed once Troy heard the sea in it. The
-  // sound did not change at all: see `Noise::Surf` for why the name is the
-  // better half of the joke.
   { name: 'Surf', plays: [{ sound: 'surf' }] },
   { name: 'Barking Spider', plays: [{ sound: 'fart' }] },
   {
     name: 'Kitchen Timer',
-    // Four beeps, then half a second, three times over. Same arithmetic as the
-    // cricket: the burst of four runs 0.44s, so the starts are 0.94 apart to
-    // leave the half second actually silent.
-    //
-    // It was Microwave Beep, three beeps once. A microwave says its piece and
-    // stops; a kitchen timer keeps asking, which is both funnier in somebody
-    // else's feed and what Troy asked for.
+    // Four beeps, then half a second, three times over. The burst runs 0.44s,
+    // so the starts are 0.94 apart to leave the gap actually silent.
     plays: [
       { sound: 'beep' },
       { sound: 'beep', delay: 0.94 },

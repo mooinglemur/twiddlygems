@@ -1292,22 +1292,31 @@ mod tests {
                 assert_eq!(fields[0], SETTINGS[at].key);
                 assert!(!fields[1].is_empty(), "{} has no label", fields[0]);
                 assert!(!fields[2].is_empty(), "{} says nothing about itself", fields[0]);
-                match fields[3] {
-                    "range" => assert_eq!(fields.len(), 7, "a range wants two bounds"),
-                    "choice" => assert!(fields.len() > 5, "a choice wants values"),
+                // Whether the screen draws it, which every setting answers.
+                // A hidden one still has a label and a sentence, because the
+                // yaml shows both and the yaml has all of them.
+                assert_eq!(
+                    fields[3],
+                    if SETTINGS[at].on_screen { "yes" } else { "no" },
+                    "{} disagrees with the table about being drawn",
+                    fields[0],
+                );
+                match fields[4] {
+                    "range" => assert_eq!(fields.len(), 8, "a range wants two bounds"),
+                    "choice" => assert!(fields.len() > 6, "a choice wants values"),
                     // A toggle is a choice of two as far as the screen is
                     // concerned, and comes through carrying both of them. The
                     // word is its own because the yaml side does treat it
                     // differently: see `Kind::Toggle`.
-                    "toggle" => assert_eq!(fields.len(), 7, "a toggle wants an off and an on"),
+                    "toggle" => assert_eq!(fields.len(), 8, "a toggle wants an off and an on"),
                     // The screen leaves these out, which is the point of
                     // them. They come across all the same, because what the
                     // page sets a setting by is its place in this list: one
                     // missing line would shift every setting after it.
-                    "weight" => assert_eq!(fields.len(), 6, "a weight wants the group it is in"),
+                    "weight" => assert_eq!(fields.len(), 7, "a weight wants the group it is in"),
                     other => panic!("{} is a {other}, which the screen cannot draw", fields[0]),
                 }
-                assert_eq!(fields[4].parse::<u32>().unwrap(), SETTINGS[at].default);
+                assert_eq!(fields[5].parse::<u32>().unwrap(), SETTINGS[at].default);
             }
             tg_destroy(handle);
         }

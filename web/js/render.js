@@ -4,7 +4,16 @@
 // this file decides is what that looks like. Gems differ by shape as well as
 // hue so the board stays readable without relying on color alone.
 
-import { Consumable, EMPTY_CELL, EventKind, Flag, ObjectiveKind, Phase, Special } from './engine.js';
+import {
+  Consumable,
+  EMPTY_CELL,
+  EventKind,
+  Flag,
+  ObjectiveKind,
+  Phase,
+  ShuffleWhy,
+  Special,
+} from './engine.js';
 
 /// The game's gem set, indexed by the color numbers the engine deals. A level
 /// usually takes the first few, but it may name any set instead, so this is a
@@ -243,7 +252,15 @@ export class Renderer {
       } else if (event.kind === EventKind.SHUFFLE) {
         // The board is about to rearrange itself. Without a word about it the
         // player looks away and looks back at a different board.
-        this.toast = { text: 'No moves, shuffling', at: now };
+        //
+        // Two reasons and two different words. A board with no moves left is
+        // the game helping out; a Shuffle Trap is somebody doing this to you,
+        // and "no moves" there would be untrue, since there were moves and now
+        // there are different ones. The event says which.
+        this.toast = {
+          text: event.value === ShuffleWhy.TRAP ? 'Shuffle Trap!' : 'No moves, shuffling',
+          at: now,
+        };
       } else if (event.kind === EventKind.LOW_MOVES) {
         const left = event.value;
         this.toast = { text: `${left} move${left === 1 ? '' : 's'} left`, at: now };

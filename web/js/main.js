@@ -113,6 +113,17 @@ const NOISE_TUNES_AT_ONCE = 2;
  */
 const NOISE_LEAD_IN = 0.14;
 /**
+ * How long the shuffle sound runs, which is how long the shuffle takes.
+ *
+ * Has to match `SHUFFLE_MS` in the engine. Kept here as a number rather than
+ * asked for over the ABI because it is the only phase length the page needs
+ * and an export for one number is not worth the surface; if a second one turns
+ * up, that trade changes. A mismatch is a sound that stops while the board is
+ * still moving, which is audible, so this is the kind of coupling a person
+ * notices rather than one that rots quietly.
+ */
+const SHUFFLE_SOUND_S = 1.4;
+/**
  * How many taps on an objective open the testing menu.
  *
  * High enough that nobody reaches it by fidgeting, and on something that is
@@ -561,8 +572,10 @@ async function boot() {
           pan: ((event.c / spread) * 2 - 1) * 0.45,
         });
       } else if (event.kind === EventKind.SHUFFLE) {
-        // Centered: this one is the whole board, not a place on it.
-        audio.play('shuffle');
+        // Centered: this one is the whole board, not a place on it. Stretched
+        // to the length of the animation, so the rattle runs for exactly as
+        // long as the gems are moving.
+        audio.play('shuffle', { duration: SHUFFLE_SOUND_S });
       } else if (event.kind === EventKind.LOW_MOVES) {
         audio.play('ding');
       } else if (event.kind === EventKind.CLEARED) {

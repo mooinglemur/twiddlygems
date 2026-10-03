@@ -355,8 +355,7 @@ const { result } = await send('Runtime.evaluate', {
       // and only the continuous ones are asserted on.
       //
       // Written after the Surf went silent at six seconds and came back at
-      // forty percent of its peak at seven, which Troy heard immediately and
-      // no check here would have.
+      // forty percent of its peak at seven, which no other check noticed.
       const revive = (() => {
         if (hitEnvelope.length < 16) return 1;
         let loudest = 0;
@@ -624,14 +623,14 @@ const { result } = await send('Runtime.evaluate', {
       // Past the end of the progression it should hold, not wrap round.
       chimePastEnd: await render('chime', 1, 0.8, false, { stage: 40 }),
       chimeStages: SOUNDS.chime.chords.length,
-      // Measured but not judged. This one is a placeholder for Troy's ear;
-      // what the number is for is so he can see what it costs while he tunes
-      // it, not so a check can have an opinion about how it should sound.
+      // Measured and not judged: the number is here to show what it costs
+      // while it is being tuned, not so a check can have an opinion about how
+      // it should sound.
       fanfare: await render('fanfare', 1, 2.6),
-      // The victory tune. Measured but, like the fanfare, not judged on how it
-      // sounds: that is Troy's ear. What is judged is what a measurement can
-      // actually settle, which is whether three voices playing at once for
-      // twenty seconds stay under the limiter, and whether \`hush\` works.
+      // The victory tune, also measured and not judged on how it sounds. What
+      // is judged is what a measurement can settle: whether three voices
+      // playing at once for twenty seconds stay under the limiter, and
+      // whether \`hush\` works.
       tune: await render(VICTORY_PARTS, 1, 26),
       // Each voice alone, over the whole tune rather than as one note.
       //
@@ -814,9 +813,8 @@ const { result } = await send('Runtime.evaluate', {
           // bank runs from a door knock with a 96Hz fundamental to a cricket
           // at 4.4kHz, so how much of one survives a small speaker is a
           // property of that one sound. Printed and not judged, because a
-          // breaking wave is allowed to be mostly bass; what it is for is so
-          // Troy can see what a sound costs on a phone while he is deciding
-          // whether he likes it on a desk.
+          // breaking wave is allowed to be mostly bass: it is here to show
+          // what a sound costs on a phone while it is being tuned on a desk.
           const wide = await render(noise, 1, WINDOW, false, {}, steady);
           const thin = await render(noise, 1, WINDOW, true, {}, steady);
           out.push({
@@ -1307,10 +1305,8 @@ if (faint.length > 0) {
 //
 // Both directions are checked against the same voice holding still, because
 // "the pitch rose" is only meaningful next to what the voice does when told to
-// fall. A scoop whose sign was inverted would still be a glide, still sound
-// like a trombone of a sort, and be the wrong gesture: Troy asked for a scoop
-// up into the note having been given a slide off it, so this is the mistake
-// the feature exists to stop repeating.
+// fall. A scoop with its sign inverted would still be a glide and still sound
+// like a trombone of a sort, while being the wrong gesture.
 // The crossing count is the right ruler here and the wrong one for the wah
 // below: on a pitched sound it reads the fundamental, which is exactly what a
 // scoop moves. The arrival is compared with a few percent of slack, because
@@ -1379,10 +1375,9 @@ if (stats.withVibrato.swing < Math.max(0.018, stats.noVibrato.swing * 2)) {
 // And the plunger has to be doing the wah, not the pitch.
 //
 // The shipped voice on one long note, rather than a synthetic control, because
-// the thing worth pinning is the real trombone. Troy's correction was that the
-// wah had been a pitch glide down, so every note sagged off its own pitch;
-// what a mute does is open the bell, which changes the timbre and not the
-// pitch at all.
+// the thing worth pinning is the real trombone. A mute opens the bell, which
+// changes the timbre and not the pitch; a pitch glide down instead would sag
+// every note off its own note, which is what this once did.
 //
 // Read with `edge` and not with the crossing count. The crossing count says
 // this voice goes 432 -> 443 across a note whose filter opens from 300Hz to
@@ -1436,12 +1431,9 @@ for (const name of ['Surf', 'Gust of Wind']) {
 
 // A layer that wavers must waver for most of its own length.
 //
-// Troy heard this one before any check did. The Barking Spider was lengthened
-// to 1.4s with its glide left at the 0.6s it had when the sound was 0.7s, so
-// the last 0.8s sat dead still: "incorrectly stops changing pitch at some
-// point." The waver stops when the glide does, because the waver *is* steps
-// along the glide and there are none once it has arrived, so what went flat was
-// the wobble and not only the climb.
+// A waver *is* steps along the glide, so a glide that ends early takes the
+// wobble with it and the rest of the note sits dead still. The Barking Spider
+// did exactly that: lengthened to 1.4s with its glide left at 0.6s.
 //
 // Read off the definitions rather than out of a render, which is the second
 // attempt at this. The first compared the measured `wobble` against the

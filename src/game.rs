@@ -19,7 +19,14 @@ pub const SWAP_MS: f32 = 190.0;
 /// How long one gem takes to swell and vanish. A clear lasts this plus however
 /// long its blast takes to spread; see [`matching::SPREAD_STEP_MS`].
 pub const POP_MS: f32 = 300.0;
-pub const SHUFFLE_MS: f32 = 700.0;
+/// How long the board takes to rearrange itself.
+///
+/// Doubled from 700 by ear. A shuffle is the one animation nobody is waiting
+/// on: the player cannot act during it and nothing is being scored, so it is
+/// the one place the game can afford to take its time, and at half this speed
+/// it read as a glitch rather than as the board doing something. The sound is
+/// stretched to match it rather than carrying its own length; see `onShuffle`.
+pub const SHUFFLE_MS: f32 = 1400.0;
 
 /// Gems accelerate as they fall and then stop gaining speed, so a gem dropping
 /// the height of the board takes longer than one dropping a single row rather
@@ -179,7 +186,16 @@ pub const EV_SPECIAL_FIRED: u8 = 3;
 pub const EV_SWAP: u8 = 4;
 pub const EV_REVERT: u8 = 5;
 pub const EV_CASCADE: u8 = 6;
+/// The board is about to rearrange itself, carrying **why**.
+///
+/// The two reasons want different words on screen. "No moves, shuffling"
+/// explains a stuck board; said of a Shuffle Trap it would be untrue, since
+/// there were moves and now there are different ones.
 pub const EV_SHUFFLE: u8 = 7;
+/// `EV_SHUFFLE` because the board had no move left to make.
+pub const SHUFFLE_WHEN_STUCK: u16 = 0;
+/// `EV_SHUFFLE` because a Shuffle Trap arrived.
+pub const SHUFFLE_BY_TRAP: u16 = 1;
 pub const EV_WON: u8 = 8;
 pub const EV_LOST: u8 = 9;
 /// A rocket reaching its target. Carried alongside the ordinary clear so the
@@ -928,7 +944,7 @@ impl Game {
         if self.trap_shuffle && matches!(self.phase, Phase::Idle) && self.status == Status::Playing {
             self.trap_shuffle = false;
             self.phase = Phase::Shuffling { elapsed: 0.0 };
-            self.events.push(Event::plain(EV_SHUFFLE, 0));
+            self.events.push(Event::plain(EV_SHUFFLE, SHUFFLE_BY_TRAP));
         }
         // Before the phase loop, because an idle board runs none of it and a
         // level that opens on its last few moves has to say so anyway.
@@ -1890,7 +1906,7 @@ impl Game {
         if matching::find_move(&self.board, &self.spec.rules).is_none() {
             if self.spec.rules.shuffle_when_stuck {
                 self.phase = Phase::Shuffling { elapsed: 0.0 };
-                self.events.push(Event::plain(EV_SHUFFLE, 0));
+                self.events.push(Event::plain(EV_SHUFFLE, SHUFFLE_WHEN_STUCK));
             } else {
                 self.phase = Phase::Finishing { elapsed: 0.0 };
             }
