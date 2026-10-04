@@ -3,6 +3,10 @@
 A match-3 puzzle game that is also an Archipelago apworld. Sixteen levels,
 played in a phone or desktop browser, on its own or as a slot in a multiworld.
 
+**Play it at [gems.browsergam.ing](https://gems.browsergam.ing/).** Nothing to
+install, and a multiworld slot connects from the same page. Everything below the
+"How to play" section is for building it yourself.
+
 The engine is a dependency-free Rust crate compiled straight to
 `wasm32-unknown-unknown`. There is no wasm-bindgen, no wasm-pack and no npm:
 the ABI in [`src/ffi.rs`](src/ffi.rs) is crafted `extern "C"`, so a build is a
@@ -135,6 +139,7 @@ rules all read.
 
 ```
 make apworld         # zip it into build/twiddlygems.apworld
+make template        # write the player yaml, generated from that zip
 make apworld-test    # our tests and Archipelago's own, against a pinned checkout
 make apworld-gen     # roll a real seed from the source tree
 make apworld-install # install the zip as a player would, and roll one from that
@@ -147,10 +152,16 @@ file to roll a seed from. A seed carries the number of the generator that built
 it, and the game refuses one it does not know rather than quietly playing it
 wrong.
 
-To play a slot, pick Archipelago on the title screen and give it the server,
-port and slot name. The run is the room's from then on: it deals its
-progression from the seed, pays its checks to the room, and keeps playing
-through a disconnection, saying so over the board until it is back.
+**To host a game**, take the `.apworld` and the player yaml template from the
+[latest release](https://github.com/mooinglemur/twiddlygems/releases/latest).
+`make template` builds that yaml here, from the zip rather than from the
+checkout, so the version in its header is the one the world was packaged with.
+
+**To play a slot**, open [gems.browsergam.ing](https://gems.browsergam.ing/),
+pick Archipelago on the title screen and give it the server, port and slot
+name. The run is the room's from then on: it deals its progression from the
+seed, pays its checks to the room, and keeps playing through a disconnection,
+saying so over the board until it is back.
 
 ## Where things live
 

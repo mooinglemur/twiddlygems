@@ -24,11 +24,12 @@ VENV    := .venv
 WORLD   := worlds/twiddlygems
 APDATA  := $(WORLD)/data
 APWORLD := build/twiddlygems.apworld
+TEMPLATE := build/twiddlygems.yaml
 AP_TAG  ?= 0.6.7
 
 .PHONY: all wasm test abi check serve smoke shots audio balance clean target-check \
 	apdata apworld apworld-test apworld-gen apworld-install ap-setup ap-link ap-live \
-	site site-smoke favicon
+	template site site-smoke favicon
 
 all: check wasm
 
@@ -236,6 +237,18 @@ apworld-install: apworld
 		--outputpath $(CURDIR)/build/ap/installed \
 		--seed 20260922
 
+## Write the player yaml template, which is what a player fills in.
+##
+## Generated from the installed zip rather than from the checkout, so the
+## version in its header is the one stamped into the .apworld and the file is
+## the one that build of the world actually offers. That is also why it is
+## shipped beside the .apworld in a release: the two belong to each other.
+template: apworld
+	@test -d $(AP) || { echo "error: no Archipelago checkout. Run 'make ap-setup'."; exit 1; }
+	@rm -f $(AP)/worlds/twiddlygems
+	cp $(APWORLD) $(AP)/custom_worlds/
+	$(VENV)/bin/python tools/make_template.py $(AP) $(TEMPLATE)
+
 ## Put the world where Archipelago can import it. The checkout is ignored by
 ## git, so the link lives outside the repository's own tree.
 ##
@@ -256,6 +269,12 @@ ap-setup:
 	test -d $(VENV) || $(PYTHON) -m venv $(VENV)
 	$(VENV)/bin/python -m pip install --quiet colorama PyYAML jellyfish schema orjson \
 		typing_extensions platformdirs certifi pathspec
+	# jinja2 renders the player yaml template, which is a jinja template in
+	# Archipelago's own data directory. Pinned out of its requirements for the
+	# reason websockets is below: the template is theirs, so the renderer
+	# should be the version they render it with.
+	grep -E '^jinja2[=<>]' $(AP)/requirements.txt | cut -d'#' -f1 \
+		| xargs $(VENV)/bin/python -m pip install --quiet
 	# websockets at the version Archipelago pins, read out of its own
 	# requirements rather than written down here, so bumping AP_TAG follows it.
 	#

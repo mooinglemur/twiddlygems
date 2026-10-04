@@ -1,0 +1,220 @@
+# The same checks the GitLab pipeline runs, minus the container image.
+#
+# This repository's own CI lives in .gitlab-ci.yml and builds and pushes the
+# container the game is served from. None of that happens here: GitHub is where
+# the apworld is published, so what this does is run every check and leave the
+# packaged world and its player template behind as artifacts.
+#
+# The jobs are split the way the GitLab ones are, by what they need rather than
+# by what they check. The engine and the front end need Rust and node; the two
+# browser checks need a browser as well; the Archipelago side needs a Python
+# virtualenv and a clone of Archipelago itself, which is the slowest setup here
+# and the reason it is not folded into the others.
+#
+# Everything runs in the same `rust:` image the GitLab pipeline uses, so a
+# failure here is reproducible there and the toolchain cannot drift from under
+# either of them. The runner's own Rust would be whatever GitHub shipped that
+# week, which is the kind of moving part this tree pins everywhere else.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+# A second push to the same branch makes the first one's answer worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned and fetched rather than taken from the distribution. Debian trixie
+  # ships Node 20, which has no global `WebSocket`: it arrived behind a flag in
+  # 21 and became standard in 22.4. Three tools here need one, the two that
+  # drive a headless browser over the DevTools Protocol and the one that plays
+  # a real multiworld against a real server.
+  NODE_VERSION: '24.21.0'
+  # Not the image's /usr/local/cargo, so the cache below has somewhere inside
+  # the workspace to keep. The toolchain itself stays where the image put it.
+  CARGO_HOME: ${{ github.workspace }}/.cargo
+
+jobs:
+  # The engine's own tests, the ABI agreement between Rust and JavaScript, the
+  # front end against a stubbed DOM, and the server that ships it all.
+  test:
+    name: engine, front end, ABI
+    runs-on: ubuntu-latest
+    container: rust:1.95-trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install python
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends python3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Keyed on Cargo.lock, because what is cached is a function of the
+      # dependency set and nothing else. Deliberately not `target/`: what is
+      # worth keeping is the crates, and this tree has none.
+      - uses: actions/cache@v4
+        with:
+          path: .cargo
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+
+      - run: rustup target add wasm32-unknown-unknown
+
+      # No `cargo fmt --check` and no `clippy -D warnings` yet, and that is a
+      # decision rather than an oversight: the tree has never been formatted by
+      # rustfmt and turning the check on means reformatting every file in src/,
+      # which would bury real diffs under whitespace for a long time. Worth
+      # doing as a commit of its own, with the gate added the day after.
+      - name: Engine tests and the ABI check
+        run: make check
+
+      # Three checks, none of which needs a browser: the module loads with no
+      # imports, the page drives it through a stub DOM, and the Archipelago
+      # client plays a whole conversation against a scripted socket.
+      - name: Smoke
+        run: make smoke
+
+      # The shipping binary with the whole site inside it, and its selftest.
+      - name: The static binary
+        run: make site
+
+  # The two that need a real browser: the game played through to a win, and the
+  # game loaded out of the binary that ships it.
+  #
+  # Its own job because chromium is a large install and neither of these should
+  # be able to hide a unit test failure behind it.
+  browser:
+    name: real browser
+    runs-on: ubuntu-latest
+    container: rust:1.95-trixie
+    env:
+      # Both tools default to Chrome's own binary name, which Debian's package
+      # is not. One setting covers them both.
+      BROWSER: chromium
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install chromium and python
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends chromium python3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/cache@v4
+        with:
+          path: .cargo
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+
+      - run: rustup target add wasm32-unknown-unknown
+
+      - name: Play it in a browser
+        run: make shots
+
+      # The only thing that exercises the fingerprinted URLs the built image
+      # actually serves. The failure it catches is a page that loads perfectly
+      # and then never starts.
+      - name: Load it out of the static binary
+        run: make site-smoke
+
+      # The screenshots are the point of `make shots` as much as its pass or
+      # fail: a layout that has gone wrong is something to look at rather than
+      # read about.
+      - name: Keep the screenshots
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots
+          path: shots/
+          retention-days: 7
+
+  # The Archipelago half: the world's own tests under Archipelago's test bases,
+  # a real generation from the installed .apworld, and a real client against a
+  # real server. Then the two files a release is made of.
+  archipelago:
+    name: apworld
+    runs-on: ubuntu-latest
+    container: rust:1.95-trixie
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install python and git
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends python3 python3-venv git
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - uses: actions/cache@v4
+        with:
+          path: .cargo
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+
+      # The checkout and the virtualenv, keyed on the Makefile because that is
+      # where the pinned Archipelago tag and the package list live. Changing
+      # either changes the file and so changes the key.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            vendor
+            .venv
+          key: archipelago-${{ hashFiles('Makefile') }}
+
+      - run: rustup target add wasm32-unknown-unknown
+
+      # Clones Archipelago and builds the virtualenv, or finds both in the
+      # cache.
+      - name: Archipelago checkout and venv
+        run: make ap-setup
+
+      - name: World tests, ours and Archipelago's
+        run: make apworld-test
+
+      # Generates from the zip a player would install rather than from the
+      # checkout, which is the check only the zip can fail: a module inside an
+      # .apworld has no directory to read a data file out of.
+      - name: Generate a seed from the installed zip
+        run: make apworld-install
+
+      # The check the stubbed client cannot be. Everything else about the
+      # client is tested against a socket this repository wrote from a reading
+      # of the protocol document, so a misreading would be built into both.
+      - name: A real client against a real server
+        run: make ap-live
+
+      # Built last, so nothing is published that did not pass everything above
+      # it. `template` packages the world again and generates the player yaml
+      # from the zip, so the two artifacts belong to each other.
+      - name: Package the world and its player template
+        run: make template
+
+      - name: Keep the apworld
+        uses: actions/upload-artifact@v4
+        with:
+          name: apworld
+          path: |
+            build/twiddlygems.apworld
+            build/twiddlygems.yaml
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Keep the generated seed if something failed
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: generated-seed
+          path: build/ap/
+          retention-days: 7
