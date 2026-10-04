@@ -39,6 +39,11 @@ env:
   # Not the image's /usr/local/cargo, so the cache below has somewhere inside
   # the workspace to keep. The toolchain itself stays where the image put it.
   CARGO_HOME: ${{ github.workspace }}/.cargo
+  # The commit the page's footer names. Taken from the event rather than left
+  # to the Makefile's `git rev-parse`, which is answering inside a checkout
+  # this did not make: a shallow or detached one is exactly what it gets, and
+  # `unknown` in a footer is worse than useless.
+  TG_GIT_HASH: ${{ github.sha }}
 
 jobs:
   # The engine's own tests, the ABI agreement between Rust and JavaScript, the

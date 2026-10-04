@@ -69,6 +69,9 @@ jobs:
     env:
       NODE_VERSION: '24.21.0'
       CARGO_HOME: ${{ github.workspace }}/.cargo
+      # The commit the page's footer names, taken from the event rather than
+      # from a checkout this did not make. `build.rs` shortens it.
+      TG_GIT_HASH: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 

@@ -15,6 +15,11 @@ BUILT  := target/$(TARGET)/release/twiddlygems.wasm
 OUT    := web/twiddlygems.wasm
 PORT   ?= 8080
 
+# The commit the page's footer names, beside the crate version. Exported so
+# `build.rs` picks it up; a build with no checkout to ask gets `unknown`, which
+# is a footer that says so rather than a build that fails.
+export TG_GIT_HASH := $(shell git rev-parse --short=9 HEAD 2>/dev/null)
+
 # The Archipelago side. The world is a directory under worlds/; an .apworld is
 # that directory zipped. AP is a pinned clone rather than a dependency, so the
 # tests run against a tree that is not here until someone makes it: see

@@ -674,11 +674,45 @@ button[disabled] { opacity: 0.4; cursor: default; }
   color: transparent;
 }
 #title-tagline {
-  margin: 4px 0 32px;
+  margin: 4px 0 2px;
   color: var(--ink-dim);
   font-size: 0.82rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+/* Plainer than the tagline over it: they are two different kinds of thing,
+   and setting both in spaced capitals would read as one two-line heading. */
+#title-byline {
+  margin: 0 0 32px;
+  color: var(--ink-dim);
+  font-size: 0.8rem;
+}
+
+/* Where the source is, and which build this is. Pinned to the bottom of the
+   title screen, which is what it is a footer for; the setup and connect
+   screens are their own full covers and sit over it. */
+#colophon {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 0 18px;
+  font-size: 0.7rem;
+  color: var(--ink-dim);
+}
+#colophon a { color: var(--ink-dim); }
+#colophon a:hover { color: var(--accent); }
+/* Lining figures that do not jump about as the digits change, and a size that
+   says this is a serial number rather than something to read. */
+#build-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.66rem;
+  opacity: 0.75;
 }
 #title-buttons { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
 #title-buttons button { padding: 14px; font-size: 1.05rem; }

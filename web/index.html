@@ -88,6 +88,7 @@
   <div id="title-card">
     <h1 id="title-heading">Twiddly Gems</h1>
     <p id="title-tagline">A match-3 puzzle</p>
+    <p id="title-byline">by MooingLemur</p>
     <div id="title-buttons">
       <button id="solo-button" class="primary" type="button">Solo Play</button>
       <p id="solo-note" class="title-note">&nbsp;</p>
@@ -95,6 +96,18 @@
       <p id="archipelago-note" class="title-note">Join a multiworld</p>
     </div>
   </div>
+
+  <!-- Where the source is, and which build this is. On the title screen
+       rather than under the board: a phone's playfield is sized against what
+       is above and below it, and a footer down there would cost the game a
+       row of gems to say something nobody reads mid-swipe.
+
+       The version is written by the page from what the module reports, so it
+       cannot describe a different build than the one that is loaded. -->
+  <footer id="colophon">
+    <a href="https://github.com/mooinglemur/twiddlygems" target="_blank" rel="noopener">GitHub</a>
+    <span id="build-version"></span>
+  </footer>
 </div>
 
 <div id="setup" class="hidden" role="dialog" aria-modal="true" aria-labelledby="setup-heading">

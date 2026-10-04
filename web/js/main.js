@@ -199,6 +199,7 @@ const dom = {
   link: document.getElementById('link'),
   linkWord: document.getElementById('link-word'),
   linkAside: document.getElementById('link-aside'),
+  buildVersion: document.getElementById('build-version'),
 };
 
 /** The last room joined, so the form opens mostly filled in. */
@@ -420,6 +421,10 @@ async function boot() {
   }
 
   hud.engine = engine;
+  // Which build this is, out of the module itself. Written here rather than
+  // into the markup so it cannot name a different build than the one that
+  // just loaded.
+  dom.buildVersion.textContent = engine.version;
   // A beaten level holds still until the goals have finished showing
   // themselves met, and how long that takes is this file's business rather
   // than the engine's: it is the flight time of the motes. Handed over before

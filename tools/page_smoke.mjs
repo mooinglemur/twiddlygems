@@ -556,7 +556,55 @@ assert.ok(elements.get('level-name').textContent.length > 0, 'the level has no n
   assert.ok(bar.includes('id="moves"'), 'the moves counter is not in the top bar');
   assert.ok(bar.indexOf('id="moves"') > bar.indexOf('id="level-title"'), 'it is before the level');
   assert.ok(bar.indexOf('id="moves"') < bar.indexOf('id="score"'), 'it is after the score');
+
+  // Who made it, directly under what it is. Order is the whole of the check:
+  // both lines exist either way, and the wrong way round reads as the game
+  // being called "by MooingLemur".
+  const card = markup.slice(markup.indexOf('<div id="title-card"'), markup.indexOf('id="title-buttons"'));
+  assert.ok(card.includes('id="title-byline"'), 'the title screen does not say who made it');
+  assert.ok(
+    card.indexOf('id="title-byline"') > card.indexOf('id="title-tagline"'),
+    'the byline is above the tagline rather than under it',
+  );
+
+  // Where the source is. Written out rather than assembled, so the one thing
+  // that would make it useless, pointing at the wrong repository, is visible
+  // here as well as there.
+  // From the opening tag rather than to the first `</footer>` in the file:
+  // the bar under the board is a footer too, and it closes before this one
+  // opens.
+  const opens = markup.indexOf('<footer id="colophon"');
+  assert.notEqual(opens, -1, 'the page has no colophon');
+  const colophon = markup.slice(opens, markup.indexOf('</footer>', opens));
+  assert.ok(
+    colophon.includes('href="https://github.com/mooinglemur/twiddlygems"'),
+    'the GitHub link does not point at this repository',
+  );
+  assert.ok(colophon.includes('>GitHub<'), 'the link is not called GitHub');
+  assert.ok(colophon.includes('rel="noopener"'), 'a new-tab link without rel="noopener"');
+
+  // One line, with the two at opposite ends of it, which is a thing only the
+  // stylesheet knows.
+  const style = await readFile('web/css/style.css', 'utf8');
+  const rule = /#colophon \{[^}]*\}/.exec(style);
+  assert.ok(rule, 'the footer has no rule of its own in the stylesheet');
+  assert.match(rule[0], /display:\s*flex/, 'the footer is not laid out as one line');
+  assert.match(rule[0], /justify-content:\s*space-between/, 'the two are not at opposite ends');
 }
+
+// The build, read out of the module rather than written into the page. The
+// shape is what matters: a crate version and the commit it was built from, so
+// a bug report names one build rather than a version that moved all week.
+assert.match(
+  elements.get('build-version').textContent,
+  /^\d+\.\d+\.\d+\+\S+$/,
+  'the footer does not name this build as <semver>+<commit>',
+);
+assert.equal(
+  elements.get('build-version').textContent,
+  window.twiddlygems.engine.version,
+  'the footer and the module disagree about which build this is',
+);
 
 // Read off the ladder rather than written here, so retuning a level's budget
 // does not break the front end's test.

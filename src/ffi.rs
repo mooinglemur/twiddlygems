@@ -20,6 +20,7 @@ use crate::board::{Pos, Special};
 use crate::game::{Event, Status, Tap};
 use crate::progression::{plays_generator, Consumable, Item, AP_ID_BASE, GENERATOR, UNLOCKS};
 use crate::session::Session;
+use crate::VERSION;
 
 /// Bytes per packed event; mirrored by the front end's event reader.
 pub const EVENT_SIZE: usize = 8;
@@ -750,6 +751,27 @@ pub extern "C" fn tg_generator() -> u32 {
 #[no_mangle]
 pub extern "C" fn tg_plays_generator(version: u32) -> u32 {
     plays_generator(version) as u32
+}
+
+/// UTF-8 bytes of what this build is; read [`tg_version_len`] of them.
+///
+/// `<semver>+<commit>`, assembled at compile time. Takes no handle: a fact
+/// about the build rather than about a run of it.
+///
+/// Read out of the engine rather than written into the page, so the wasm
+/// module and the footer describing it cannot be from different builds. The
+/// page is cached by a fingerprint of the module it loads, which makes this
+/// the only copy that is certain to be the right one.
+#[no_mangle]
+pub extern "C" fn tg_version_ptr() -> *const u8 {
+    VERSION.as_ptr()
+}
+
+/// # Safety
+/// None. Takes no handle.
+#[no_mangle]
+pub extern "C" fn tg_version_len() -> u32 {
+    VERSION.len() as u32
 }
 
 /// What Archipelago's own item and location numbers are offset by.

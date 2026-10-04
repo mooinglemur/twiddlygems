@@ -533,6 +533,18 @@ export class Engine {
     };
   }
 
+  /**
+   * What this build is, as `<semver>+<commit>`.
+   *
+   * Read out of the module rather than written into the page, so the footer
+   * and the thing it describes cannot be from different builds.
+   */
+  get version() {
+    const length = this.wasm.tg_version_len();
+    const bytes = new Uint8Array(this.memory.buffer, this.wasm.tg_version_ptr(), length);
+    return this.decoder.decode(bytes);
+  }
+
   get levelName() {
     const length = this.wasm.tg_level_name_len(this.handle);
     const bytes = new Uint8Array(this.memory.buffer, this.wasm.tg_level_name_ptr(this.handle), length);
