@@ -33,6 +33,20 @@ ENV RUSTFLAGS="-C target-feature=+crt-static"
 WORKDIR /src
 COPY . .
 
+# Which commit the page's footer names.
+#
+# Handed in rather than read out of the tree: `.dockerignore` keeps `.git` out
+# of the build context, because it is large and nothing else in here wants it,
+# so `build.rs` has nothing to ask and would fall back to `unknown`. The
+# verify stage below refuses a binary that says that, since this image is the
+# one build whose footer anybody actually reads.
+#
+# Below the COPY on purpose. Both bust the cache on a new commit, but this way
+# a rebuild of the same tree at a different commit still rebuilds, which is
+# the case where the footer is the only thing that changed.
+ARG TG_GIT_HASH
+ENV TG_GIT_HASH=${TG_GIT_HASH}
+
 # The game. Ends up where `web/` expects it, which is where the server's
 # `include_bytes!` looks.
 RUN cargo build --release --target wasm32-unknown-unknown --locked \
@@ -55,7 +69,15 @@ RUN cargo build --release --target x86_64-unknown-linux-musl --locked \
 FROM builder AS verify
 RUN set -eux; \
     bin=target/x86_64-unknown-linux-musl/release/twiddlygems-serve; \
-    "$bin" --selftest; \
+    report="$("$bin" --selftest)"; \
+    echo "$report"; \
+    case "$report" in \
+        *+unknown*) \
+            echo "ERROR: this build does not know which commit it is, so the"; \
+            echo "page's footer would say so to everybody. Pass it in:"; \
+            echo "    --build-arg TG_GIT_HASH=\$(git rev-parse HEAD)"; \
+            exit 1 ;; \
+    esac; \
     if readelf -l "$bin" | grep -q INTERP; then \
         echo "ERROR: the binary has a program interpreter, so it is not static:"; \
         readelf -l "$bin" | grep -A1 INTERP; exit 1; \

@@ -84,6 +84,7 @@ use std::thread;
 use std::time::Duration;
 
 use twiddlygems::deflate;
+use twiddlygems::VERSION;
 
 /// Whether this process has been told to stop.
 ///
@@ -717,6 +718,17 @@ fn selftest(site: &Site) {
     assert_eq!(&wasm.body[..4], b"\0asm", "twiddlygems.wasm is not a WebAssembly module");
     assert!(wasm.body.len() > 50_000, "the module is too small to be the game");
 
+    // And that it is *this* build of the game. The module is compiled
+    // separately and embedded from disk, so a stale one is a server shipping a
+    // game it does not describe, which nothing else here would notice: a
+    // module from last week is still a module, still the right size, and still
+    // plays.
+    let stamp = VERSION.as_bytes();
+    assert!(
+        wasm.body.windows(stamp.len()).any(|at| at == stamp),
+        "the module is from a different build than this server, which says {VERSION}",
+    );
+
     // The icon, which is the one file nothing else here would notice going
     // missing: the page would load, the game would play, and the tab would
     // show whatever a browser shows when there is nothing.
@@ -733,8 +745,11 @@ fn selftest(site: &Site) {
         .iter()
         .map(|ready| ready.gzipped.as_ref().map_or(ready.plain.len(), Vec::len))
         .sum();
+    // The version is printed as well as checked, so the image build can read
+    // it out of this line rather than grepping a binary, and so a deployment's
+    // own logs say which build is answering.
     println!(
-        "selftest: ok, {} files, {plain} bytes, {small} compressed, build {}",
+        "selftest: ok, {} files, {plain} bytes, {small} compressed, build {}, version {VERSION}",
         ASSETS.len() + 2,
         site.fingerprint,
     );

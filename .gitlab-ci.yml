@@ -301,5 +301,10 @@ image-twiddlygems:
     # the new path starts empty and whatever pins `:latest` or a `sha-` tag has
     # to be repointed *after* a pipeline has pushed here at least once.
     - IMAGE="$CI_REGISTRY_IMAGE/twiddlygems"
-    - buildah build -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
+    # The commit goes in as a build argument, because `.dockerignore` keeps
+    # `.git` out of the context and the build cannot work it out for itself.
+    # The page's footer names it, and the build refuses to finish without it
+    # rather than shipping a site that says `unknown`. Shortened by `build.rs`,
+    # so the full sha is what goes in.
+    - buildah build --build-arg TG_GIT_HASH="$CI_COMMIT_SHA" -t "$IMAGE:sha-$CI_COMMIT_SHORT_SHA" .
     - push_image "$IMAGE"

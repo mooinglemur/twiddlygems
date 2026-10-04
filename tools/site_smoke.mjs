@@ -161,12 +161,28 @@ const booted = await evaluate(`
   (() => {
     const game = window.twiddlygems;
     if (!game) return null;
-    return { rows: game.engine.rows, cols: game.engine.cols, levels: game.engine.levelCount };
+    return {
+      rows: game.engine.rows,
+      cols: game.engine.cols,
+      levels: game.engine.levelCount,
+      version: game.engine.version,
+      footer: document.getElementById('build-version').textContent,
+    };
   })()
 `);
 assert.ok(booted, `the game never started. Page errors:\n${thrown.join('\n') || '(none)'}`);
 assert.ok(booted.rows > 0 && booted.cols > 0, 'the board has no size');
 assert.ok(booted.levels > 0, 'no levels loaded');
+
+// Which build this is, off the page the binary served rather than off a file
+// on disk. The footer is written from the module, so this says the module in
+// the image is the one the page describes.
+//
+// The shape only. A tree with no checkout to ask builds a legitimate binary
+// that says `unknown`, and failing here would make that build unbuildable;
+// the image is where that is refused, because there the commit is handed in.
+assert.match(booted.version, /^\d+\.\d+\.\d+\+\S+$/, `the build names itself "${booted.version}"`);
+assert.equal(booted.footer, booted.version, 'the footer and the module disagree about the build');
 assert.deepEqual(thrown, [], 'the page reported errors');
 
 // Nothing 404ed, which is the failure this whole arrangement invites: a path
