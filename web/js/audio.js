@@ -37,6 +37,18 @@ export function noteToHz(note) {
 /// twentieth copy of a noise burst is inaudible under the other nineteen.
 const DEFAULT_VOICE_CAP = 10;
 
+/// How long the master gain takes to reach a new level. Short enough to feel
+/// immediate under a dragging thumb, long enough not to click.
+const RAMP_S = 0.02;
+
+/// What the master gain is at full volume.
+///
+/// Under 1 because the sounds are mixed to stack: a rainbow can fire twenty
+/// voices at one instant, and the limiter above this is a safety net rather
+/// than part of the mix. Every level in `sounds.js` was set by ear through
+/// this number, so turning it up is retuning the whole bank.
+const FULL_GAIN = 0.9;
+
 export class Audio {
   constructor(sounds = SOUNDS) {
     this.sounds = sounds;
@@ -44,6 +56,13 @@ export class Audio {
     this.master = null;
     this.noise = null;
     this.enabled = true;
+    /// How loud, 0 to 1, as a fraction of [`FULL_GAIN`].
+    ///
+    /// Kept apart from `enabled` so that muting and unmuting comes back to the
+    /// level it was at rather than to full. A volume of 0 and a mute sound the
+    /// same and are not the same thing: one is a setting the player chose, the
+    /// other is a switch they can flick back.
+    this.volume = 1;
     /// What is still sounding, by name: one entry per voice, saying when it
     /// ends on the audio clock and holding the node to unplug once it has.
     ///
@@ -117,7 +136,7 @@ export class Audio {
     // Honors the setting rather than assuming sound is wanted. The context is
     // opened on the first gesture, which is long after the saved preference
     // was applied to a player who had none yet.
-    this.master.gain.value = this.enabled ? 0.9 : 0;
+    this.master.gain.value = this.level();
     this.master.connect(limiter);
     limiter.connect(this.ctx.destination);
 
@@ -127,11 +146,35 @@ export class Audio {
     }
   }
 
+  /// What the master gain should be, from the two things that decide it.
+  level() {
+    return this.enabled ? FULL_GAIN * this.volume : 0;
+  }
+
   setEnabled(on) {
     this.enabled = on;
-    if (this.master) {
-      this.master.gain.value = on ? 0.9 : 0;
+    this.applyLevel();
+  }
+
+  /// How loud, 0 to 1. Anything outside that is clamped rather than refused:
+  /// this is fed by a slider, and a slider that could put the mix into the
+  /// limiter would be a control that breaks the sound to use it.
+  setVolume(level) {
+    this.volume = Math.min(1, Math.max(0, Number(level) || 0));
+    this.applyLevel();
+  }
+
+  applyLevel() {
+    if (!this.master) {
+      return;
     }
+    // Ramped rather than set. A gain that jumps mid-sound clicks, and this is
+    // dragged: every frame of a drag would be a click, and the one on the way
+    // to silence is the loudest thing in it.
+    const now = this.ctx.currentTime;
+    this.master.gain.cancelScheduledValues(now);
+    this.master.gain.setValueAtTime(this.master.gain.value, now);
+    this.master.gain.linearRampToValueAtTime(this.level(), now + RAMP_S);
   }
 
   /// Plays a named sound. `delay` is in seconds from now, and is scheduled on

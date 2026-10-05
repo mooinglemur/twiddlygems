@@ -32,6 +32,10 @@ import { Hud } from './hud.js';
 const WASM_URL = new URL('../twiddlygems.wasm', import.meta.url).href;
 const SAVE_KEY = 'twiddlygems.save.v1';
 const SOUND_KEY = 'twiddlygems.sound.v1';
+/// How loud, 0 to 1. Its own key rather than a richer value under the one
+/// above, so a player coming from a build that only had a switch keeps their
+/// switch and gains a volume at full.
+const VOLUME_KEY = 'twiddlygems.volume.v1';
 /**
  * What the player has turned on or off, as one JSON object.
  *
@@ -200,6 +204,14 @@ const dom = {
   linkWord: document.getElementById('link-word'),
   linkAside: document.getElementById('link-aside'),
   buildVersion: document.getElementById('build-version'),
+  bottombar: document.getElementById('bottombar'),
+  inventoryMore: document.getElementById('inventory-more'),
+  inventoryTotal: document.getElementById('inventory-total'),
+  inventoryDots: document.getElementById('inventory-dots'),
+  inventoryArmed: document.getElementById('inventory-armed'),
+  volume: document.getElementById('volume'),
+  volumeMute: document.getElementById('volume-mute'),
+  volumeSlider: document.getElementById('volume-slider'),
 };
 
 /** The last room joined, so the form opens mostly filled in. */
@@ -490,9 +502,39 @@ async function boot() {
   } catch (error) {
     console.warn('could not read the sound setting', error);
   }
+  let volume = 1;
+  try {
+    const saved = Number(window.localStorage.getItem(VOLUME_KEY));
+    // A key that was never written reads as null, which is 0 as a number, so
+    // the stored value has to be good before it is believed rather than merely
+    // numeric: an unset volume is full, not silence.
+    if (Number.isFinite(saved) && saved > 0 && saved <= 1) {
+      volume = saved;
+    }
+  } catch (error) {
+    console.warn('could not read the volume', error);
+  }
+  audio.setVolume(volume);
   audio.setEnabled(soundOn);
-  dom.soundButton.textContent = soundOn ? '\u{1F50A}' : '\u{1F507}';
-  dom.soundButton.setAttribute('aria-pressed', String(!soundOn));
+
+  /// The speaker and the one inside the popover say the same thing, because
+  /// they are the same switch. Which icon depends on how loud as well as on
+  /// whether: a player who has dragged it most of the way down wants to see
+  /// that without opening anything.
+  const showSound = () => {
+    const icon = !soundOn ? '\u{1F507}' : volume <= 0.34 ? '\u{1F508}' : volume <= 0.67 ? '\u{1F509}' : '\u{1F50A}';
+    dom.soundButton.textContent = icon;
+    dom.volumeMute.textContent = icon;
+    // On the speaker this says what the popover is doing, so what it is set to
+    // belongs on the button inside: two controls, two different questions.
+    dom.volumeMute.setAttribute('aria-pressed', String(!soundOn));
+    dom.soundButton.setAttribute(
+      'aria-label',
+      soundOn ? `Sound, ${Math.round(volume * 100)}%` : 'Sound, muted',
+    );
+    dom.volumeSlider.value = String(Math.round(volume * 100));
+  };
+  showSound();
 
   // Audio may only be opened from a gesture, and on iOS it must happen inside
   // the handler itself, so this runs on a touch anywhere.
@@ -519,18 +561,55 @@ async function boot() {
     window.addEventListener(gesture, openAudio, { capture: true, passive: true });
   }
 
-  dom.soundButton.addEventListener('click', () => {
-    soundOn = !soundOn;
-    audio.unlock();
-    audio.setEnabled(soundOn);
-    dom.soundButton.textContent = soundOn ? '\u{1F50A}' : '\u{1F507}';
-    dom.soundButton.setAttribute('aria-pressed', String(!soundOn));
+  const rememberSound = () => {
     try {
       window.localStorage.setItem(SOUND_KEY, soundOn ? 'on' : 'off');
+      window.localStorage.setItem(VOLUME_KEY, String(volume));
     } catch (error) {
       console.warn('could not save the sound setting', error);
     }
+  };
+
+  /// The speaker opens the volume over the bar rather than muting outright.
+  ///
+  /// Muting is one tap inside it rather than one tap here, which is the price
+  /// of having a volume at all: there is no room in the bar for a slider, and
+  /// a control that needs a long press or a right click to reach is a control
+  /// that works on one kind of device.
+  dom.soundButton.addEventListener('click', () => {
+    audio.unlock();
+    hud.showInventoryItems(false);
+    hud.toggleVolume();
   });
+
+  dom.volumeMute.addEventListener('click', () => {
+    soundOn = !soundOn;
+    audio.unlock();
+    audio.setEnabled(soundOn);
+    showSound();
+    rememberSound();
+  });
+
+  /// Dragged, or stepped with the arrow keys; `input` covers both and fires
+  /// all the way through a drag rather than at the end of it, so the sound
+  /// follows the thumb.
+  dom.volumeSlider.addEventListener('input', () => {
+    volume = Number(dom.volumeSlider.value) / 100;
+    audio.unlock();
+    // Dragging up from silence is a way of turning the sound on, and leaving
+    // it muted there would look broken: the slider says one thing and the
+    // speaker says nothing.
+    if (volume > 0 && !soundOn) {
+      soundOn = true;
+      audio.setEnabled(true);
+    }
+    audio.setVolume(volume);
+    showSound();
+  });
+
+  // Written when the drag ends rather than on every step of it, so a slow
+  // drag is one write instead of twenty.
+  dom.volumeSlider.addEventListener('change', rememberSound);
 
   /// Each cleared gem gets its pop, scheduled on the audio clock with the delay
   /// the engine gave it, and placed left to right by the column it was in.
@@ -1139,9 +1218,16 @@ async function boot() {
         spent(kind);
         saveRun();
       }
+      // Spent on the spot, so the lifted slots have done their job. Put away
+      // here as well as below, because a cluster never arms anything and the
+      // popover would sit there over a board the player is now waiting on.
+      hud.showInventoryItems(false);
       return;
     }
     hud.arm(kind);
+    // Armed, which is a thing aimed at the board: the slots were covering the
+    // bottom of it, and the next tap is meant for a cell.
+    hud.showInventoryItems(false);
   });
 
   // Anywhere but the board puts an armed item away, which is the way out of
@@ -1165,9 +1251,16 @@ async function boot() {
 
   // The board is re-laid-out rather than stretched, so a rotation or a
   // keyboard appearing keeps whole pixels per cell.
-  const observer = new ResizeObserver(() => renderer.layout());
+  const relayout = () => {
+    renderer.layout();
+    // The bar is measured here too. It is the same question the board is
+    // asking, and the one thing that changes the answer, how wide the window
+    // is, changes both at once.
+    hud.fitInventory();
+  };
+  const observer = new ResizeObserver(relayout);
   observer.observe(dom.stage);
-  window.addEventListener('orientationchange', () => renderer.layout());
+  window.addEventListener('orientationchange', relayout);
 
   const openLevels = () => {
     hud.showLevels({
@@ -1369,11 +1462,30 @@ async function boot() {
   // rather than a backdrop over the page, because a backdrop would swallow the
   // first tap on the board, and putting a popover away is not worth a move.
   dom.scoreBox.addEventListener('click', () => hud.toggleScoreMarks());
+
+  dom.inventoryMore.addEventListener('click', () => {
+    hud.showVolume(false);
+    hud.toggleInventoryItems();
+  });
+
   window.addEventListener(
     'pointerdown',
     (event) => {
       if (hud.marksVisible && !dom.scoreBox.contains?.(event.target)) {
         hud.showScoreMarks(false);
+      }
+      // The slots themselves are inside what this would close, so the test is
+      // against the popover as well as the button that opened it. Arming one
+      // closes it anyway, in `spendOn`'s own handler.
+      const onItems =
+        dom.inventoryMore.contains?.(event.target) || dom.inventory.contains?.(event.target);
+      if (hud.itemsVisible && !onItems) {
+        hud.showInventoryItems(false);
+      }
+      const onVolume =
+        dom.soundButton.contains?.(event.target) || dom.volume.contains?.(event.target);
+      if (hud.volumeVisible && !onVolume) {
+        hud.showVolume(false);
       }
     },
     { capture: true },

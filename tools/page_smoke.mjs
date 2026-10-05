@@ -126,6 +126,11 @@ function stubElement(id) {
     },
     scrollHeight: 0,
     scrollTop: 0,
+    // No layout here, so these are 0 and equal, which reads as "everything
+    // fits". A test that wants the other answer sets them; see the bar's
+    // overflow check.
+    clientWidth: 0,
+    scrollWidth: 0,
     // Kept on the element as well as in the global map: every element the page
     // creates shares the id `created:<tag>`, so a button in the overlay can
     // only be clicked on its own rather than by name.
@@ -715,17 +720,156 @@ assert.equal(elements.get('score').textContent, '0', 'restarting did not reset t
   );
 }
 
-// Sound is off by default here (the stub has no AudioContext), but the button
-// must still toggle without throwing and must remember the choice.
-const soundLabel = elements.get('sound-button').textContent;
-dispatch('sound-button', 'click', {});
-assert.notEqual(
-  elements.get('sound-button').textContent,
-  soundLabel,
-  'the sound button did not change state',
-);
-assert.ok(store.has('twiddlygems.sound.v1'), 'the sound setting was not saved');
-dispatch('sound-button', 'click', {});
+// The speaker opens the volume over the bar, and muting is the button inside
+// it. Sound is off by default here (the stub has no AudioContext), but all of
+// this has to work without throwing and has to be remembered.
+{
+  const volume = elements.get('volume');
+  const speaker = elements.get('sound-button');
+  const slider = elements.get('volume-slider');
+  const { audio } = window.twiddlygems;
+
+  assert.ok(volume.classList.contains('hidden'), 'the volume is open before anybody asked');
+  dispatch('sound-button', 'click', {});
+  assert.ok(!volume.classList.contains('hidden'), 'the speaker did not open the volume');
+  assert.equal(speaker.getAttribute('aria-expanded'), 'true');
+
+  // Muting, which is the thing the speaker used to do on its own.
+  const loud = speaker.textContent;
+  dispatch('volume-mute', 'click', {});
+  assert.notEqual(speaker.textContent, loud, 'muting did not change the speaker');
+  assert.equal(elements.get('volume-mute').getAttribute('aria-pressed'), 'true');
+  assert.equal(audio.enabled, false, 'the audio was not muted');
+  assert.equal(audio.level(), 0, 'muted, and still at a level');
+  assert.ok(store.has('twiddlygems.sound.v1'), 'the sound setting was not saved');
+
+  // Dragging up out of silence turns it back on. Leaving it muted there would
+  // be a slider that says one thing while the game says nothing.
+  slider.value = '60';
+  dispatch('volume-slider', 'input', {});
+  assert.equal(audio.enabled, true, 'dragging up from a mute did not unmute');
+  assert.equal(audio.volume, 0.6);
+  assert.ok(audio.level() > 0, 'turned back on and still silent');
+
+  // Written when the drag ends rather than on every step of it.
+  slider.value = '40';
+  dispatch('volume-slider', 'input', {});
+  assert.equal(audio.volume, 0.4);
+  dispatch('volume-slider', 'change', {});
+  assert.equal(store.get('twiddlygems.volume.v1'), '0.4', 'the volume was not remembered');
+
+  // The speaker says how loud as well as whether, so a run with the sound
+  // dragged most of the way down looks different from one at full.
+  const quiet = speaker.textContent;
+  slider.value = '100';
+  dispatch('volume-slider', 'input', {});
+  assert.notEqual(speaker.textContent, quiet, 'the speaker reads the same at 40% as at full');
+
+  // A tap somewhere else puts it away, the way the score's popover goes.
+  gesture('pointerdown', { target: elements.get('board') });
+  assert.ok(volume.classList.contains('hidden'), 'the volume stayed up after a tap elsewhere');
+  assert.equal(speaker.getAttribute('aria-expanded'), 'false');
+}
+
+// The slots step aside when the bar cannot hold them. Measured rather than
+// guessed at a width, so this drives the measurement: the stub has no layout,
+// and 0 against 0 is what "it fits" looks like here.
+{
+  const bar = elements.get('bottombar');
+  const inventory = elements.get('inventory');
+  const { hud } = window.twiddlygems;
+
+  inventory.clientWidth = 183;
+  inventory.scrollWidth = 202;
+  assert.equal(hud.fitInventory(), true, 'an inventory wider than its box was called a fit');
+  assert.ok(bar.classList.contains('tight'), 'the bar did not make room');
+
+  // What is behind the button, so a bar that has lost its slots has not lost
+  // the one thing they were saying: that there is something to spend.
+  const held = window.twiddlygems.engine;
+  held.restoreConsumables(0, 2);
+  held.restoreConsumables(1, 3);
+  pump(1);
+  const total = [0, 1, 2, 3].reduce((sum, kind) => sum + held.consumables(kind), 0);
+  assert.equal(total, 5, 'the run is not carrying what this just gave it');
+  assert.equal(elements.get('inventory-total').textContent, String(total), 'the badge is not the total');
+  assert.equal(elements.get('inventory-total').hidden, false, 'the badge is hidden while holding something');
+  assert.match(
+    elements.get('inventory-more').getAttribute('aria-label'),
+    new RegExp(`${total} held`),
+    'the button does not say how much is behind it',
+  );
+
+  // Opening lifts the same slots over the bar. The same ones: a second set
+  // would be a second place to keep the counts right.
+  dispatch('inventory-more', 'click', {});
+  assert.ok(bar.classList.contains('items-open'), 'the overflow button opened nothing');
+  assert.equal(elements.get('inventory-more').getAttribute('aria-expanded'), 'true');
+  gesture('pointerdown', { target: elements.get('board') });
+  assert.ok(!bar.classList.contains('items-open'), 'the slots stayed up after a tap elsewhere');
+
+  // The hidden inventory was the flexible thing holding the speaker and
+  // Restart against the right edge; without something taking that slack they
+  // bunch up on the left and the bar looks like it dropped something. Read off
+  // the stylesheet, which is the only thing that knows.
+  {
+    const style = await readFile('web/css/style.css', 'utf8');
+    const rule = /#bottombar\.tight #inventory-more \{[^}]*\}/.exec(style);
+    assert.ok(rule, 'nothing styles the overflow button when the bar is tight');
+    assert.match(
+      rule[0],
+      /margin-inline-end:\s*auto/,
+      'nothing takes the slack the hidden slots were taking',
+    );
+  }
+
+  // Arming one while the slots are hidden. The popover closes, so without
+  // this the screen looks untouched and the next tap means something the
+  // player has no way to see.
+  {
+    const more = elements.get('inventory-more');
+    hud.arm(0);
+    pump(1);
+    assert.ok(more.classList.contains('armed'), 'arming marked nothing in the bar');
+    assert.equal(elements.get('inventory-dots').hidden, true, 'the button still reads as a list');
+    assert.equal(elements.get('inventory-armed').hidden, false, 'the armed item is not shown');
+    // The badge follows what is armed: how many of that one is left, not the
+    // total, which is answering a question nobody is asking any more.
+    const mine = held.consumables(0);
+    assert.notEqual(mine, total, 'this kind is the whole inventory, so the badge proves nothing');
+    assert.equal(
+      elements.get('inventory-total').textContent,
+      String(mine),
+      'the badge still counts everything while one item is armed',
+    );
+    assert.match(
+      more.getAttribute('aria-label'),
+      new RegExp(`armed, ${mine} left`),
+      'the button does not say what is armed and how many are left',
+    );
+
+    // Spent, or put away by a tap elsewhere: either way it goes back to
+    // standing in for the list.
+    hud.disarm();
+    pump(1);
+    assert.ok(!more.classList.contains('armed'), 'the mark survived putting the item away');
+    assert.equal(elements.get('inventory-dots').hidden, false, 'the button never came back');
+    assert.equal(elements.get('inventory-armed').hidden, true, 'the armed item is still showing');
+    assert.match(
+      more.getAttribute('aria-label'),
+      new RegExp(`${total} held`),
+      'the button did not go back to saying what is behind it',
+    );
+  }
+
+  // And back, when there is room again. Left tight, the bar would hide the
+  // slots behind a button on a screen wide enough to show them.
+  inventory.scrollWidth = 150;
+  assert.equal(hud.fitInventory(), false, 'an inventory that fits was called an overflow');
+  assert.ok(!bar.classList.contains('tight'), 'the bar kept the slots hidden');
+  inventory.clientWidth = 0;
+  inventory.scrollWidth = 0;
+}
 
 // Opening the audio device survives a browser that refuses the first attempt.
 //

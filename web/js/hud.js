@@ -137,6 +137,9 @@ export class Hud {
     /// The connection overlay's fade, waiting to run or part way through it.
     /// Cancelled by anything that puts a new message up. See `showLink`.
     this.linkTimer = null;
+    /// What the overflow button is already showing, as "armed/count". Starts
+    /// as nothing any state can equal, so the first refresh writes it.
+    this.shownMore = '';
   }
 
   /**
@@ -289,6 +292,64 @@ export class Hud {
     this.updateInventory();
   }
 
+  /**
+   * Decides whether the slots still fit in the bar, and collapses them if not.
+   *
+   * Measured rather than guessed at a screen width, because what has to fit is
+   * not a function of the viewport: the buttons beside the slots are sized by
+   * their text, the device's font scale moves that, and how many kinds there
+   * are to spend is the engine's business and may grow. A breakpoint would be
+   * a number that is right on the phone it was written on.
+   *
+   * Always measured with the slots laid out, which is what makes the answer
+   * stable: collapsed, they are `display: none` and would measure as fitting,
+   * so this would put them back and take them away again on every call.
+   */
+  fitInventory() {
+    const { bottombar, inventory } = this.dom;
+    const wasTight = bottombar.classList.contains('tight');
+    bottombar.classList.remove('tight');
+    // A pixel of slack: a sub-pixel layout can leave scrollWidth a hair over
+    // clientWidth with everything perfectly visible.
+    const fits = inventory.scrollWidth <= inventory.clientWidth + 1;
+    bottombar.classList.toggle('tight', !fits);
+    if (fits && wasTight) {
+      // Back in the bar, so the popover it was lifted into is not a thing any
+      // more. Left open, it would hang over a bar that already shows them.
+      this.showInventoryItems(false);
+    }
+    return !fits;
+  }
+
+  get itemsVisible() {
+    return this.dom.bottombar.classList.contains('items-open');
+  }
+
+  /** Lifts the slots over the bar, where the bar is too narrow to hold them. */
+  showInventoryItems(on) {
+    const { dom } = this;
+    dom.bottombar.classList.toggle('items-open', on);
+    dom.inventoryMore.setAttribute('aria-expanded', String(on));
+  }
+
+  toggleInventoryItems() {
+    this.showInventoryItems(!this.itemsVisible);
+  }
+
+  get volumeVisible() {
+    return !this.dom.volume.classList.contains('hidden');
+  }
+
+  showVolume(on) {
+    const { dom } = this;
+    dom.volume.classList.toggle('hidden', !on);
+    dom.soundButton.setAttribute('aria-expanded', String(on));
+  }
+
+  toggleVolume() {
+    this.showVolume(!this.volumeVisible);
+  }
+
   /** The slot the armed item came out of, or null. */
   armedSlot() {
     return this.consumableViews.find((view) => view.kind === this.armed)?.slot ?? null;
@@ -312,8 +373,10 @@ export class Hud {
 
   /** Per-frame refresh of the slots; touches the DOM only where something moved. */
   updateInventory() {
+    let total = 0;
     for (const view of this.consumableViews) {
       const held = this.engine.consumables(view.kind);
+      total += held;
       if (held !== view.held) {
         view.held = held;
         const { name, does } = SPENDABLE[view.kind];
@@ -335,6 +398,61 @@ export class Hud {
       }
     }
     this.shownArmed = this.armed;
+    this.showMoreState(total);
+  }
+
+  /**
+   * Everything the overflow button says about itself: what it wears, what its
+   * badge counts, and what it is called.
+   *
+   * Two states in one place because they are one question, and splitting them
+   * meant two guards that could each decide nothing had changed while the
+   * other rewrote the thing it owned.
+   *
+   * **Standing in for the list**, it reads `...` and badges everything the run
+   * is carrying across the kinds. A button with no number on it says there is
+   * a list in there and nothing about whether it is worth opening, which on
+   * the phones that get this button is the question being asked: the slots it
+   * replaces are what tells a player they have something to spend.
+   *
+   * **Armed**, it wears that item and the same highlight the slot would have,
+   * and the badge drops to how many of *that* one is left. Arming is a promise
+   * about what the next tap does; with the slots hidden, nothing else on the
+   * screen is making it, and a total would be answering a question nobody is
+   * asking any more.
+   *
+   * Harmless when the bar is not tight, because the button is not on screen.
+   */
+  showMoreState(total) {
+    const armed = this.armed === undefined ? null : this.armed;
+    // Not a truthiness test anywhere here: the first consumable's code is 0.
+    const count = armed === null ? total : this.engine.consumables(armed);
+    const state = `${armed}/${count}`;
+    if (state === this.shownMore) {
+      return;
+    }
+    this.shownMore = state;
+
+    const { inventoryMore, inventoryDots, inventoryArmed, inventoryTotal } = this.dom;
+    inventoryMore.classList.toggle('armed', armed !== null);
+    inventoryDots.hidden = armed !== null;
+    inventoryArmed.hidden = armed === null;
+    if (armed !== null) {
+      paintConsumableIcon(inventoryArmed, armed, CONSUMABLE_ICON_SIZE);
+    }
+
+    // Hidden at zero, the way the slots' own counts are: a badge reading 0
+    // says what the dimming already said.
+    inventoryTotal.textContent = String(count);
+    inventoryTotal.hidden = count === 0;
+    inventoryMore.setAttribute(
+      'aria-label',
+      armed !== null
+        ? `${SPENDABLE[armed].name} armed, ${count} left: tap a gem to spend it`
+        : count === 0
+          ? 'Items to spend, none left'
+          : `Items to spend, ${count} held`,
+    );
   }
 
   /** Colors the score by how well the level stands. */

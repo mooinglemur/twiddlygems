@@ -57,8 +57,27 @@
          where it is whether or not there is anything in it: what a run is out
          of is worth as much to know as what it is carrying. -->
     <ul id="inventory" aria-label="Items to spend"></ul>
-    <button id="sound-button" class="icon-button" type="button" aria-label="Toggle sound" aria-pressed="false">&#128266;</button>
+    <!-- Stands in for the slots where the bar is too narrow to hold them, and
+         lifts the same list above the bar when tapped. Which is measured
+         rather than guessed at a screen width: what has to fit depends on the
+         font the device is set to and on how many kinds there are to spend,
+         and neither of those is a number this page can know in advance. -->
+    <button id="inventory-more" class="icon-button" type="button"
+            aria-haspopup="true" aria-expanded="false" aria-label="Items to spend"><span
+            id="inventory-dots">&#8943;</span><canvas id="inventory-armed" hidden></canvas><span
+            id="inventory-total" hidden></span></button>
+    <button id="sound-button" class="icon-button" type="button"
+            aria-haspopup="true" aria-expanded="false" aria-label="Sound">&#128266;</button>
     <button id="retry-button" class="text-button" type="button">Restart</button>
+
+    <!-- How loud, over the bar it belongs to. A range input rather than
+         anything hand-rolled: it is already draggable by thumb and by mouse,
+         steppable by arrow key, and announced by a screen reader, and none of
+         that is worth writing again. -->
+    <div id="volume" class="bar-popover hidden" role="group" aria-label="Volume">
+      <button id="volume-mute" class="icon-button" type="button" aria-pressed="false">&#128266;</button>
+      <input id="volume-slider" type="range" min="0" max="100" step="5" value="100" aria-label="Volume">
+    </div>
   </footer>
 </div>
 

@@ -175,6 +175,88 @@ html, body {
   min-width: 0;
 }
 
+/* Too narrow for the slots, which `fitInventory` decides by measuring them.
+   They are not rebuilt anywhere else: the same list is lifted out of the bar
+   and set over it, so there is one set of slots, one place that refreshes
+   them, and nothing that can show two different counts. */
+#inventory-more { display: none; }
+#bottombar.tight #inventory { display: none; }
+/* Shaped exactly like a slot, because it stands in for one and then becomes
+   one: armed, it wears the item it armed, and anything that changed size
+   between the two states would shift the bar under the player's thumb. */
+#bottombar.tight #inventory-more {
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  min-width: 44px;
+  min-height: 44px;
+  border: 2px solid transparent;
+  border-radius: 12px;
+  background: var(--socket);
+  /* Takes the slack the hidden inventory was taking, so the speaker and
+     Restart stay against the right edge. Without it they bunch up on the left
+     and the bar reads as though it had lost something. */
+  margin-inline-end: auto;
+  /* For the badge, which hangs off its corner. */
+  position: relative;
+  /* Room for that corner: the badge pokes past the button's own box, and the
+     bar's padding is all there is between it and the edge of the screen. */
+  margin-inline-start: 4px;
+}
+
+/* Something is armed and waiting for a cell. The same marking a slot gets,
+   because it is the same state: without it, arming an item in the popover
+   closes the popover and leaves the screen looking untouched, with the next
+   tap meaning something the player has no way to see. */
+#bottombar.tight #inventory-more.armed {
+  border-color: var(--accent);
+  background: #2f2752;
+}
+#bottombar.tight.items-open #inventory {
+  display: flex;
+  position: absolute;
+  z-index: 12;
+  left: 12px;
+  right: 12px;
+  bottom: calc(100% + 8px);
+  justify-content: center;
+  flex-wrap: wrap;
+  padding: 10px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+}
+
+/* The popovers that hang off the bottom bar. The score's own popover is
+   shaped differently enough to keep its own rule; what these share is where
+   they sit and what they sit on. */
+.bar-popover {
+  position: absolute;
+  z-index: 12;
+  bottom: calc(100% + 8px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+}
+
+/* Over the button it belongs to, and pulled back inside the bar if that would
+   put it off the edge of a narrow screen. */
+#volume {
+  right: 12px;
+  max-width: calc(100% - 24px);
+}
+#volume-slider {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--accent);
+  /* A thumb's worth of track to grab, which the default is not on a phone. */
+  height: 44px;
+}
+
 .consumable {
   position: relative;
   flex: 0 0 auto;
@@ -205,7 +287,8 @@ html, body {
 /* How many are held, in a circle over the corner of the art. Only drawn when
    there is at least one: a slot showing a zero says the same thing twice, and
    the dimming already says it. */
-.consumable-count {
+.consumable-count,
+#inventory-total {
   position: absolute;
   right: -4px;
   bottom: -4px;
