@@ -33,6 +33,16 @@ const LINK_FADE_MS = 500;
 const TIER_CLASS = [null, 'tier-clear', 'tier-silver', 'tier-gold'];
 const TIER_CLASSES = TIER_CLASS.filter(Boolean);
 
+/// What a level row tracks beside its name: how much of each thing it still
+/// has in it. One entry per canvas on the row, in the order they are drawn.
+///
+/// "AP gems" rather than the whole word: it is what they are called out loud,
+/// and it has to fit on a row beside a level's name.
+const STATUS_MARKS = [
+  { name: 'AP gems', of: (engine, at) => engine.levelGems(at), paint: paintGemsIcon },
+  { name: 'moves upgrades', of: (engine, at) => engine.levelMoves(at), paint: paintMovesIcon },
+];
+
 /// What each special is called, and the match that leaves one behind. The
 /// second half is the point: an unlock is being announced to someone who has
 /// never seen that gem, so it says how to make one.
@@ -140,6 +150,12 @@ export class Hud {
     /// What the overflow button is already showing, as "armed/count". Starts
     /// as nothing any state can equal, so the first refresh writes it.
     this.shownMore = '';
+    /// The level picker's rows and the tracker's slots, while it is open, so
+    /// an item arriving can be written into them rather than rebuilding a list
+    /// somebody is scrolling. See `updateLevels`.
+    this.levelViews = [];
+    this.trackedViews = [];
+    this.shownUnlocked = -1;
   }
 
   /**
@@ -575,6 +591,13 @@ export class Hud {
     if (this.marksVisible && engine.levelBestScore(engine.levelIndex) !== this.shownBest) {
       this.fillScoreMarks();
     }
+    // And the level picker, for the same reason and one more: under a
+    // multiworld the run changes while nobody is playing it, so this is the
+    // panel most likely to be out of date by the time it is read.
+    if (!dom.tracker.classList.contains('hidden')) {
+      this.updateItems();
+      this.updateLevels();
+    }
 
     const score = engine.score;
     if (this.shownScore !== score) {
@@ -813,23 +836,18 @@ export class Hud {
    * still waiting on is exactly as worth knowing as what it holds.
    */
   showItems() {
-    const { engine, dom } = this;
-    const held = engine.unlockedSpecials;
+    const { dom } = this;
+    this.trackedViews = [];
     const icons = TRACKED.map((code) => {
-      const { name, short, from } = SPECIALS[code];
-      const found = held.has(code);
+      const { short } = SPECIALS[code];
 
       const item = document.createElement('div');
       item.className = 'tracked';
-      if (found) {
-        item.classList.add('found');
-      }
       item.setAttribute('role', 'listitem');
-      // The whole slot carries the words, because the art is a canvas and the
-      // caption is only a nickname for it. Found, it says how to make one,
-      // which is the thing a player who has just been handed it needs.
-      item.setAttribute('aria-label', found ? `${name}, found: ${from}` : `${name}, not found`);
-      item.title = found ? `${name}: ${from}` : `${name}: not found`;
+      // Whether it has been found is written by `updateItems`, which is also
+      // what keeps it true while the panel is open: an unlock can arrive from
+      // a multiworld at any moment, including while somebody is reading this.
+      this.trackedViews.push({ code, item, found: null });
 
       const art = document.createElement('canvas');
       art.className = 'tracked-art';
@@ -843,6 +861,33 @@ export class Hud {
       return item;
     });
     dom.trackerItems.replaceChildren(...icons);
+    this.updateItems();
+  }
+
+  /**
+   * Marks the specials the run has found, writing only what moved.
+   *
+   * Its own pass rather than part of building the row, because the panel it
+   * sits in stays open: a multiworld hands over an unlock whenever it likes,
+   * and rebuilding the row to say so would throw away whatever the player was
+   * in the middle of doing with it.
+   */
+  updateItems() {
+    const held = this.engine.unlockedSpecials;
+    for (const view of this.trackedViews) {
+      const found = held.has(view.code);
+      if (found === view.found) {
+        continue;
+      }
+      view.found = found;
+      const { name, from } = SPECIALS[view.code];
+      view.item.classList.toggle('found', found);
+      // The whole slot carries the words, because the art is a canvas and the
+      // caption is only a nickname for it. Found, it says how to make one,
+      // which is the thing a player who has just been handed it needs.
+      view.item.setAttribute('aria-label', found ? `${name}, found: ${from}` : `${name}, not found`);
+      view.item.title = found ? `${name}: ${from}` : `${name}: not found`;
+    }
   }
 
   /**
@@ -859,98 +904,73 @@ export class Hud {
   showLevels(actions) {
     const { engine, dom } = this;
     dom.overlayTitle.textContent = 'Levels';
-    dom.overlayBody.textContent = `${engine.unlocked} of ${engine.levelCount} unlocked.`;
     this.showItems();
 
-    const focused = this.focusedLevel();
-    const names = engine.levelNames();
+    this.levelViews = [];
+    // The line under the title is the overlay's, and the settings panel and
+    // the quit question write it too. So it is always rewritten on the way in,
+    // and only when it moves after that.
+    this.shownUnlocked = -1;
     const rows = [];
     for (let i = 0; i < engine.levelCount; i += 1) {
       const row = document.createElement('button');
       row.type = 'button';
       row.className = 'level-row';
       row.setAttribute('role', 'listitem');
-      if (i === focused) {
-        row.classList.add('current');
-      }
-      const unlocked = i < engine.unlocked;
-      row.disabled = !unlocked;
-      const best = engine.levelBest(i);
-      // How well it has been beaten, as a wash across the row, so the list can
-      // be scanned for where the gold is without reading any of it.
-      const bestClass = TIER_CLASS[best];
-      if (bestClass) {
-        row.classList.add(bestClass);
-      }
 
       const number = document.createElement('span');
       number.className = 'n';
       number.textContent = String(i + 1);
 
-      const name = unlocked ? (names[i] ?? '') : 'Locked';
       const title = document.createElement('span');
       title.className = 't';
-      title.textContent = name;
 
       // What the level still has in it, between its name and how well it has
       // been beaten. This is what makes the picker a tracker rather than a
       // menu: a run comes here to decide where to go next, and "that one still
       // has a gem in it" is the reason to go back to a level that is already
       // gold.
+      //
+      // Two canvases, always both, kept whether or not this run has anything
+      // to track there. `updateLevels` hides the ones with nothing behind
+      // them: a slot that came and went as the counts moved would reflow the
+      // row under a thumb that is scrolling it.
       const status = document.createElement('span');
       status.className = 'level-status';
       // Drawn, not read, like the pips. The row's own label says it in words.
       status.setAttribute('aria-hidden', 'true');
-      const standing = [];
-      for (const mark of [
-        // "AP gems" rather than the whole word: it is what they are called
-        // out loud, and it has to fit on a row beside a level's name.
-        { ...engine.levelGems(i), paint: paintGemsIcon, of: 'AP gems' },
-        { ...engine.levelMoves(i), paint: paintMovesIcon, of: 'moves upgrades' },
-      ]) {
-        // A run set up without any of something has nothing to track there,
-        // and a mark that can never fill is worse than no mark.
-        if (mark.total === 0) {
-          continue;
-        }
-        const words = `${mark.found} of ${mark.total} ${mark.of}`;
+      const arts = STATUS_MARKS.map(() => {
         const art = document.createElement('canvas');
         art.className = 'status-art';
-        art.title = words;
-        mark.paint(art, STATUS_ICON_SIZE, mark.found, mark.total);
         status.append(art);
-        standing.push(words);
-      }
+        return art;
+      });
 
       const marks = document.createElement('span');
       marks.className = 'marks';
       // Drawn, not read: a screen reader gets the row's own label instead,
       // which says the same thing in words.
       marks.setAttribute('aria-hidden', 'true');
-      for (const mark of MARKS) {
+      const pips = MARKS.map((mark) => {
         const pip = document.createElement('span');
         pip.className = `pip ${TIER_CLASS[mark.tier]}`;
-        const done = best >= mark.tier;
-        if (done) {
-          pip.classList.add('taken');
-        }
-        pip.title = done ? mark.taken : mark.missing;
         marks.append(pip);
-      }
-
-      const taken = MARKS.filter((mark) => best >= mark.tier).map((mark) => mark.name);
-      row.setAttribute(
-        'aria-label',
-        [`Level ${i + 1}`, name, ...taken, ...standing].join(', '),
-      );
+        return pip;
+      });
 
       row.append(number, title, status, marks);
       row.addEventListener('click', () => actions.onPick(i));
       rows.push(row);
+      // Everything that can change while this panel is open is written by
+      // `updateLevels`, from here on. Nothing above reads the run's state.
+      this.levelViews.push({ row, title, arts, pips, shown: '' });
     }
 
     dom.levelList.replaceChildren(...rows);
     dom.tracker.classList.remove('hidden');
+    // Before it is on screen, so it opens filled in rather than filling in on
+    // the first frame after.
+    this.updateLevels();
     // The gear last and unworded, because it is a way out to somewhere else
     // rather than one of the two answers this row is asking for. It carries a
     // label for anything not reading the picture.
@@ -965,8 +985,95 @@ export class Hud {
     this.openOverlay();
     // The level being played is somewhere down a list that scrolls, and on a
     // long ladder it is usually off the bottom of it.
-    const current = dom.levelList.children[focused];
+    const current = dom.levelList.children[this.focusedLevel()];
     current?.scrollIntoView?.({ block: 'center' });
+  }
+
+  /**
+   * Keeps the level picker true for as long as it is open.
+   *
+   * A multiworld hands items over whenever it likes, including while somebody
+   * is reading this panel: a level unlock opens a row, a moves upgrade fills a
+   * mark, and a picker that was built once would quietly be describing the run
+   * as it stood when the menu opened.
+   *
+   * Written in place rather than rebuilt, because this list scrolls and is
+   * being scrolled. Replacing the rows would throw away where the player was,
+   * drop whatever has focus, and interrupt a drag that is in progress, which
+   * is a worse answer than the stale row it fixed.
+   *
+   * One signature per row, so a frame where nothing moved writes nothing. It
+   * runs every frame the panel is open, and on all but a handful of them the
+   * answer is that nothing has changed.
+   */
+  updateLevels() {
+    const { engine, dom } = this;
+    if (this.levelViews.length === 0) {
+      return;
+    }
+    const names = engine.levelNames();
+    const focused = this.focusedLevel();
+    for (let i = 0; i < this.levelViews.length; i += 1) {
+      const view = this.levelViews[i];
+      const unlocked = i < engine.unlocked;
+      const best = engine.levelBest(i);
+      const standing = STATUS_MARKS.map((mark) => ({ ...mark.of(engine, i), ...mark }));
+      const state = [
+        unlocked,
+        best,
+        i === focused,
+        ...standing.map((mark) => `${mark.found}/${mark.total}`),
+      ].join(',');
+      if (state === view.shown) {
+        continue;
+      }
+      view.shown = state;
+
+      const name = unlocked ? (names[i] ?? '') : 'Locked';
+      view.row.disabled = !unlocked;
+      view.row.classList.toggle('current', i === focused);
+      // How well it has been beaten, as a wash across the row, so the list can
+      // be scanned for where the gold is without reading any of it.
+      view.row.classList.remove(...TIER_CLASSES);
+      if (TIER_CLASS[best]) {
+        view.row.classList.add(TIER_CLASS[best]);
+      }
+      view.title.textContent = name;
+
+      const words = [];
+      for (let at = 0; at < standing.length; at += 1) {
+        const mark = standing[at];
+        const art = view.arts[at];
+        // A run set up without any of something has nothing to track there,
+        // and a mark that can never fill is worse than no mark.
+        art.hidden = mark.total === 0;
+        if (mark.total === 0) {
+          continue;
+        }
+        const said = `${mark.found} of ${mark.total} ${mark.name}`;
+        art.title = said;
+        mark.paint(art, STATUS_ICON_SIZE, mark.found, mark.total);
+        words.push(said);
+      }
+
+      for (let at = 0; at < MARKS.length; at += 1) {
+        const mark = MARKS[at];
+        const done = best >= mark.tier;
+        view.pips[at].classList.toggle('taken', done);
+        view.pips[at].title = done ? mark.taken : mark.missing;
+      }
+
+      const taken = MARKS.filter((mark) => best >= mark.tier).map((mark) => mark.name);
+      view.row.setAttribute(
+        'aria-label',
+        [`Level ${i + 1}`, name, ...taken, ...words].join(', '),
+      );
+    }
+
+    if (engine.unlocked !== this.shownUnlocked) {
+      this.shownUnlocked = engine.unlocked;
+      dom.overlayBody.textContent = `${engine.unlocked} of ${engine.levelCount} unlocked.`;
+    }
   }
 
   /**

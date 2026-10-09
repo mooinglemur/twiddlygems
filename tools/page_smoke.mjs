@@ -1156,6 +1156,7 @@ assert.equal(items.children.length, 5, 'the tracker is not showing all five unlo
     `the tracker lit ${found().length} unlocks against the ${held.size} the run holds`,
   );
 }
+
 click(overlayButton('Close'), 'the level picker has no way out');
 
 // Play the opening level out with the engine's own hints, which is the only
@@ -2689,6 +2690,68 @@ let flightFrames = 0;
   // fire on time for them to.
   ctx.currentTime += 5;
   assert.ok(burst.play('pop', { delay: 0 }), 'the voices never came back after the sound ended');
+}
+
+// ---- the level picker, while it is open ------------------------------------
+//
+// An item arriving while the panel is up is written into it, not rebuilt
+// around it. Under a multiworld the run changes while nobody is playing it,
+// and this is the panel most likely to be read at exactly that moment.
+//
+// The rows are kept by identity, because that is the whole of the ask:
+// replacing them would scroll the list back, drop whatever has focus, and
+// interrupt a drag in progress.
+//
+// Last in this file on purpose. The items it receives are real, and a moves
+// upgrade changes what the flourish has left to spend, which earlier checks
+// count.
+{
+  const { engine } = window.twiddlygems;
+  dispatch('levels-button', 'click', {});
+  const rows = elements.get('level-list');
+  const slots = elements.get('tracker-items');
+  const lit = () => slots.children.filter((slot) => slot.classList.contains('found')).length;
+
+  // A level still waiting on its upgrade, found rather than assumed: this run
+  // was dealt from a seed of its own, and which items the opening level paid
+  // out is not something to write down here.
+  const at = [...Array(engine.levelCount).keys()].find((i) => {
+    const mark = engine.levelMoves(i);
+    return mark.total > 0 && mark.found === 0;
+  });
+  assert.ok(at !== undefined, 'this run has found every moves upgrade already');
+  const total = engine.levelMoves(at).total;
+
+  const row = rows.children[at];
+  const slot = slots.children[0];
+  const label = row.getAttribute('aria-label');
+  const before = lit();
+
+  // That upgrade and an unlock, the way a room hands them over: one changes a
+  // row, the other changes the tracker above it. By the special's own code,
+  // which is what the item id is; 0 is "no special" and 6 is an Archipelago
+  // gem, and neither is a thing to hold.
+  assert.ok(engine.receive(1_000 + at), 'the engine refused the moves upgrade');
+  const unlock = [1, 2, 3, 4, 5].find((code) => !engine.unlockedSpecials.has(code));
+  assert.ok(unlock !== undefined, 'this run holds every unlock, so nothing can arrive');
+  assert.ok(engine.receive(unlock), 'the engine refused the unlock');
+  pump(1);
+
+  assert.equal(rows.children[at], row, 'the picker rebuilt its rows instead of writing to them');
+  assert.equal(slots.children[0], slot, 'the tracker rebuilt its slots');
+  assert.notEqual(row.getAttribute('aria-label'), label, 'the row never noticed the item');
+  assert.match(
+    row.getAttribute('aria-label'),
+    new RegExp(`1 of ${total} moves upgrades`),
+    'the row does not say the upgrade arrived',
+  );
+  assert.equal(lit(), before + 1, 'the tracker did not light the unlock that arrived');
+  assert.match(
+    elements.get('overlay-body').textContent,
+    /\d+ of \d+ unlocked/,
+    'the panel stopped saying how much of the ladder is open',
+  );
+  click(overlayButton('Close'), 'the level picker has no way out');
 }
 
 // ---- the connection overlay -----------------------------------------------
