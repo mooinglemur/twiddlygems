@@ -594,7 +594,11 @@ export class Hud {
     // And the level picker, for the same reason and one more: under a
     // multiworld the run changes while nobody is playing it, so this is the
     // panel most likely to be out of date by the time it is read.
-    if (!dom.tracker.classList.contains('hidden')) {
+    //
+    // Both tests, because closing the panel leaves the tracker where it was:
+    // `hideOverlay` hides what is over the board rather than unpicking what is
+    // inside it, so the class alone stays true long after the panel is gone.
+    if (this.overlayVisible && !dom.tracker.classList.contains('hidden')) {
       this.updateItems();
       this.updateLevels();
     }
@@ -1011,7 +1015,10 @@ export class Hud {
     if (this.levelViews.length === 0) {
       return;
     }
-    const names = engine.levelNames();
+    // Fetched only once something actually has to be written. Reading them
+    // crosses into the module and splits a string, and this runs on every
+    // frame the panel is open, almost none of which change a row.
+    let names = null;
     const focused = this.focusedLevel();
     for (let i = 0; i < this.levelViews.length; i += 1) {
       const view = this.levelViews[i];
@@ -1029,6 +1036,7 @@ export class Hud {
       }
       view.shown = state;
 
+      names ??= engine.levelNames();
       const name = unlocked ? (names[i] ?? '') : 'Locked';
       view.row.disabled = !unlocked;
       view.row.classList.toggle('current', i === focused);

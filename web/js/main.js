@@ -1270,14 +1270,18 @@ async function boot() {
         }
       },
       onClose: () => hud.hideOverlay(),
-      // Leaving a room is not the same as throwing a solo run away: the room
-      // keeps everything this run has done, so there is nothing to lose by
-      // going and the solo save is still sitting where it was.
-      onQuit: () =>
-        hud.confirmQuit({
-          onCancel: openLevels,
-          onConfirm: mode === 'multiworld' ? leaveMultiworld : endRun,
-        }),
+      // Leaving a room is not the same as throwing a solo run away, so it is
+      // not asked about: the room keeps every item and every check, going back
+      // is a reconnect, and the solo save underneath was never touched. The
+      // question this would otherwise ask is about a solo run ending, and
+      // under a multiworld every part of it is untrue.
+      onQuit: () => {
+        if (mode === 'multiworld') {
+          leaveMultiworld();
+          return;
+        }
+        hud.confirmQuit({ onCancel: openLevels, onConfirm: endRun });
+      },
       onSettings: openSettings,
     });
   };

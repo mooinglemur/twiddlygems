@@ -2705,6 +2705,29 @@ let flightFrames = 0;
 // Last in this file on purpose. The items it receives are real, and a moves
 // upgrade changes what the flourish has left to spend, which earlier checks
 // count.
+// A closed panel is not kept up to date. `hideOverlay` puts away what is over
+// the board rather than unpicking what is inside it, so the tracker's own
+// class stays true long after the menu is gone: test it alone and the frame
+// loop walks sixteen rows forever over a panel nobody can see.
+{
+  const { engine } = window.twiddlygems;
+  const real = engine.levelGems.bind(engine);
+  let asked = 0;
+  engine.levelGems = (at) => {
+    asked += 1;
+    return real(at);
+  };
+
+  dispatch('levels-button', 'click', {});
+  pump(2);
+  assert.ok(asked > 0, 'the open picker was never looked at');
+  click(overlayButton('Close'), 'the level picker has no way out');
+  asked = 0;
+  pump(5);
+  assert.equal(asked, 0, 'a closed picker is still being walked every frame');
+  engine.levelGems = real;
+}
+
 {
   const { engine } = window.twiddlygems;
   dispatch('levels-button', 'click', {});
