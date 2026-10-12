@@ -832,6 +832,18 @@ impl Session {
             return;
         }
         self.checked.push(id);
+        // What that clear opened, where the ladder opens by clearing. A solo
+        // save carries the count beside its checks; a room sends the checks
+        // alone, because they already say it, so this is the only thing that
+        // can reopen the ladder on the way back into a multiworld.
+        //
+        // Unconditional, and `unlocked` is what decides whether it means
+        // anything: a run opening by item ignores this field entirely. Raising
+        // it only, like everywhere else, so a list arriving out of order
+        // cannot shut anything.
+        if let Location::LevelClear(at) = location {
+            self.unlocked = self.unlocked.max((at + 2).min(self.levels.len()));
+        }
         if let Some(item) = self.holds(location) {
             self.inventory.receive(item);
         }
@@ -988,6 +1000,46 @@ mod tests {
     /// `a_ladder_that_opens_by_item_does_not_open_by_clearing` and its pair.
     fn climbing(seed: u64) -> Session {
         Session::set_up(seed, Options { progressive_levels: 0, ..Options::default() })
+    }
+
+    #[test]
+    fn restored_clears_open_the_ladder_they_opened() {
+        // What a multiworld hands back on the way in: the checked locations,
+        // and nothing else. A solo save carries the unlocked count beside
+        // them and writes it with `set_unlocked`; a room has no such field and
+        // never will, because the locations already say it.
+        //
+        // So with the ladder opening by clears rather than by items, this is
+        // the only thing that can reopen it, and without it a player who had
+        // climbed to level five came back to a ladder closed at one.
+        let mut session = climbing(3);
+        session.set_remote(true);
+        assert_eq!(session.unlocked(), 1, "a fresh run starts somewhere other than the first level");
+
+        session.restore(Location::LevelClear(0).id());
+        assert_eq!(session.unlocked(), 2, "clearing the first level opened nothing");
+
+        // Out of order, the way a room's list arrives: it is a set of what has
+        // been checked rather than a history of when.
+        session.restore(Location::LevelClear(4).id());
+        session.restore(Location::LevelClear(2).id());
+        assert_eq!(session.unlocked(), 6, "the deepest clear did not open the level past it");
+
+        // And never closes anything: this only ever raises.
+        session.restore(Location::LevelClear(1).id());
+        assert_eq!(session.unlocked(), 6, "an earlier clear shut the ladder back down");
+    }
+
+    #[test]
+    fn a_run_opening_by_item_reads_none_of_that() {
+        // The other half of the same rule. Under progressive unlocks the
+        // ladder is what the run holds, so a clear restored from a room must
+        // not open a level the items have not paid for.
+        let mut session =
+            Session::set_up(3, Options { progressive_levels: 1, ..Options::default() });
+        session.set_remote(true);
+        session.restore(Location::LevelClear(4).id());
+        assert_eq!(session.unlocked(), 1, "a restored clear opened a level no item had");
     }
 
     #[test]

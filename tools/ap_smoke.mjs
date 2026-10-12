@@ -108,7 +108,14 @@ function roomInfo(checksums = {}) {
   };
 }
 
-function connected(engine, over = {}) {
+/// The server letting us in. `options` is the slot's yaml as the room sends it
+/// back, keyed the way the engine keys it.
+///
+/// `ap_gems_per_level` is read off the engine before any of those options have
+/// been applied, so the settings used here have to be ones that do not move it,
+/// or the client refuses the connection over a number this helper got wrong
+/// rather than over anything the test is about.
+function connected(engine, over = {}, options = {}) {
   return {
     cmd: 'Connected',
     team: 0,
@@ -119,7 +126,7 @@ function connected(engine, over = {}) {
     slot_data: {
       generator: engine.generator,
       levels: [],
-      options: {},
+      options,
       ap_gems_per_level: engine.gemsPerLevel,
     },
     ...over,
@@ -135,7 +142,7 @@ const ROOM = { host: 'localhost', port: 38281, slot: 'twiddly' };
  * Every socket it opens is kept, because a reconnection is a second one and
  * what the client said over which of them is the whole question in places.
  */
-async function joinARoom({ cache = new MemoryCache(), feed = [], over = {}, watching } = {}) {
+async function joinARoom({ cache = new MemoryCache(), feed = [], over = {}, options = {}, watching } = {}) {
   const engine = await loadEngine('unused', 20260920);
   const sockets = [];
   const client = new ArchipelagoClient(engine, {
@@ -149,15 +156,15 @@ async function joinARoom({ cache = new MemoryCache(), feed = [], over = {}, watc
     ...(watching ? { watching } : {}),
   });
   await client.connect(ROOM);
-  await letUsIn(client, sockets, engine, over);
+  await letUsIn(client, sockets, engine, over, options);
   return { engine, client, sockets, socket: sockets.at(-1) };
 }
 
 /** The handshake, over whichever socket the client has opened most recently. */
-async function letUsIn(client, sockets, engine, over = {}) {
+async function letUsIn(client, sockets, engine, over = {}, options = {}) {
   sockets.at(-1).deliver(roomInfo());
   await settle();
-  sockets.at(-1).deliver(connected(engine, over));
+  sockets.at(-1).deliver(connected(engine, over, options));
   await settle();
   return sockets.at(-1);
 }
@@ -508,6 +515,40 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
   assert.equal(client.retrySeconds, null, 'leaving the room left a retry counting down');
 }
 
+// ---- a ladder that opens by clearing comes back open ----------------------
+//
+// With progressive level unlock off, nothing in the item pool opens the
+// ladder: clearing a level opens the next one. A solo save writes the count
+// down beside its checks, but a room sends only `checked_locations`, because
+// those already say it. So the whole of a returning player's progress is in
+// that list, and reading it back is the only thing that reopens the ladder.
+//
+// The run that found this was one nobody had played: the default is
+// progressive on, where the unlocks arrive as items and this path is never
+// taken.
+{
+  // Level clears are the first few location ids, one per level, so these are
+  // the first three levels cleared.
+  const cleared = [0, 1, 2].map((at) => AP + at);
+  const { engine } = await joinARoom({
+    over: { checked_locations: cleared },
+    options: { progressive_levels: 0 },
+  });
+
+  assert.equal(engine.unlocked, 4, 'a returning player came back to a closed ladder');
+  assert.equal(engine.checkedCount, 3, 'the clears themselves did not come back');
+}
+
+// And the other half of the rule: under progressive unlocks the ladder is
+// what the run holds, so the same list must open nothing by itself.
+{
+  const { engine } = await joinARoom({
+    over: { checked_locations: [0, 1, 2].map((at) => AP + at) },
+    options: { progressive_levels: 1 },
+  });
+  assert.equal(engine.unlocked, 1, 'a restored clear opened a level no item had paid for');
+}
+
 // ---- a seed from another version is refused, loudly -----------------------
 
 {
@@ -594,5 +635,5 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
 console.log(
   'ap ok: handshake, datapackage cache, resync, spent items, checks sent once, ' +
     'traps spring once, spends queued while down, a hidden tab holds its retry, ' +
-    'unknown generator refused',
+    'a cleared ladder comes back open, unknown generator refused',
 );
