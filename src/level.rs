@@ -474,12 +474,22 @@ pub fn levels() -> Vec<LevelSpec> {
         // Nothing is switched off here any more: a new run simply holds none
         // of the unlocks yet, so the opener plays as plain matching on its
         // own. Come back to it later and it hands out specials like the rest.
-        // The tiers on each level are read off the bots in `make balance`,
-        // roughly the attentive bot's median at 45% and 80%. Silver is what a
-        // good run reaches; gold wants the level beaten briskly, because what
-        // fills the gap is the flourish spending the moves left over. The
-        // opener is the exception: with no unlocks there is no flourish, so
-        // its two sit just above what scraping a win pays.
+        // The tiers on each level are read off the attentive bot in
+        // `make balance -- marks`: silver is the score it reaches in 95 of
+        // every 100 levels it wins, gold in 70. Both are deliberately
+        // generous. The marks they replaced were set around 80 and 45, and
+        // the reading back was that they were grindy and turned on which
+        // board the deal happened to hand you.
+        //
+        // So silver is close to a participation reward and gold is what a good
+        // run gets rather than a lucky one. What fills the gap between them is
+        // the flourish spending the moves left over, which is why gold still
+        // means the level was beaten with something in hand.
+        //
+        // **A silver inside the reach of a run holding nothing is allowed**,
+        // on every level. It used to be the thing to avoid, on the grounds
+        // that a mark reachable bare is a location paying for nothing; a mark
+        // nobody can reach is worse, and that is what avoiding it produced.
         LevelSpec::new(
             "First Light",
             5,
@@ -487,31 +497,22 @@ pub fn levels() -> Vec<LevelSpec> {
             .with_layout(FIRST_LEVEL)
             .colors(4)
             .palette(&[0, 5, 1, 2])
-            // The one level not set to the ladder's rule, twice over.
+            // Still not set to the ladder's rule in one way: its clear is
+            // owed to nine seeds in ten where everything else owes one to
+            // half, because this is the first board anybody sees and the
+            // location every seed hangs off. Failing half of all new players
+            // on their first swipe is a bad welcome and a slow start.
             //
-            // Its clear is owed to nine seeds in ten where everything else
-            // owes one to half, because this is the first board anybody sees
-            // and the location every seed hangs off: failing half of all new
-            // players on their first swipe is a bad welcome and a slow start.
-            //
-            // Its silver is allowed to sit inside the reach of a run holding
-            // nothing, which is true of no other mark on the ladder: five
-            // moves on a narrow board has a long tail, and the opener is where
-            // a tail is worth indulging. The balance gate knows about the
-            // permission and checks only the gold here.
-            //
-            // It is not being used at the moment. Since the flourish stopped
-            // paying a bare run anything (with no unlocks there is nothing to
-            // mint, so there is no flourish at all) the bare tail fell well
-            // under the silver, and no bare run in 138 has reached it. The
-            // permission stays as a design decision rather than a measured
-            // one, and the tail is what it always was.
-            .tiers(30_000, 41_000)
+            // Its silver sits inside the reach of a run holding nothing, which
+            // is now true of several levels rather than this one alone: 20 of
+            // 573 bare wins reach it. Five moves on a narrow board has a long
+            // tail, and the opener is where a tail is worth indulging.
+            .tiers(23_000, 33_500)
             .upgrade(2),
         LevelSpec::new("Ruby Hunt", 8, vec![Objective::Color { color: 0, count: 30 }])
             .with_layout(EIGHT_BY_EIGHT)
             .colors(5)
-            .tiers(48_000, 65_500)
+            .tiers(39_000, 54_000)
             .upgrade(4),
         LevelSpec::new(
             "Two Tastes",
@@ -522,12 +523,12 @@ pub fn levels() -> Vec<LevelSpec> {
             ],
         )
         .with_layout(EIGHT_BY_EIGHT)
-        .tiers(49_500, 60_500)
+        .tiers(41_500, 54_000)
         .upgrade(9),
         // Jelly arrives: now position matters, not just volume.
         LevelSpec::new("Sticky Middle", 7, vec![Objective::Jelly])
             .with_layout(JELLY_PATCH)
-            .tiers(23_500, 33_500)
+            .tiers(16_500, 27_000)
             .upgrade(3),
         // The last level a run can be asked to clear with nothing in hand, and
         // it is the one that asks most of a bare run: bricks take two hits
@@ -535,7 +536,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // time. Hence a budget well past its neighbors'.
         LevelSpec::new("Donowall", 48, vec![Objective::Brick])
             .with_layout(BRICK_COLUMNS)
-            .tiers(135_000, 150_000)
+            .tiers(120_000, 140_000)
             .upgrade(24),
         LevelSpec::new(
             "Tetromino Torture",
@@ -553,14 +554,14 @@ pub fn levels() -> Vec<LevelSpec> {
         // Four colors and four seal colors, so every clear is on top of a
         // seal and the cascades never stop. The marks are an order up on the
         // levels either side of it for that reason and not by mistake.
-        .tiers(500_000, 650_000)
+        .tiers(415_000, 555_000)
         .upgrade(18),
         LevelSpec::new(
             "Crowded House",
             12,
             vec![Objective::Score(13_000), Objective::Color { color: 4, count: 26 }],
         )
-        .tiers(44_500, 54_000)
+        .tiers(36_000, 47_500)
         .upgrade(6),
         // Its own score objective pins where a bare win lands, so these sat on
         // top of each other until they were measured the way a mark's rule
@@ -569,19 +570,19 @@ pub fn levels() -> Vec<LevelSpec> {
         // the ladder even so.
         LevelSpec::new("Crossroads", 12, vec![Objective::Jelly, Objective::Score(12_000)])
             .with_layout(CROSS)
-            .tiers(30_500, 37_500)
+            .tiers(25_000, 33_000)
             .upgrade(6),
         LevelSpec::new("Pillars", 44, vec![Objective::Jelly])
             .with_layout(PILLARS)
-            .tiers(120_000, 130_000)
+            .tiers(100_000, 120_000)
             .upgrade(22),
         LevelSpec::new("Quarry", 23, vec![Objective::Jelly])
             .with_layout(QUARRY)
-            .tiers(66_500, 78_500)
+            .tiers(56_500, 70_500)
             .upgrade(11),
         LevelSpec::new("Landslide", 34, vec![Objective::Brick])
             .with_layout(SLOPE)
-            .tiers(88_000, 105_000)
+            .tiers(73_500, 93_500)
             .upgrade(17),
         // Four colors rather than three, and the third is not a number this
         // level can have.
@@ -600,7 +601,7 @@ pub fn levels() -> Vec<LevelSpec> {
         LevelSpec::new("Refresher", 18, vec![Objective::Seal { color: 2 } ])
             .colors(4)
             .with_layout(EMERALD_ISLES)
-            .tiers(185_000, 250_000)
+            .tiers(140_000, 200_000)
             .upgrade(9),
         LevelSpec::new(
             "Tetromino Tease",
@@ -620,7 +621,7 @@ pub fn levels() -> Vec<LevelSpec> {
         // quarter of the draw landing on each piece instead of a fifth, over
         // and over, for forty hits. The marks went up by as much as the budget
         // came down, and for the same reason.
-        .tiers(360_000, 545_000)
+        .tiers(255_000, 410_000)
         .upgrade(11),
         LevelSpec::new(
             "The Vault",
@@ -634,7 +635,7 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(VAULT)
         .palette(&[0, 1, 2, 3])
-        .tiers(270_000, 385_000)
+        .tiers(170_000, 310_000)
         .upgrade(5),
         // Asks for a rocket by name, which is what makes its budget sane.
         //
@@ -649,7 +650,7 @@ pub fn levels() -> Vec<LevelSpec> {
         LevelSpec::new("Hourglass", 20, vec![Objective::Jelly])
             .with_layout(HOURGLASS)
             .needs(Special::Rocket)
-            .tiers(65_000, 79_500)
+            .tiers(54_000, 69_500)
             .upgrade(10),
         // The top of the ladder, and the only level measured holding all five
         // specials, because it is the only one whose rule asks for all five.
@@ -668,7 +669,7 @@ pub fn levels() -> Vec<LevelSpec> {
         )
         .with_layout(GAUNTLET)
         .palette(&[0, 1, 2, 3])
-        .tiers(350_000, 515_000)
+        .tiers(255_000, 420_000)
         .upgrade(5),
     ]
 }

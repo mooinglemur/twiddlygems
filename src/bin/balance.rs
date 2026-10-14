@@ -126,6 +126,22 @@ fn main() {
         return;
     }
 
+    //     cargo run --release --bin balance -- marks [silver%] [gold%] [seeds]
+    //
+    // The same job as `tune`, for the two score marks: what number would the
+    // attentive bot, holding everything, reach in that share of the levels it
+    // wins? A mark is a decision about how often a good run should be paid,
+    // and this is the only thing that can say where to put it.
+    if args.iter().any(|arg| arg == "marks") {
+        let numbers: Vec<u64> =
+            args.iter().skip(2).filter_map(|arg| arg.parse().ok()).collect();
+        let silver = numbers.first().copied().unwrap_or(90) as usize;
+        let gold = numbers.get(1).copied().unwrap_or(50) as usize;
+        let seeds = numbers.get(2).copied().unwrap_or(150);
+        mark_curve(silver, gold, seeds);
+        return;
+    }
+
     specials_made(Bot::First, 60);
     println!();
     // The greedy bot plays every candidate move out before choosing, so it gets
@@ -242,11 +258,13 @@ fn play_counting_gems(game: &mut Game) -> u32 {
 
 /// How often each bot reaches a level's two score tiers.
 ///
-/// A reading rather than a gate, but the one to set the numbers in the ladder
-/// against. What they are aiming at: the attentive bot should reach gold most
-/// of the time, or the tier is a location nobody can check, and the floor bot
-/// should mostly miss it, or gold is what clearing the level already pays.
-/// Silver sits where a good run lands rather than a lucky one.
+/// A reading rather than a gate. What the numbers are set to: the attentive
+/// bot should reach silver in about 95 of every 100 levels it wins and gold in
+/// about 70, which is what `marks` measures and what the ladder now carries.
+///
+/// The floor bot is the half that target does not constrain, and the one to
+/// watch: if it starts reaching gold routinely then gold is what clearing the
+/// level already pays, and the tier has stopped meaning anything.
 ///
 /// Read against [`equipped`], because that is what a mark's rule asks for: a
 /// run is only expected at silver or gold once it holds the unlocks, and at
@@ -426,25 +444,96 @@ fn match_sizes(bot: Bot, seeds: u64) {
     }
 }
 
+/// What the two marks would be, at a chosen share of the attentive bot's wins.
+///
+/// A mark is a decision about how often a good run should be paid, and the
+/// number that says it is a percentile of what such a run actually scores.
+/// Picked by eye they drift apart, which is what this is for: the ladder has
+/// carried a gold that was its own level's median and silvers a bot taking the
+/// first move it found reached half the time.
+///
+/// Read against the attentive bot holding everything, because that is what a
+/// mark's rule asks for. The bare column is a reading rather than a fault: a
+/// silver inside a bare run's reach is allowed on every level now, and a mark
+/// only a lucky run reaches is the worse answer of the two.
+fn mark_curve(silver_reach: usize, gold_reach: usize, seeds: u64) {
+    println!(
+        "what the marks would be, silver at {silver_reach}% of wins and gold at {gold_reach}% \
+         ({seeds} seeds per level, attentive bot holding everything)"
+    );
+    println!(
+        "{:<18} {:>8} {:>8} {:>8} {:>8} {:>8}   {:>8} {:>8}   {:>8} {:>8}   {}",
+        "level", "90%", "75%", "50%", "25%", "10%",
+        "silver", "now", "gold", "now", "bare wins inside silver",
+    );
+
+    let empty_handed = bare();
+    for (index, spec) in equipped().into_iter().enumerate() {
+        let mut full: Vec<u64> = Vec::new();
+        let mut nothing: Vec<u64> = Vec::new();
+        for seed in 0..seeds {
+            let seed = seed_for(spec.name, seed);
+            let game = play(&spec, seed, Bot::Greedy);
+            if game.status() == Status::Won {
+                full.push(game.progress.score);
+            }
+            let game = play(&empty_handed[index], seed, Bot::Greedy);
+            if game.status() == Status::Won {
+                nothing.push(game.progress.score);
+            }
+        }
+        full.sort_unstable();
+
+        // Reached by `share` of the wins is the score that far down from the
+        // top, which is the (100 - share) percentile.
+        let at = |share: usize| -> Option<u64> {
+            if full.is_empty() {
+                return None;
+            }
+            Some(full[(full.len() - 1) * (100 - share.min(100)) / 100])
+        };
+        let show = |mark: Option<u64>| mark.map_or("-".to_string(), |n| n.to_string());
+        let silver = at(silver_reach).map(round_mark);
+        let gold = at(gold_reach).map(round_mark);
+        let inside = silver.map_or(0, |mark| nothing.iter().filter(|s| **s >= mark).count());
+
+        println!(
+            "{:<18} {:>8} {:>8} {:>8} {:>8} {:>8}   {:>8} {:>8}   {:>8} {:>8}   {} of {}",
+            spec.name,
+            show(at(90)),
+            show(at(75)),
+            show(at(50)),
+            show(at(25)),
+            show(at(10)),
+            show(silver),
+            spec.silver,
+            show(gold),
+            spec.gold,
+            inside,
+            nothing.len(),
+        );
+    }
+}
+
 /// What a score mark has to clear, which is the table its numbers are set off.
 ///
-/// Both ends of the same level, side by side. A mark is meant to be something
-/// a well supplied run chases, and the rules say as much: silver and gold both
-/// ask for all five unlocks, because nearly all of a good score comes from the
-/// flourish and a run holding nothing has nothing to mint. So a mark below
-/// what a bare run scores anyway is a location that pays for nothing, and it
-/// makes the rule a lie as well: logic promises the unlocks are needed.
+/// Both ends of the same level, side by side, so where a mark sits against
+/// each can be read rather than guessed. The numbers themselves come from
+/// `marks`, which asks the other question: not whether these hold but what
+/// they should be.
 ///
-/// Read it by putting silver above the bare column and gold well above it,
-/// then checking both sit inside the full column often enough to be worth
-/// chasing. Only wins count, since a level that was not cleared has no tier.
+/// **A silver inside the bare column is allowed**, on every level. It used to
+/// be the fault this table existed to find, on the grounds that a mark a bare
+/// run reaches is a location paying for nothing. What avoiding it produced was
+/// a ladder players called grindy and luck-dependent, so the rule went: a mark
+/// nobody can reach is the worse of the two.
 ///
-/// **The last column is a gate on the opening level**, and a reading for the
-/// rest. First Light is the one level designed rather than bracketed so far,
-/// and its marks are meant to be out of reach without specials: a bare run
-/// reaching one there is the failure this exists to catch. The rest of the
-/// ladder is placeholder and reaches its own marks bare all day, which is
-/// what the column says. Widen the gate as levels are redesigned.
+/// Only wins count, since a level that was not cleared has no tier.
+///
+/// **The last column is still a gate on the opening level's gold.** First
+/// Light is the one level designed rather than bracketed, and its gold is
+/// meant to be out of reach without specials: a bare run reaching it is a
+/// failure worth stopping the build for. Nothing else is gated.
 fn marks(seeds: u64) -> bool {
     println!("what a score mark has to clear ({seeds} seeds per level)");
     println!(
