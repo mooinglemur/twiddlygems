@@ -2690,6 +2690,77 @@ let flightFrames = 0;
   // fire on time for them to.
   ctx.currentTime += 5;
   assert.ok(burst.play('pop', { delay: 0 }), 'the voices never came back after the sound ended');
+
+  // And the gate the fast forward runs behind. At eight times the speed most
+  // of the bank is wrong rather than merely loud, so the ones worth keeping
+  // are named and the rest are refused where every other refusal already
+  // happens.
+  ctx.currentTime += 5;
+  burst.only = new Set(['boom']);
+  assert.ok(!burst.play('pop', { delay: 0 }), 'a sound off the list played anyway');
+  assert.ok(burst.play('boom', { delay: 0 }), 'a sound on the list was refused');
+  burst.only = null;
+  assert.ok(burst.play('pop', { delay: 0 }), 'clearing the list left the bank gated');
+}
+
+/// How long the same flourish took with and without the fast forward, for the
+/// line at the end: the whole point of it is a number of frames.
+let flourish = null;
+
+// ---- winding the flourish out ----------------------------------------------
+//
+// A level with a full counter left over spends it one move per 300ms, which is
+// several seconds of board before the result can be read. The fast forward is
+// offered for exactly that stretch and runs the same steps faster, so the
+// board animates through it rather than jumping to the end.
+{
+  const { Status } = await import(path.resolve('web/js/engine.js'));
+  const { audio, engine } = window.twiddlygems;
+  const button = elements.get('fast-forward');
+
+  const toRest = (wind) => {
+    // Through the button, which is what also puts the level back to playing
+    // and the hud back to uncleared.
+    dispatch('retry-button', 'click', {});
+    engine.setMoves(40);
+    pump(1);
+    assert.ok(
+      button.classList.contains('hidden'),
+      'the fast forward was offered while there was still a level to play',
+    );
+
+    engine.forceClear();
+    pump(1);
+    assert.ok(!button.classList.contains('hidden'), 'the goals were met and nothing was offered');
+    if (wind) {
+      dispatch('fast-forward', 'click', {});
+      assert.ok(button.classList.contains('hidden'), 'the button stayed up after it was pressed');
+      assert.ok(audio.only?.has('fanfare'), 'winding kept none of the sounds that mark a moment');
+      assert.ok(!audio.only?.has('pop'), 'winding kept the per-cell chatter');
+    }
+
+    let frames = 0;
+    while (engine.status === Status.PLAYING && frames < 4_000) {
+      pump(1);
+      frames += 1;
+    }
+    assert.ok(frames < 4_000, 'the board never came to rest');
+    assert.equal(audio.only, null, 'the bank was left gated after the level was over');
+    assert.ok(button.classList.contains('hidden'), 'the offer outlived the flourish');
+    return frames;
+  };
+
+  const spent = toRest(false);
+  const wound = toRest(true);
+  assert.ok(spent > 40, `a flourish of ${spent} frames is too short to prove anything`);
+  // Eight steps a frame rather than one, so the whole of it costs about an
+  // eighth of the frames. Loosely, because the board decides how much of it
+  // is cascade and a step that finishes one phase starts the next.
+  assert.ok(
+    wound * 3 < spent,
+    `winding took ${wound} frames against ${spent} for the same flourish`,
+  );
+  flourish = { spent, wound };
 }
 
 // ---- the level picker, while it is open ------------------------------------
@@ -2866,5 +2937,6 @@ console.log(
     `${calls.stroke} strokes, ${objectives.children.length} objective chips, ` +
     `${list.children.length} levels listed, ` +
     `a spent rocket turned over ${flightFrames} frames, ` +
+    `a flourish of ${flourish.spent} frames wound out in ${flourish.wound}, ` +
     `a swipe scored and spent a move (${scoreBefore} -> played -> reset)`,
 );

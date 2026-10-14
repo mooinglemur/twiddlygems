@@ -56,6 +56,15 @@ export class Audio {
     this.master = null;
     this.noise = null;
     this.enabled = true;
+    /// The only sounds that may play, or null for all of them.
+    ///
+    /// For running the board faster than real time, where most of the bank is
+    /// wrong rather than merely loud: the chatter is one sound per cell and
+    /// arrives as a wall, the clear chime climbs a progression that means
+    /// nothing at speed, and anything whose length is handed to it in game
+    /// milliseconds, like a rocket's whistle, plays for its full flight while
+    /// the flight itself takes an eighth as long.
+    this.only = null;
     /// How loud, 0 to 1, as a fraction of [`FULL_GAIN`].
     ///
     /// Kept apart from `enabled` so that muting and unmuting comes back to the
@@ -183,7 +192,7 @@ export class Audio {
     name,
     { delay = 0, pan = 0, gain = 1, detune = 0, note = null, duration = null, stage = 0 } = {},
   ) {
-    if (!this.enabled || !this.ready) {
+    if (!this.enabled || !this.ready || (this.only !== null && !this.only.has(name))) {
       return false;
     }
     const sound = this.sounds[name];

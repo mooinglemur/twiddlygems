@@ -45,6 +45,13 @@
          under it still lands. The countdown is kept out of the live region:
          it changes every second, and announcing that every second would make
          the game unusable with a screen reader. -->
+    <!-- Winds the flourish out at speed. Over the board rather than in the
+         bar below it: it belongs to this one moment in a level, and the bar
+         is already full enough to need an overflow button on a narrow phone.
+         Nothing can be swapped while a level is being spent, so there is no
+         tap here that the board wanted. -->
+    <button id="fast-forward" class="hidden" type="button">&#9193; Fast forward</button>
+
     <div id="link" class="hidden">
       <!-- Set tight against each other: whitespace between them would render
            as a space on top of the one the countdown already carries. -->

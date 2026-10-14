@@ -212,6 +212,7 @@ const dom = {
   volume: document.getElementById('volume'),
   volumeMute: document.getElementById('volume-mute'),
   volumeSlider: document.getElementById('volume-slider'),
+  fastForward: document.getElementById('fast-forward'),
 };
 
 /** The last room joined, so the form opens mostly filled in. */
@@ -261,6 +262,21 @@ function canBuzz() {
  * feel like a vibration would be a nuisance within one level.
  */
 const BUZZ_MS = 12;
+
+/// How many extra steps a frame takes while the flourish is being wound out,
+/// so the board runs at eight times its own speed.
+///
+/// Steps rather than a bigger `dt`: the engine clamps what it will advance in
+/// one call to a quarter of a second, which is what stops a backgrounded tab
+/// coming back and spending a whole level in a frame. Stepping is also what
+/// keeps the animation an animation, since the board is drawn once a frame
+/// however fast its clock is running.
+const FAST_FORWARD_STEPS = 7;
+
+/// What still plays while it winds. Most of the bank is wrong at speed rather
+/// than merely loud, and the two kept here are the ones that mark a moment
+/// instead of a cell. See `Audio.only`.
+const FAST_FORWARD_SOUNDS = new Set(['fanfare', 'boom']);
 
 /// What the settings are and what they default to, for somebody who has never
 /// opened the menu.
@@ -886,6 +902,11 @@ async function boot() {
   /// the same thing touches nothing. See `showLink`.
   let linkSaid = '';
 
+  /// Whether the flourish is being wound out, and whether the button that
+  /// does it is on screen. See `showFastForward`.
+  let fastForward = false;
+  let ffOffered = false;
+
   /**
    * The connection to a multiworld, made once and kept for the page's life.
    *
@@ -1100,6 +1121,24 @@ async function boot() {
     }
     linkSaid = said;
     hud.showLink(now.text, now);
+  };
+
+  /**
+   * Offers the fast forward, or takes the offer away.
+   *
+   * From the moment the goals are met until the level is over, which is
+   * exactly the stretch it can wind: before that there is a level to play,
+   * and after it the board is already at rest. Taken away once it has been
+   * pressed, because it has nothing left to say and a control that does
+   * nothing is worse than no control.
+   */
+  const showFastForward = () => {
+    const offer = hud.cleared && !fastForward && engine.status === Status.PLAYING;
+    if (offer === ffOffered) {
+      return;
+    }
+    ffOffered = offer;
+    dom.fastForward.classList.toggle('hidden', !offer);
   };
 
   /// Puts it away, for leaving the room: nothing about a connection is worth
@@ -1522,6 +1561,14 @@ async function boot() {
     showTitle();
   });
 
+  dom.fastForward.addEventListener('click', () => {
+    fastForward = true;
+    audio.only = FAST_FORWARD_SOUNDS;
+    // Away at once rather than on the next frame, so the press and the thing
+    // it did land together.
+    showFastForward();
+  });
+
   dom.retryButton.addEventListener('click', () => {
     engine.retry();
     onLevelChanged();
@@ -1556,6 +1603,27 @@ async function boot() {
 
     engine.update(dt);
     consume(now);
+
+    // Winding the flourish out: the same step again, several times in the one
+    // frame. Each is drained before the next, because `update` clears the
+    // events it raised and a step nobody drained is a step nobody heard: the
+    // pops, the motes and the checks it made would all go with it.
+    if (fastForward) {
+      for (let step = 0; step < FAST_FORWARD_STEPS && engine.status === Status.PLAYING; step += 1) {
+        engine.update(dt);
+        consume(now);
+      }
+    }
+
+    // Over, or a different level entirely: either way there is nothing left to
+    // wind, and the bank comes back for whatever happens next. Read off the
+    // run rather than hooked onto the ends of the paths that get here, of
+    // which a level has several.
+    if (fastForward && (!hud.cleared || engine.status !== Status.PLAYING)) {
+      fastForward = false;
+      audio.only = null;
+    }
+    showFastForward();
 
     // What this frame checked, if anything, and whether the run is over. Both
     // are a number compared against a number on a frame where nothing
