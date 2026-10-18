@@ -216,15 +216,18 @@ function uuid() {
  * someone is running on their own machine is usually the other one, so both get
  * tried before giving up. A player who types a scheme themselves is taken at
  * their word.
+ *
+ * `port` is for a caller holding one separately, which the test harnesses do.
+ * The page has one field and the port is typed into it.
  */
 export function addressesFor(host, port) {
   const typed = String(host).trim().replace(/\/+$/, '');
   const scheme = /^(wss?):\/\//i.exec(typed);
   const bare = scheme ? typed.slice(scheme[0].length) : typed;
-  // A port in the address itself wins over the box beside it. "host:38281" is
-  // how a room gets shared and pasted, and taking the other box as well would
-  // turn that into a host on some other port, which fails in a way that reads
-  // as the room being down.
+  // A port in the address itself wins over one passed alongside it. "host:38281"
+  // is how a room gets shared and pasted, and appending the other would turn
+  // that into a host on some other port, which fails in a way that reads as
+  // the room being down.
   const where = /:\d+$/.test(bare) || !port ? bare : `${bare}:${port}`;
   if (scheme) {
     return [`${scheme[1].toLowerCase()}://${where}`];

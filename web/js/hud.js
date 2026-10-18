@@ -1189,7 +1189,6 @@ export class Hud {
   showConnect(remembered = {}) {
     const { dom } = this;
     dom.connectHost.value = remembered.host ?? '';
-    dom.connectPort.value = remembered.port ?? '';
     dom.connectSlot.value = remembered.slot ?? '';
     // Deliberately not remembered, and deliberately emptied rather than left
     // holding whatever was typed last time.
@@ -1219,9 +1218,9 @@ export class Hud {
   /** What the player typed, for handing to the client. */
   connectDetails() {
     const { dom } = this;
+    // The address carries its own port, so there is no second field to read.
     return {
       host: dom.connectHost.value.trim(),
-      port: dom.connectPort.value.trim(),
       slot: dom.connectSlot.value.trim(),
       password: dom.connectPassword.value,
     };

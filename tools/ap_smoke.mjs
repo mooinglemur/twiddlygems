@@ -180,12 +180,17 @@ assert.deepEqual(
   ['ws://localhost:38281'],
   'a typed scheme is taken at its word rather than tried both ways',
 );
-// The shape a room actually gets shared in, pasted whole into the first box
-// while the port box still holds its default.
+// The shape a room actually gets shared in, which is the whole of what the
+// page asks for now: one field holding an address with its port on it.
 assert.deepEqual(
   addressesFor('archipelago.gg:45678', '38281'),
   ['wss://archipelago.gg:45678', 'ws://archipelago.gg:45678'],
-  'a port typed into the address lost to the one in the other box',
+  'a port typed into the address lost to one passed alongside it',
+);
+assert.deepEqual(
+  addressesFor('archipelago.gg:45678'),
+  ['wss://archipelago.gg:45678', 'ws://archipelago.gg:45678'],
+  'an address carrying its own port needs a second argument to be understood',
 );
 assert.deepEqual(addressesFor('archipelago.gg/', ''), [
   'wss://archipelago.gg',

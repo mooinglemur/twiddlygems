@@ -398,6 +398,25 @@ function overlayButton(label) {
     'nothing is wired to the Archipelago button',
   );
 
+  // A room remembered from the screen that had a field for the port comes back
+  // as one address, because there is one field now. Joined rather than
+  // dropped: the port is the half nobody remembers, and a form that opened
+  // holding only the host would look filled in and fail.
+  store.set('twiddlygems.ap.room.v1', JSON.stringify({
+    host: 'archipelago.gg',
+    port: '45678',
+    slot: 'twiddly',
+  }));
+  dispatch('archipelago-button', 'click');
+  assert.equal(
+    elements.get('connect-host').value,
+    'archipelago.gg:45678',
+    'a room remembered as a host and a port did not come back as one address',
+  );
+  assert.equal(elements.get('connect-slot').value, 'twiddly', 'the remembered slot was lost');
+  store.delete('twiddlygems.ap.room.v1');
+  dispatch('connect-back', 'click');
+
   dispatch('archipelago-button', 'click');
   assert.ok(
     !elements.get('connect').classList.contains('hidden'),

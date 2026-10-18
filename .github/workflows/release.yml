@@ -183,6 +183,6 @@ jobs:
             ## Connecting
 
             Open <https://gems.browsergam.ing/>, choose Archipelago on the title
-            screen, and give it the server, port and slot name. The run is kept
-            on the server rather than in the browser, so you can pick it up on
-            another device.
+            screen, and give it the room's address and your slot name. The run is
+            kept on the server rather than in the browser, so you can pick it up
+            on another device.

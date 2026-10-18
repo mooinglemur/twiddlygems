@@ -195,7 +195,6 @@ const dom = {
   connect: document.getElementById('connect'),
   connectForm: document.getElementById('connect-form'),
   connectHost: document.getElementById('connect-host'),
-  connectPort: document.getElementById('connect-port'),
   connectSlot: document.getElementById('connect-slot'),
   connectPassword: document.getElementById('connect-password'),
   connectStatus: document.getElementById('connect-status'),
@@ -215,24 +214,36 @@ const dom = {
   fastForward: document.getElementById('fast-forward'),
 };
 
-/** The last room joined, so the form opens mostly filled in. */
+/**
+ * The last room joined, so the form opens mostly filled in.
+ *
+ * A room remembered when the screen had a port of its own comes back as one
+ * address, which is the shape the single field takes. Joined rather than
+ * dropped: the port is the half of an address nobody remembers, and a form
+ * that opened holding the other half would look filled in and fail.
+ */
 function readRoom() {
   try {
     const raw = window.localStorage.getItem(ROOM_KEY);
     const room = raw ? JSON.parse(raw) : {};
-    return room && typeof room === 'object' ? room : {};
+    if (!room || typeof room !== 'object') {
+      return {};
+    }
+    const { host = '', port, slot } = room;
+    const whole = port && !/:\d+$/.test(host) ? `${host}:${port}` : host;
+    return { host: whole, slot };
   } catch (error) {
     console.warn('could not read the last room', error);
     return {};
   }
 }
 
-function writeRoom({ host, port, slot }) {
+function writeRoom({ host, slot }) {
   try {
     // No password. It is the one thing here worth keeping out of a store that
     // any script on this origin can read, and it is also the one thing short
     // enough to type again.
-    window.localStorage.setItem(ROOM_KEY, JSON.stringify({ host, port, slot }));
+    window.localStorage.setItem(ROOM_KEY, JSON.stringify({ host, slot }));
   } catch (error) {
     console.warn('could not remember the room', error);
   }

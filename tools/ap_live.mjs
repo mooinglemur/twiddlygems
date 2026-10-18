@@ -157,7 +157,10 @@ try {
   lastStates = () => states;
   clients.push(client);
 
-  await client.connect({ host: '127.0.0.1', port: PORT, slot: SLOT });
+  // One address with the port on it, which is what the page's single field
+  // hands over. The reconnection below passes the two separately, which is
+  // the other way in and the one a harness holding a number would take.
+  await client.connect({ host: `127.0.0.1:${PORT}`, slot: SLOT });
   await waitFor('the server to let us in', () => client.state === State.PLAYING);
 
   // The datapackage came off the wire and was turned over into names. Ours is

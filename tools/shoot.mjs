@@ -241,7 +241,7 @@ for (const [name, metrics] of [
   // under a multiworld the settings come from the room. Shot with something
   // in the boxes, because an empty form is a picture of placeholder text.
   await evaluate(
-    `window.twiddlygems.hud.showConnect({ host: 'archipelago.gg', port: '38281', slot: 'twiddly' })`,
+    `window.twiddlygems.hud.showConnect({ host: 'archipelago.gg:38281', slot: 'twiddly' })`,
   );
   await sleep(200);
   await shoot(`${name}-02-connect`);

@@ -123,10 +123,10 @@ it works on a phone.
 
 ## The Archipelago apworld
 
-The apworld holds no logic. What the items are, where they can be found and
-what each place asks for are settled in [`src/progression.rs`](src/progression.rs),
-because the solo game plays by them too and one game answering a question two
-ways is the bug this arrangement exists to prevent. `cargo run --bin apworld`
+The code in the apworld holds no logic. What the items are, where they can be
+found and what each place asks for are settled in
+[`src/progression.rs`](src/progression.rs). The solo game plays by the same rules
+so the logic is held in one authoritative location. `cargo run --bin apworld`
 writes them out as data; the Python package reads that file, hangs every
 location off one region, and adds nothing. None of it is checked in, so there
 is no second copy to go stale.
@@ -162,21 +162,25 @@ release stays playable.
 checkout, so the version in its header is the one the world was packaged with.
 
 A yaml can name a whole family of locations at once, wherever Archipelago
-takes a list of them (`exclude_locations`, `priority_locations` and the rest):
+takes a list of them (`exclude_locations`, `priority_locations` and the rest).
+
+This example snippet excludes the Gold clears from having anything but filler
+or traps, and names the rest of the available named location groups in the
+comments.
 
 ```yaml
 exclude_locations:
-  - All AP Gems        # the gems that fall on the board, ten per level
-  - All Level Clears   # clearing each of the sixteen levels
-  - All Silver Clears  # and clearing it past its silver mark
+# - All AP Gems        # the gems that fall on the board, maximum of ten per level
+# - All Level Clears   # clearing each of the sixteen levels
+# - All Silver Clears  # and clearing it past its silver mark
   - All Gold Clears    # and past its gold one
-  - All Chain Counts   # one clear setting off the next, 2 deep to 12
-  - All Match Counts   # lining up exactly 3, 4, 5 or 6 gems in one move
+# - All Chain Counts   # one clear setting off the next, 2 through 12
+# - All Match Counts   # lining up exactly 3, 4, 5 or 6 gems in one move
 ```
 
 **To play a slot**, open [gems.browsergam.ing](https://gems.browsergam.ing/),
-pick Archipelago on the title screen and give it the server, port and slot
-name. The run is the room's from then on: it deals its progression from the
+pick Archipelago on the title screen and give it the room's address and your
+slot name. The run is the room's from then on: it deals its progression from the
 seed, pays its checks to the room, and keeps playing through a disconnection,
 saying so over the board until it is back.
 
