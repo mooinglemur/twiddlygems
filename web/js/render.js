@@ -1087,7 +1087,7 @@ export class Renderer {
       const cracked = (flags & Flag.CRACKED) !== 0;
       if (flags & Flag.SEAL) {
         const gem = PALETTE[cells[i * 4] % PALETTE.length];
-        drawSeal(ctx, x, y, side, gem.fill, gem.edge, cracked);
+        drawSeal(ctx, x, y, side, gem, cracked);
       } else {
         drawBrick(ctx, x, y, side, cracked);
       }
@@ -1456,7 +1456,7 @@ export function paintGoalIcon(canvas, goal, size) {
   const gem = PALETTE[goal.color % PALETTE.length];
 
   if (goal.kind === ObjectiveKind.SEAL) {
-    drawSeal(ctx, side * 0.06, side * 0.06, side * 0.88, gem.fill, gem.edge, false);
+    drawSeal(ctx, side * 0.06, side * 0.06, side * 0.88, gem, false);
   } else if (goal.kind === ObjectiveKind.BRICK) {
     drawBrick(ctx, side * 0.06, side * 0.06, side * 0.88, false);
   } else if (goal.kind === ObjectiveKind.JELLY) {
@@ -1753,34 +1753,53 @@ function drawJelly(ctx, x, y, size, doubled) {
  * breaks it.
  *
  * Wearing that color is the whole point, so it is a plain rounded square in the
- * gem's own fill with rings drawn inside it, rather than anything shaped. The
- * rings are what separate it from the gem of the same color at a glance: gems
- * are silhouettes, this is a box with something locked in it.
+ * gem's own fill rather than anything shaped: gems are silhouettes, this is a
+ * box with something locked in it.
  *
- * Cracked, the rings break open down one side and a fracture runs across, so
- * "one more of this color" reads without having to count rings.
+ * What is locked in it is that gem's own silhouette, scored into the middle, so
+ * which color opens a seal reads from its shape and not from its color alone.
+ * Carved rather than raised, which is the one thing keeping it from looking
+ * like a gem sitting in a box: the shadow lies along the top inner edge and the
+ * light along the bottom, the opposite way round from everything else on the
+ * board.
+ *
+ * Cracked, the scoring fades back and a fracture runs across, so "one more of
+ * this color" reads at a glance.
  */
-function drawSeal(ctx, x, y, size, fill, edge, cracked) {
+function drawSeal(ctx, x, y, size, gem, cracked) {
   const radius = size * 0.16;
   ctx.save();
   roundRect(ctx, x, y, size, size, radius);
   ctx.clip();
-  ctx.fillStyle = fill;
+  ctx.fillStyle = gem.fill;
   ctx.fillRect(x, y, size, size);
   ctx.fillStyle = 'rgba(255,255,255,0.12)';
   ctx.fillRect(x, y, size, size * 0.3);
   ctx.fillStyle = 'rgba(0,0,0,0.2)';
   ctx.fillRect(x, y + size * 0.8, size, size * 0.2);
 
-  // Rings, drawn from the outside in and fading as they go, so the middle
-  // reads as depth rather than as a target.
-  ctx.lineWidth = Math.max(1, size * 0.045);
-  for (const [inset, alpha] of [[0.16, 0.5], [0.28, 0.34], [0.4, 0.2]]) {
-    ctx.strokeStyle = `rgba(255,255,255,${cracked ? alpha * 0.45 : alpha})`;
-    const pad = size * inset;
-    roundRect(ctx, x + pad, y + pad, size - pad * 2, size - pad * 2, radius * (1 - inset));
+  const middle = x + size / 2;
+  const center = y + size / 2;
+  const reach = size * 0.3;
+  const relief = Math.max(1, size * 0.05);
+  ctx.save();
+  shapePath(ctx, gem.shape, middle, center, reach);
+  ctx.fillStyle = `rgba(16,10,26,${cracked ? 0.2 : 0.26})`;
+  ctx.fill();
+  // The two walls of the cut, drawn as the silhouette's own outline offset and
+  // clipped to its inside, so each one lands as a crescent along one edge.
+  // Offsetting a shape moves the band it shows to the opposite side.
+  ctx.clip();
+  ctx.lineWidth = relief * 2;
+  for (const [away, color] of [
+    [1, `rgba(16,10,26,${cracked ? 0.26 : 0.34})`],
+    [-1, `rgba(255,255,255,${cracked ? 0.3 : 0.4})`],
+  ]) {
+    shapePath(ctx, gem.shape, middle + relief * away, center + relief * away, reach);
+    ctx.strokeStyle = color;
     ctx.stroke();
   }
+  ctx.restore();
 
   if (cracked) {
     ctx.strokeStyle = 'rgba(16,10,26,0.85)';
@@ -1795,7 +1814,7 @@ function drawSeal(ctx, x, y, size, fill, edge, cracked) {
   }
   ctx.restore();
 
-  ctx.strokeStyle = edge;
+  ctx.strokeStyle = gem.edge;
   ctx.lineWidth = Math.max(1, size * 0.06);
   roundRect(ctx, x, y, size, size, radius);
   ctx.stroke();

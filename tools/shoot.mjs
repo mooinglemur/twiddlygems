@@ -28,11 +28,6 @@ const OUT = process.argv[2] ?? 'shots';
 const BROWSER = process.env.BROWSER ?? 'google-chrome-stable';
 const PORT = Number(process.env.SHOT_PORT ?? 8099);
 const DEBUG_PORT = Number(process.env.SHOT_DEBUG_PORT ?? 9333);
-// Which level to photograph. Not the opening one: First Light is a three move
-// puzzle that has to be solved rather than swiped at, and the shots below play
-// a level out by following hints, which is no way to solve a puzzle. The
-// second level is an ordinary board with room on it, which is what most of the
-// game looks like.
 // Which level the shots are taken on.
 //
 // Pillars rather than one of the early ones, and it is a practical choice

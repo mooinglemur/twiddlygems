@@ -2231,6 +2231,28 @@ click(overlayButton('Close'), 'the level picker has no way out');
     'a broken seal paid a goal for a color it was not',
   );
 
+  // Which color opens a seal is said by its shape as well as by its color: the
+  // matching gem's own silhouette is scored into the middle of it. A board of
+  // seals is otherwise unreadable to a player who cannot separate the colors,
+  // and this level is four colors of seal and nothing else.
+  {
+    const { paintGoalIcon } = await import(path.resolve('web/js/render.js'));
+    const sealArt = (color) => {
+      const art = document.createElement('canvas');
+      const tally = {};
+      art.getContext = () => stubContext(tally);
+      paintGoalIcon(art, { kind: ObjectiveKind.SEAL, color }, 22);
+      return tally;
+    };
+    // A triangle against a circle: one is traced corner by corner and the
+    // other is an arc, so two seals carrying their own shape cannot come out
+    // of the same calls.
+    const triangle = sealArt(0);
+    const circle = sealArt(3);
+    assert.ok(triangle.fill > 0, 'a seal icon painted nothing at all');
+    assert.notDeepEqual(triangle, circle, 'two colors of seal are painted exactly alike');
+  }
+
   // A goal already met takes nothing more: it is done, and a stream still
   // running into it would say that clearing more of that color was worth
   // something, which is the one thing it is not.
