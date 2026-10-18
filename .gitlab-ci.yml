@@ -190,6 +190,10 @@ test-archipelago:
   variables:
     CARGO_HOME: $CI_PROJECT_DIR/.cargo
     EXTRA_PACKAGES: python3-venv git
+    # The whole history rather than the usual shallow clone: `make ap-compat`
+    # builds each released world out of its own tag, and a shallow clone has
+    # no tags older than its depth.
+    GIT_DEPTH: "0"
     KUBERNETES_CPU_REQUEST: "4"
     KUBERNETES_CPU_LIMIT: "4"
     KUBERNETES_MEMORY_REQUEST: "2Gi"
@@ -205,11 +209,17 @@ test-archipelago:
     # .apworld has no directory to read a data file out of.
     - make apworld-install
     - make ap-live
+    # And the same against a seed an older world rolled, which is the only
+    # check for a room already in flight: a player's multiworld was generated
+    # by whatever version was current that day, and their browser loads this
+    # build. The versions are `COMPAT_TAGS` in the Makefile.
+    - make ap-compat
   artifacts:
     when: on_failure
     expire_in: 1 week
     paths:
       - build/ap/
+      - build/compat/
 
 # ---- image stage ----
 

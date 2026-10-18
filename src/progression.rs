@@ -1125,6 +1125,31 @@ pub fn location_name(location: Location) -> String {
     }
 }
 
+/// The group a location belongs to, which is the shorthand a yaml names it by.
+///
+/// Archipelago takes a group name anywhere it takes a list of locations, so
+/// `exclude_locations: [All AP Gems]` is the whole of that family rather than
+/// a hundred and sixty lines. One group per kind of location, which is the
+/// division players think in.
+///
+/// Said here rather than matched on the names in Python, for the same reason
+/// [`is_mark`] is: the names are for players and may be reworded, and a rule
+/// reading them would break quietly when one was.
+///
+/// These names are published in the datapackage and typed into people's yamls,
+/// so renaming one breaks every yaml naming it. Treat them like a setting key:
+/// append freely, reword nothing.
+pub fn location_group(location: Location) -> &'static str {
+    match location {
+        Location::LevelClear(_) => "All Level Clears",
+        Location::LevelSilver(_) => "All Silver Clears",
+        Location::LevelGold(_) => "All Gold Clears",
+        Location::Chain(_) => "All Chain Counts",
+        Location::Match(_) => "All Match Counts",
+        Location::ApGem { .. } => "All AP Gems",
+    }
+}
+
 /// Every location the game knows of, which is the list that becomes
 /// Archipelago's location name table.
 ///
@@ -3416,6 +3441,38 @@ mod tests {
         // cleanly on purpose: how long the ladder is is not this function's
         // business. `Session::receive_id` is where it gets refused.
         assert_eq!(Item::from_id(MOVES_ID_BASE + 500), Some(Item::Moves { level: 500 }));
+    }
+
+    #[test]
+    fn every_location_is_in_one_of_the_published_groups() {
+        // The shorthand a yaml names a family of locations by, which is
+        // frozen for the same reason the names themselves are: rewording one
+        // breaks every yaml naming it, and Archipelago refuses the seed over
+        // the unknown name rather than ignoring the line.
+        let published =
+            ["All Level Clears", "All Silver Clears", "All Gold Clears", "All Chain Counts",
+             "All Match Counts", "All AP Gems"];
+        for (at, group) in [
+            (Location::LevelClear(0), "All Level Clears"),
+            (Location::LevelSilver(0), "All Silver Clears"),
+            (Location::LevelGold(0), "All Gold Clears"),
+            (Location::Chain(SHORTEST_CHAIN), "All Chain Counts"),
+            (Location::Match(SHORTEST_MATCH), "All Match Counts"),
+            (Location::ApGem { level: 0, index: 0 }, "All AP Gems"),
+        ] {
+            assert_eq!(location_group(at), group, "{} changed group", location_name(at));
+        }
+        // And nothing is in a group nobody has published, which is what a new
+        // kind of location would be if it were given one of its own and the
+        // list above were left alone.
+        for at in locations(50) {
+            assert!(
+                published.contains(&location_group(at)),
+                "{} is in {}, which no yaml has been told about",
+                location_name(at),
+                location_group(at),
+            );
+        }
     }
 
     #[test]

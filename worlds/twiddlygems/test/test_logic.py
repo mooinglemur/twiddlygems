@@ -1,9 +1,10 @@
 """What the rules promise, asked of Archipelago's own state machine."""
 
-from BaseClasses import CollectionState, LocationProgressType
+from BaseClasses import CollectionState, LocationProgressType, PlandoOptions
+from Options import ExcludeLocations
 
 from . import TwiddlyGemsTestBase
-from .. import GAME_DATA, ITEMS_BY_NAME, LOCATIONS, SETTINGS
+from .. import GAME_DATA, ITEMS_BY_NAME, LOCATION_GROUPS, LOCATIONS, SETTINGS
 
 
 LEVELS = GAME_DATA["levels"]
@@ -875,3 +876,50 @@ class TestEveryLeftoverIsATrap(TwiddlyGemsTestBase):
         for item in mine:
             if item.name in TRAPS:
                 self.assertTrue(item.trap, f"{item.name} is not classified as a trap")
+
+
+class TestTheLocationGroups(TwiddlyGemsTestBase):
+    """The shorthand a yaml names a whole family of locations by."""
+
+    options: dict = {}
+
+    def test_the_published_names_are_these_six(self) -> None:
+        # Pinned rather than counted. These go in the datapackage and into
+        # people's yamls, so rewording one breaks every yaml that names it:
+        # Archipelago takes the old name for a location it does not have and
+        # refuses the whole seed over it.
+        self.assertEqual(
+            set(LOCATION_GROUPS),
+            {
+                "All Level Clears",
+                "All Silver Clears",
+                "All Gold Clears",
+                "All Chain Counts",
+                "All Match Counts",
+                "All AP Gems",
+            },
+        )
+
+    def test_every_location_is_in_one_of_them(self) -> None:
+        # A location in no group is one a yaml can only name in full, which is
+        # the thing these exist to spare. One membership each, so the sizes
+        # add up to the location table exactly.
+        self.assertEqual(
+            sum(len(names) for names in LOCATION_GROUPS.values()),
+            len(LOCATIONS),
+            "a location is in no group, or in two",
+        )
+
+    def test_a_yaml_naming_one_gets_every_location_in_it(self) -> None:
+        # Through the call a yaml actually goes through. `verify` is where
+        # Archipelago swaps a group name for its members, and it is also where
+        # a name it does not recognize is refused, so a world that never
+        # published its groups raises here rather than quietly excluding
+        # nothing.
+        option = ExcludeLocations.from_any(["All Match Counts"])
+        option.verify(type(self.world), "Tester", PlandoOptions.none)
+        self.assertEqual(
+            set(option.value),
+            LOCATION_GROUPS["All Match Counts"],
+            "the group did not expand to exactly the locations in it",
+        )

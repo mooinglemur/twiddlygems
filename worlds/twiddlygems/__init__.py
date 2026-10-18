@@ -66,6 +66,19 @@ assert TOP_UP_NAMES, "the engine named no top_up filler items"
 #: could turn off, which is the opposite of what the percentage is for.
 TRAP_NAMES = [item["name"] for item in ITEMS if item["classification"] == "trap"]
 
+#: The shorthand a yaml can use wherever Archipelago takes a list of locations:
+#: `exclude_locations`, `priority_locations` and the rest. One group per kind
+#: of location, so `exclude_locations: [All AP Gems]` is that whole family
+#: rather than a hundred and sixty lines of names.
+#:
+#: Collected from the group the engine writes beside each location rather than
+#: matched on the names here: the names are for players and may be reworded,
+#: and a rule reading them would break quietly when one was. Archipelago adds
+#: an "Everywhere" group of its own on top of these.
+LOCATION_GROUPS: dict[str, set[str]] = {}
+for _at in LOCATIONS:
+    LOCATION_GROUPS.setdefault(_at["group"], set()).add(_at["name"])
+
 
 # The settings live in `options.py`, which is not a matter of taste: WebHost
 # pickles an option value into its database and reads it back through a
@@ -103,6 +116,7 @@ class TwiddlyGemsWorld(World):
 
     item_name_to_id = {item["name"]: item["id"] for item in ITEMS}
     location_name_to_id = {at["name"]: at["id"] for at in LOCATIONS}
+    location_name_groups = LOCATION_GROUPS
 
     #: The split of the items that share a total, once it has been rolled. See
     #: `_shares`, which rolls it and explains why it is only ever rolled once.

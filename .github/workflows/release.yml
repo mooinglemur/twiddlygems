@@ -73,12 +73,20 @@ jobs:
       # from a checkout this did not make. `build.rs` shortens it.
       TG_GIT_HASH: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
-
+      # Before the checkout, which is not the usual order and is load-bearing:
+      # with no git in the container, `actions/checkout` falls back to
+      # downloading a tarball and leaves no repository behind. `make ap-compat`
+      # builds each released world out of its own tag, so this job needs a real
+      # clone with the tags in it, which is also why it takes the whole
+      # history.
       - name: Install python and git
         run: |
           apt-get update -qq
           apt-get install -y -qq --no-install-recommends python3 python3-venv git
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -108,6 +116,14 @@ jobs:
 
       - name: Generate a seed from the installed zip
         run: make apworld-install
+
+      # The other half of the gate, and the one that only a release can really
+      # care about: every room an earlier release rolled is still out there,
+      # and the game this tag publishes has to be able to play it. The
+      # versions are `COMPAT_TAGS` in the Makefile, and a new one belongs on
+      # that list as soon as it is released.
+      - name: A seed from every released world
+        run: make ap-compat
 
       - name: Package the world and its player template
         run: make template

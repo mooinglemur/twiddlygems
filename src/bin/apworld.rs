@@ -25,10 +25,9 @@ use twiddlygems::options::{
     MOST_WEIGHT, PROGRESSIVE_LEVELS, SETTINGS, SPARE_UNLOCKS,
 };
 use twiddlygems::progression::{
-    goal, is_mark, item_name, item_pool, items, location_name, locations, requirement,
-    spare_unlocks, Count,
-    Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE, FIRST_GATED_LEVEL, GENERATOR,
-    LONGEST_CHAIN, RELIABLE_CHAIN, SHORTEST_CHAIN,
+    goal, is_mark, item_name, item_pool, items, location_group, location_name, locations,
+    requirement, spare_unlocks, Count, Item, Location, Requirement, AP_GEMS_PER_LEVEL, AP_ID_BASE,
+    FIRST_GATED_LEVEL, GENERATOR, LONGEST_CHAIN, RELIABLE_CHAIN, SHORTEST_CHAIN,
 };
 
 /// What the game is called wherever Archipelago says its name.
@@ -398,6 +397,11 @@ fn location_table(levels: usize) -> Json {
                 let mut fields = vec![
                     ("name", Json::Str(location_name(at))),
                     ("id", Json::Num(AP_ID_BASE + at.id())),
+                    // The shorthand a yaml names this family by. Every
+                    // location is in exactly one, so the world builds the
+                    // groups by collecting these rather than being told them
+                    // a second time as a list.
+                    ("group", Json::Str(location_group(at).to_string())),
                     ("rule", rule(&requirement(at, levels))),
                 ];
                 // An Archipelago gem says where it sits in its level's
