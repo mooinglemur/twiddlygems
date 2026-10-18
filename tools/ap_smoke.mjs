@@ -116,6 +116,18 @@ function roomInfo(checksums = {}) {
 /// or the client refuses the connection over a number this helper got wrong
 /// rather than over anything the test is about.
 function connected(engine, over = {}, options = {}) {
+  // The room's gem count is worked out from the settings the seed was rolled
+  // with, so the stub works it out the same way: set them, then ask. Read off
+  // a fresh engine instead, it disagrees with the client the moment a setting
+  // moves the floor, and the client refuses the seed over numbers that only a
+  // test ever disagreed about. The client sets the same values a moment later,
+  // which is why doing it here changes nothing it sees.
+  for (const option of engine.options) {
+    const wanted = options[option.key];
+    if (Number.isInteger(wanted)) {
+      engine.setOption(option.index, wanted);
+    }
+  }
   return {
     cmd: 'Connected',
     team: 0,

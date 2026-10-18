@@ -702,10 +702,6 @@ export class ArchipelagoClient {
     }
 
     // Then the one number both sides work out for themselves, held up against
-    // each other. If these disagree the board spawns gems for locations this
-    // seed does not have and the checks behind them go nowhere, which is a
-    // failure nobody would notice until a seed would not finish.
-    // Then the one number both sides work out for themselves, held up against
     // each other. The check above says the two agree about what everything
     // means; this says they actually computed the same thing, which is a
     // different claim and can fail while that one holds. If they disagree the

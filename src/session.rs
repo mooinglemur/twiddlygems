@@ -1902,7 +1902,13 @@ mod tests {
         // The board is told how many are still worth spawning, so a level
         // whose run is exhausted deals none. Without it a player would keep
         // clearing gems that pay nothing.
-        let mut session = Session::set_up(7, Options { ap_gems: 1, ..Options::default() });
+        // The marks open, so the setting is the answer rather than a floor
+        // under one: shutting them takes places away and asks for more gems to
+        // make up the difference. See `ap_gems_per_level`.
+        let mut session = Session::set_up(
+            7,
+            Options { ap_gems: 1, exclude_gold_and_silver: 0, ..Options::default() },
+        );
         assert_eq!(session.game().ap_gems_wanted, 1, "the opening level should want its one");
 
         collect_one_gem(&mut session);
@@ -1924,8 +1930,18 @@ mod tests {
         // At odds the yaml does not offer, so this cannot pass by a second gem
         // simply not happening to fall: one refilled gem in two is one of
         // these, and a level refills hundreds.
-        let mut session =
-            Session::set_up(7, Options { ap_gems: 1, ap_gem_odds: 2, ..Options::default() });
+        // The marks open, for the same reason as the test above: one check on
+        // this level is what is being played out, and shutting them would ask
+        // for a second.
+        let mut session = Session::set_up(
+            7,
+            Options {
+                ap_gems: 1,
+                ap_gem_odds: 2,
+                exclude_gold_and_silver: 0,
+                ..Options::default()
+            },
+        );
         collect_one_gem(&mut session);
         assert!(session.checked().contains(&Location::ApGem { level: 0, index: 0 }.id()));
 
@@ -1953,7 +1969,13 @@ mod tests {
 
     #[test]
     fn a_run_asking_for_no_gems_is_dealt_none() {
-        let mut session = Session::set_up(7, Options { ap_gems: 0, ..Options::default() });
+        // None is a thing a run can actually ask for only while the marks are
+        // open. With them shut the pool has nowhere else to go and the floor
+        // overrides the ask, which is what the setting being a floor means.
+        let mut session = Session::set_up(
+            7,
+            Options { ap_gems: 0, exclude_gold_and_silver: 0, ..Options::default() },
+        );
         assert_eq!(session.game().ap_gems_wanted, 0);
         for _ in 0..600 {
             session.update(16.0);

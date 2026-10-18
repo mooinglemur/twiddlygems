@@ -2765,10 +2765,10 @@ mod tests {
     fn the_marks_do_hold_things_when_nobody_asked_them_not_to() {
         // The other half, and the one that stops the check above passing for
         // the wrong reason: if the fill never put anything on a mark anyway,
-        // shutting them would prove nothing. Over a default ladder it does.
+        // shutting them would prove nothing. Over a ladder with the option
+        // turned off it does.
         let levels = crate::level::levels().len();
-        let options = Options::default();
-        assert_eq!(options.exclude_gold_and_silver, 0, "this is about the default, which is off");
+        let options = Options { exclude_gold_and_silver: 0, ..Options::default() };
         let found: usize = fills()
             .map(|seed| {
                 let placed = solo_placement(levels, seed, &options);
@@ -2792,8 +2792,8 @@ mod tests {
         // comes out with more important items than places to put them, and the
         // generator refuses the seed rather than dealing a worse one.
         let levels = crate::level::levels().len();
-        let open = Options::default();
-        let shut = Options { exclude_gold_and_silver: 1, ..open };
+        let shut = Options::default();
+        let open = Options { exclude_gold_and_silver: 0, ..shut };
 
         let important =
             item_pool(levels, 0, &shut).into_iter().filter(|item| worth_finding(*item)).count();
@@ -3179,7 +3179,11 @@ mod tests {
         // many items there are do not know how many places there are to put
         // them, so this is what closes the gap.
         let levels = 13;
-        let asked = Options { ap_gems: 0, ..Options::default() };
+        // With the marks open, which is what makes this the pool's question
+        // alone: shutting them is the other constraint and it is tested on its
+        // own below.
+        let asked =
+            Options { ap_gems: 0, exclude_gold_and_silver: 0, ..Options::default() };
         assert_eq!(
             ap_gems_per_level(levels, &asked),
             0,

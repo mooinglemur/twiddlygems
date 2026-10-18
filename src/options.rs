@@ -105,9 +105,11 @@ impl Default for Options {
             inventory_items: 10,
             progressive_levels: 1,
             spare_unlocks: 20,
-            // Off: the marks hold items by default, which is how the game has
-            // always been and what somebody who says nothing should get.
-            exclude_gold_and_silver: 0,
+            // On, as of 2026-10-17. Both marks ask for all five specials and
+            // the level's own upgrade, and gold wants it beaten briskly on top
+            // of that, so a run that says nothing should not have its
+            // progression hidden behind them.
+            exclude_gold_and_silver: 1,
             // None. A player who has not asked to be hurt is not hurt, and
             // this is also what keeps every existing seed and every test that
             // does not name it reading exactly as it did.
@@ -503,9 +505,10 @@ pub static SETTINGS: &[Setting] = &[
                 Gold location in Archipelago's own excluded locations.",
         // Both marks want all five specials and that level's move upgrade, and
         // gold wants the level beaten briskly on top. That is a lot to ask of
-        // somebody who wants to play the ladder rather than chase scores, and
-        // without this their only way out is to list thirty-two locations by
-        // hand.
+        // somebody who wants to play the ladder rather than chase scores,
+        // which is why this is on by default: a player who wants progression
+        // behind a score turns it off, rather than everybody else listing
+        // thirty-two locations by hand to get out of it.
         //
         // Shutting them takes two locations a level away from the items that
         // most need one, so the Archipelago gem floor rises to compensate:
@@ -513,7 +516,7 @@ pub static SETTINGS: &[Setting] = &[
         // with forty-nine items that must not sit on a mark and forty-seven
         // places left to put them, and the generator would refuse the seed.
         kind: Kind::Toggle,
-        default: 0,
+        default: 1,
         on_screen: true,
     },
     Setting {

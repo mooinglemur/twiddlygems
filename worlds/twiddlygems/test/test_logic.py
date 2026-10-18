@@ -61,6 +61,21 @@ class TestDefault(TwiddlyGemsTestBase):
 
     options: dict = {}
 
+    def test_a_yaml_that_says_nothing_has_its_marks_shut(self) -> None:
+        # The default since 2026-10-17. Both marks ask for all five specials
+        # and that level's upgrade, so a run which never mentioned them should
+        # not be made to chase scores to find its progression. The value
+        # arrives here through the generated options table, so this is also
+        # what catches the engine's default and the world's disagreeing.
+        for location in self.multiworld.get_locations(self.player):
+            if not location.name.endswith(("Silver", "Gold")):
+                continue
+            self.assertEqual(
+                location.progress_type,
+                LocationProgressType.EXCLUDED,
+                f"{location.name} may hold progression in a run that asked for nothing",
+            )
+
     def test_the_opening_level_needs_nothing(self) -> None:
         # Sphere one. Until this goes down there is not a location in the game
         # a player can check, so a seed where it asks for anything is a seed
@@ -209,10 +224,15 @@ class TestDefault(TwiddlyGemsTestBase):
     def test_only_the_gems_this_run_asked_for_are_in_its_world(self) -> None:
         # Every level's ten gems are in the table, because the table is a
         # datapackage and the same for everybody. A run plays over as many of
-        # them as it asked for, and no more: nothing spawns for the rest, so
-        # an item left in one could never be found.
+        # them as it needs, and no more: nothing spawns for the rest, so an
+        # item left in one could never be found.
+        #
+        # Two a level by default, although the setting asks for one: the marks
+        # are shut by default now, which takes two locations a level away from
+        # the items that most need one, and the gem floor rises to cover it.
         levels = len(LEVELS)
-        self.assertEqual(self.world._ap_gems_per_level(), 1, "the default is one a level")
+        per_level = self.world._ap_gems_per_level()
+        self.assertEqual(per_level, 2, "a default run should have the floor raised to two")
 
         named = [at for at in LOCATIONS if "gem_index" in at]
         self.assertEqual(
@@ -221,17 +241,17 @@ class TestDefault(TwiddlyGemsTestBase):
             "the table should hold every level's ten however few are played",
         )
         in_play = [at for at in self.world._locations_in_play() if "gem_index" in at]
-        self.assertEqual(len(in_play), levels, "one gem a level should be in play")
+        self.assertEqual(len(in_play), levels * per_level, "the world is not playing that many")
         self.assertTrue(
-            all(at["gem_index"] == 0 for at in in_play),
+            all(at["gem_index"] < per_level for at in in_play),
             "the gems in play should be the start of each level's sequence",
         )
 
         # And the world built only those: asking for a location it did not
         # create raises.
-        self.world.get_location("Level 1 AP Gem 1")
+        self.world.get_location(f"Level 1 AP Gem {per_level}")
         with self.assertRaises(KeyError):
-            self.world.get_location("Level 1 AP Gem 2")
+            self.world.get_location(f"Level 1 AP Gem {per_level + 1}")
 
     def test_the_leftover_locations_hold_filler_and_nothing_borrowed(self) -> None:
         # There are more places to look than things to find, so the rest are
@@ -486,6 +506,31 @@ class TestNothingBehindTheMarks(TwiddlyGemsTestBase):
         )
 
 
+class TestTheMarksAreOpenedAgain(TwiddlyGemsTestBase):
+    """A run that turned the marks back on, which is how scores get played for.
+
+    The other side of the default, and the one nothing covered once shutting
+    them became what a silent yaml gets: a mark that is excluded whatever the
+    setting says would pass every test in the class above.
+    """
+
+    options = {"exclude_gold_and_silver": "off"}
+
+    def test_a_mark_is_a_place_like_any_other(self) -> None:
+        marks = [
+            location
+            for location in self.multiworld.get_locations(self.player)
+            if location.name.endswith(("Silver", "Gold"))
+        ]
+        self.assertEqual(len(marks), len(LEVELS) * 2, "a mark went missing from the world")
+        for location in marks:
+            self.assertEqual(
+                location.progress_type,
+                LocationProgressType.DEFAULT,
+                f"{location.name} is excluded in a run that asked for them to be open",
+            )
+
+
 class TestGemsTurnedUp(TwiddlyGemsTestBase):
     """Asked for more gems than the default, which is a bigger world."""
 
@@ -501,9 +546,15 @@ class TestGemsTurnedUp(TwiddlyGemsTestBase):
 
 
 class TestNoGems(TwiddlyGemsTestBase):
-    """Asked for none, which today's pool has room for."""
+    """Asked for none, which is a thing a run can have only with its marks open.
 
-    options = {"ap_gems": 0}
+    The setting is a floor rather than a count, and shutting the marks puts a
+    floor of two under it: the items that may not sit on a mark have to go
+    somewhere. So none is available to a run that also wants its marks to hold
+    things, and this is that run.
+    """
+
+    options = {"ap_gems": 0, "exclude_gold_and_silver": "off"}
 
     def test_a_run_can_ask_for_none(self) -> None:
         self.assertEqual(self.world._ap_gems_per_level(), 0)
