@@ -525,6 +525,18 @@ pub unsafe extern "C" fn tg_level_best(handle: *const Handle, index: u32) -> u32
     session!(handle, 0).session.best_tier(index as usize).code()
 }
 
+/// Which of the level's marks this run has taken, as bits: 1 clear, 2 silver,
+/// 4 gold. See [`Session::marks_taken`], and prefer this wherever the page
+/// says which marks a level has: a collected multiworld takes them in any
+/// combination.
+///
+/// # Safety
+/// `handle` must come from [`tg_create`].
+#[no_mangle]
+pub unsafe extern "C" fn tg_level_marks(handle: *const Handle, index: u32) -> u32 {
+    session!(handle, 0).session.marks_taken(index as usize)
+}
+
 /// How many of the Archipelago gems on the level at `index` this run has
 /// taken. Against [`tg_gems_per_level`], which is how many there are.
 ///

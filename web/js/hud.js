@@ -106,19 +106,26 @@ const WORTH_CLASS = {
 /// three pips on a level row sit in. Each is a location an item is found at,
 /// so a row of them is a row of checks.
 ///
+/// `bit` is that mark's place in `engine.levelMarks`, which is how a pip knows
+/// whether it is filled. Each is asked separately rather than compared against
+/// the best of the three: a multiworld's `!collect` checks whichever locations
+/// hold that player's own items, so a level can come back holding its gold and
+/// not its clear.
+///
 /// `taken` and `missing` are what a pip says when you rest on it. A pip is a
 /// nine pixel circle, which is enough to count and not enough to name, and the
 /// difference between a hollow silver and a hollow gold is a color nobody
 /// should have to learn from the picture alone.
 const MARKS = [
-  { tier: Tier.CLEAR, name: 'clear', taken: 'Cleared', missing: 'Uncleared' },
+  { tier: Tier.CLEAR, bit: 1, name: 'clear', taken: 'Cleared', missing: 'Uncleared' },
   {
     tier: Tier.SILVER,
+    bit: 2,
     name: 'silver',
-    taken: 'Cleared at Silver',
+    taken: 'Silver taken',
     missing: 'Silver not reached',
   },
-  { tier: Tier.GOLD, name: 'gold', taken: 'Cleared at Gold', missing: 'Gold not reached' },
+  { tier: Tier.GOLD, bit: 4, name: 'gold', taken: 'Gold taken', missing: 'Gold not reached' },
 ];
 
 export class Hud {
@@ -168,20 +175,38 @@ export class Hud {
    * all.
    */
   tier() {
+    const marks = this.marksNow();
+    if (marks & 4) {
+      return Tier.GOLD;
+    }
+    if (marks & 2) {
+      return Tier.SILVER;
+    }
+    return marks & 1 ? Tier.CLEAR : Tier.NONE;
+  }
+
+  /**
+   * Which of this level's marks stand, as `engine.levelMarks` bits.
+   *
+   * What the run already holds, plus whatever this attempt has reached. The
+   * three are read one at a time because a collected multiworld takes them in
+   * any combination, so a level can be holding its gold and not its clear and
+   * the popover must not claim the clear.
+   */
+  marksNow() {
     const { engine } = this;
-    const best = engine.levelBest(engine.levelIndex);
+    const held = engine.levelMarks(engine.levelIndex);
     if (!this.cleared) {
-      return best;
+      return held;
     }
     const { silver, gold } = engine.tiers;
     const score = engine.score;
-    const now =
-      gold > 0 && score >= gold
-        ? Tier.GOLD
-        : silver > 0 && score >= silver
-          ? Tier.SILVER
-          : Tier.CLEAR;
-    return Math.max(best, now);
+    return (
+      held |
+      1 |
+      (silver > 0 && score >= silver ? 2 : 0) |
+      (gold > 0 && score >= gold ? 4 : 0)
+    );
   }
 
   /** Rebuilds everything that only changes when the level does. */
@@ -500,17 +525,17 @@ export class Hud {
    */
   fillScoreMarks() {
     const { engine, dom } = this;
-    const tier = this.tier();
+    const marks = this.marksNow();
     this.shownBest = engine.levelBestScore(engine.levelIndex);
     const { silver, gold } = engine.tiers;
     const rows = [
-      { at: silver, name: 'Silver', tier: Tier.SILVER },
-      { at: gold, name: 'Gold', tier: Tier.GOLD },
+      { at: silver, name: 'Silver', tier: Tier.SILVER, bit: 2 },
+      { at: gold, name: 'Gold', tier: Tier.GOLD, bit: 4 },
     ]
       .filter((mark) => mark.at > 0)
       .map((mark) => {
         const row = document.createElement('div');
-        const taken = tier >= mark.tier;
+        const taken = (marks & mark.bit) !== 0;
         row.className = 'score-mark';
         row.classList.add(TIER_CLASS[mark.tier]);
         if (taken) {
@@ -1024,10 +1049,15 @@ export class Hud {
       const view = this.levelViews[i];
       const unlocked = i < engine.unlocked;
       const best = engine.levelBest(i);
+      // The three read one at a time rather than inferred from the best of
+      // them: a collected multiworld takes them in any combination, so a level
+      // can stand at gold and never have been cleared.
+      const taken = engine.levelMarks(i);
       const standing = STATUS_MARKS.map((mark) => ({ ...mark.of(engine, i), ...mark }));
       const state = [
         unlocked,
         best,
+        taken,
         i === focused,
         ...standing.map((mark) => `${mark.found}/${mark.total}`),
       ].join(',');
@@ -1066,15 +1096,15 @@ export class Hud {
 
       for (let at = 0; at < MARKS.length; at += 1) {
         const mark = MARKS[at];
-        const done = best >= mark.tier;
+        const done = (taken & mark.bit) !== 0;
         view.pips[at].classList.toggle('taken', done);
         view.pips[at].title = done ? mark.taken : mark.missing;
       }
 
-      const taken = MARKS.filter((mark) => best >= mark.tier).map((mark) => mark.name);
+      const named = MARKS.filter((mark) => taken & mark.bit).map((mark) => mark.name);
       view.row.setAttribute(
         'aria-label',
-        [`Level ${i + 1}`, name, ...taken, ...words].join(', '),
+        [`Level ${i + 1}`, name, ...named, ...words].join(', '),
       );
     }
 

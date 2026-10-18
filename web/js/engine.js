@@ -332,9 +332,22 @@ export class Engine {
     return [...new Uint32Array(this.memory.buffer, ptr, count)];
   }
 
-  /** How well a level has been beaten, at best, as a `Tier`. */
+  /** The best of a level's marks this run has taken, as a `Tier`. */
   levelBest(index) {
     return this.wasm.tg_level_best(this.handle, index);
+  }
+
+  /**
+   * Which of a level's marks this run has taken, as bits: 1 clear, 2 silver,
+   * 4 gold.
+   *
+   * What anything saying which marks a level has should read, rather than
+   * inferring the lower ones from `levelBest`. A multiworld's `!collect`
+   * checks the locations holding this player's own items and leaves the rest,
+   * so a level can come back with its gold taken and its clear not.
+   */
+  levelMarks(index) {
+    return this.wasm.tg_level_marks(this.handle, index);
   }
 
   /**

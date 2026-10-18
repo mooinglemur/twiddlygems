@@ -798,6 +798,11 @@ impl Session {
             .count() as u32
     }
 
+    /// The best of the level's three marks this run has taken.
+    ///
+    /// The best one *taken*, which is not the same as the best one earned: see
+    /// [`Session::marks_taken`] for why the lower marks cannot be read off
+    /// this one.
     pub fn best_tier(&self, index: usize) -> Tier {
         let reached = |at: Location| self.checked.contains(&at.id());
         if reached(Location::LevelGold(index)) {
@@ -809,6 +814,23 @@ impl Session {
         } else {
             Tier::None
         }
+    }
+
+    /// Which of the level's three marks this run has taken, as bits: 1 for the
+    /// clear, 2 for silver, 4 for gold.
+    ///
+    /// Three questions rather than one, because the three are only a ladder
+    /// while a player is climbing it. A multiworld's `!collect` checks the
+    /// locations holding that player's own items and leaves the rest, so a
+    /// level can come back with its gold taken, its silver not, and never
+    /// having been beaten at all. Anything that says which marks a level has
+    /// must ask one at a time; anything reading them off the best one says a
+    /// player cleared a level they have not played.
+    pub fn marks_taken(&self, index: usize) -> u32 {
+        let taken = |at: Location| u32::from(self.checked.contains(&at.id()));
+        taken(Location::LevelClear(index))
+            | taken(Location::LevelSilver(index)) << 1
+            | taken(Location::LevelGold(index)) << 2
     }
 
     /// Hands a run back a location it had already checked, rebuilding what it
@@ -1697,6 +1719,33 @@ mod tests {
         force_win_at(&mut session, gold);
         assert!(session.checked().contains(&Location::LevelSilver(0).id()));
         assert!(session.checked().contains(&Location::LevelGold(0).id()), "gold was missed");
+    }
+
+    #[test]
+    fn a_mark_handed_back_on_its_own_says_only_itself() {
+        // What a collected multiworld hands over. `!collect` checks the
+        // locations holding that player's own items and leaves the rest, so a
+        // level comes back with any mix of its three marks and no connection
+        // between them: here the gold is taken on a level nobody has played.
+        // A ladder that opens by clearing, so that restoring a location is
+        // something that can open a level at all: under progressive unlocks
+        // the ladder is what the run holds and none of this would move.
+        let mut session =
+            Session::set_up(7, Options { progressive_levels: 0, ..Options::default() });
+        assert_eq!(session.marks_taken(3), 0, "a fresh run has taken no marks");
+
+        session.restore(Location::LevelGold(3).id());
+        assert_eq!(session.marks_taken(3), 0b100, "the gold said something about the others");
+        // And the ladder has not moved, because nobody cleared anything. A
+        // mark opens nothing; only a clear does.
+        assert_eq!(session.unlocked(), 1, "a gold taken by collect opened the ladder");
+
+        // The clear as well, which is the ordinary case and the one that must
+        // keep reading as it always did.
+        session.restore(Location::LevelClear(3).id());
+        assert_eq!(session.marks_taken(3), 0b101, "the clear did not land beside the gold");
+        assert_eq!(session.marks_taken(4), 0, "a neighboring level picked up a mark");
+        assert_eq!(session.unlocked(), 5, "the clear did not open the level above it");
     }
 
     #[test]

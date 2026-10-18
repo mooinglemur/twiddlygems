@@ -1479,8 +1479,8 @@ click(overlayButton('Close'), 'the level picker has no way out');
   assert.ok(pips[0].classList.contains('taken'), 'the cleared level has no clear against it');
   assert.equal(
     pips.filter((pip) => pip.classList.contains('taken')).length,
-    [Tier.CLEAR, Tier.SILVER, Tier.GOLD].filter((tier) => engine.levelBest(LEVEL) >= tier).length,
-    'the marks on a row disagree with what the engine says was beaten',
+    [1, 2, 4].filter((bit) => engine.levelMarks(LEVEL) & bit).length,
+    'the marks on a row disagree with what the engine says this level has taken',
   );
 
   // The tracker reads the run rather than counting item lines: it says what is
@@ -1518,7 +1518,7 @@ click(overlayButton('Close'), 'the level picker has no way out');
   // And the marks it reached are checked off rather than left as targets,
   // however many that turned out to be: which items this run was dealt is the
   // seed's business, and how well it did here follows from them.
-  const past = [Tier.SILVER, Tier.GOLD].filter((tier) => engine.levelBest(LEVEL) >= tier).length;
+  const past = [2, 4].filter((bit) => engine.levelMarks(LEVEL) & bit).length;
   assert.equal(
     elements.get('score-marks').children.filter((row) => row.classList.contains('taken')).length,
     past,
@@ -2886,6 +2886,51 @@ let flourish = null;
     /\d+ of \d+ unlocked/,
     'the panel stopped saying how much of the ladder is open',
   );
+  click(overlayButton('Close'), 'the level picker has no way out');
+}
+
+// ---- a level holding a mark it never earned -------------------------------
+//
+// What a collected multiworld hands back. `!collect` checks the locations
+// holding that player's own items wherever they are, our own world included,
+// and leaves the rest, so a level can come back holding its gold with its
+// clear still out there. A row reading the lower marks off the higher one
+// tells the player they cleared a level they have never played.
+{
+  const { engine } = window.twiddlygems;
+  dispatch('levels-button', 'click', {});
+  const rows = elements.get('level-list');
+
+  // A level with nothing against it, found rather than assumed: this run was
+  // dealt from its own seed and how far it got is not for this to decide.
+  const at = [...Array(engine.levelCount).keys()].find((i) => engine.levelMarks(i) === 0);
+  assert.ok(at !== undefined, 'this run has taken a mark on every level');
+  const row = rows.children[at];
+  const pips = () => row.children.at(-1).children;
+  assert.ok(
+    !pips().some((pip) => pip.classList.contains('taken')),
+    'a level with no marks taken is already showing one',
+  );
+
+  // The gold alone. "Level 1 Gold" is 3000 in the engine's own table, which
+  // is a number that table pins on purpose: see the frozen names test in
+  // progression.rs.
+  engine.restore(3_000 + at);
+  assert.equal(engine.levelMarks(at), 4, 'restoring the gold landed somewhere else');
+  pump(1);
+
+  assert.ok(pips()[2].classList.contains('taken'), 'the row does not show the gold it holds');
+  assert.ok(
+    !pips()[0].classList.contains('taken'),
+    'a gold handed back on its own was read as a clear the player never made',
+  );
+  assert.ok(
+    !pips()[1].classList.contains('taken'),
+    'a gold handed back on its own was read as a silver as well',
+  );
+  const said = row.getAttribute('aria-label');
+  assert.match(said, /gold/, 'the row never says it holds the gold');
+  assert.doesNotMatch(said, /clear|silver/, `the row says "${said}" of a level nobody has played`);
   click(overlayButton('Close'), 'the level picker has no way out');
 }
 
