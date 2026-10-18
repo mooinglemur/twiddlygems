@@ -15,10 +15,26 @@ BUILT  := target/$(TARGET)/release/twiddlygems.wasm
 OUT    := web/twiddlygems.wasm
 PORT   ?= 8080
 
+# Git, told that this checkout is one it may read.
+#
+# A CI container runs its steps as a user other than the one the workspace
+# belongs to, and git refuses to read a repository it thinks is somebody
+# else's: "detected dubious ownership". Said per command rather than written
+# into whatever global config the job happens to have, so this holds wherever
+# the build runs and changes nothing outside it.
+GIT := git -c safe.directory=$(CURDIR)
+
 # The commit the page's footer names, beside the crate version. Exported so
 # `build.rs` picks it up; a build with no checkout to ask gets `unknown`, which
 # is a footer that says so rather than a build that fails.
-export TG_GIT_HASH := $(shell git rev-parse --short=9 HEAD 2>/dev/null)
+#
+# Whoever runs the build gets the last word: CI hands over the event's own sha,
+# because it is answering inside a checkout it did not make. Asked of git only
+# when nobody has said, and once rather than per recipe.
+ifeq ($(origin TG_GIT_HASH), undefined)
+TG_GIT_HASH := $(shell $(GIT) rev-parse --short=9 HEAD 2>/dev/null)
+endif
+export TG_GIT_HASH
 
 # The Archipelago side. The world is a directory under worlds/; an .apworld is
 # that directory zipped. AP is a pinned clone rather than a dependency, so the
@@ -221,11 +237,13 @@ ap-compat: wasm
 ap-compat-one: ARCHIVE := build/compat/$(COMPAT_TAG)
 ap-compat-one:
 	@test -n "$(COMPAT_TAG)" || { echo "error: this wants COMPAT_TAG=<tag>"; exit 1; }
-	@git rev-parse --verify --quiet "$(COMPAT_TAG)^{commit}" >/dev/null || { \
-		echo "error: no $(COMPAT_TAG) in this checkout; CI has to fetch its tags."; exit 1; }
+	@$(GIT) rev-parse --verify --quiet "$(COMPAT_TAG)^{commit}" >/dev/null || { \
+		echo "error: git cannot resolve $(COMPAT_TAG) here. CI has to fetch its tags"; \
+		echo "       (fetch-depth: 0), and git has to be willing to read the checkout."; \
+		exit 1; }
 	rm -rf $(ARCHIVE)
 	mkdir -p $(ARCHIVE)/players $(ARCHIVE)/out $(ARCHIVE)/live
-	git archive $(COMPAT_TAG) | tar -x -C $(ARCHIVE)
+	$(GIT) archive $(COMPAT_TAG) | tar -x -C $(ARCHIVE)
 	$(MAKE) -C $(ARCHIVE) apworld AP=$(CURDIR)/$(AP) PYTHON=$(PYTHON)
 	rm -f $(AP)/worlds/twiddlygems $(AP)/custom_worlds/twiddlygems.apworld
 	cp $(ARCHIVE)/$(APWORLD) $(AP)/custom_worlds/
