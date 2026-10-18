@@ -898,6 +898,8 @@ export class Renderer {
     this.height = height;
     // Everything cached is sized in device pixels, so it all goes stale here.
     this.sprites = new Map();
+    this.seals = new Map();
+    this.bricks = new Map();
     this.backdrop = null;
     this.dirty = true;
   }
@@ -924,6 +926,53 @@ export class Renderer {
     const sprite = { canvas, size, radius };
     this.sprites.set(key, sprite);
     return sprite;
+  }
+
+  /// The seal art for one color, whole or cracked, drawn once and kept.
+  ///
+  /// Cached for the reason the gems are, and more so: a seal is a clipped box,
+  /// a silhouette filled inside it and the two walls of that cut stroked
+  /// through a second clip, and `clip` is among the most expensive things a
+  /// canvas can be asked to do. A level drawn out of seals has thirty-two of
+  /// them, and the art changes only when one cracks, so there are at most two
+  /// pictures per color in a run.
+  ///
+  /// `side` is what the board draws one at, in CSS pixels; every seal on a
+  /// board is the same size, so it is not part of the key.
+  sealSprite(color, cracked, side) {
+    const key = color * 2 + (cracked ? 1 : 0);
+    const cached = this.seals.get(key);
+    if (cached) {
+      return cached;
+    }
+    // Painted at the size it will be blitted at, so nothing is resampled.
+    const size = Math.max(8, Math.round(side * this.dpr));
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    drawSeal(canvas.getContext('2d'), 0, 0, size, PALETTE[color % PALETTE.length], cracked);
+    this.seals.set(key, canvas);
+    return canvas;
+  }
+
+  /// The brick art, whole or cracked, drawn once and kept.
+  ///
+  /// The same again, and for the same reason: masonry is a clipped box with
+  /// its courses stroked across it, and Landslide stands thirty-six of them on
+  /// one board. Two pictures in all, because a brick wears no color.
+  brickSprite(cracked, side) {
+    const key = cracked ? 1 : 0;
+    const cached = this.bricks.get(key);
+    if (cached) {
+      return cached;
+    }
+    const size = Math.max(8, Math.round(side * this.dpr));
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    drawBrick(canvas.getContext('2d'), 0, 0, size, cracked);
+    this.bricks.set(key, canvas);
+    return canvas;
   }
 
   /// The board panel and its empty sockets, which never change between resizes.
@@ -1073,8 +1122,11 @@ export class Renderer {
       );
     }
 
-    // Bricks stand in the board rather than on it, and they change as they are
-    // hit, so they cannot live in the backdrop with the walls.
+    // Bricks and seals stand in the board rather than on it, and they change
+    // as they are hit, so they cannot live in the backdrop with the walls.
+    // Both are blitted from art drawn once: a board can be most of the way
+    // made of them, and each is a clipped box with work inside it. See
+    // `sealSprite` and `brickSprite`.
     for (let i = 0; i < cells.length / 4; i += 1) {
       const flags = cells[i * 4 + 3];
       if (!(flags & Flag.BRICK)) {
@@ -1086,10 +1138,10 @@ export class Renderer {
       const side = cell - inset * 2;
       const cracked = (flags & Flag.CRACKED) !== 0;
       if (flags & Flag.SEAL) {
-        const gem = PALETTE[cells[i * 4] % PALETTE.length];
-        drawSeal(ctx, x, y, side, gem, cracked);
+        const art = this.sealSprite(cells[i * 4] % PALETTE.length, cracked, side);
+        ctx.drawImage(art, x, y, side, side);
       } else {
-        drawBrick(ctx, x, y, side, cracked);
+        ctx.drawImage(this.brickSprite(cracked, side), x, y, side, side);
       }
     }
 
