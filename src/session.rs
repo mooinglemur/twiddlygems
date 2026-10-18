@@ -673,9 +673,39 @@ impl Session {
             return;
         }
         self.checked.push(id);
+        if matches!(location, Location::LevelClear(_)) {
+            self.open_through_clears();
+        }
         if let Some(item) = self.holds(location) {
             self.receive_from(item, Some(location), true);
         }
+    }
+
+    /// Opens the ladder as far as the levels cleared in a row reach.
+    ///
+    /// Where the ladder opens by clearing, what opens a level is the clear
+    /// below it and the whole run of clears below that. A clear on its own,
+    /// with a gap under it, opens nothing: a multiworld's `!collect` checks
+    /// the locations holding that player's own items and leaves the rest, so
+    /// the clear for a level nobody has played can arrive at any time, and a
+    /// ladder that opened from it would hand over everything beneath it as
+    /// well.
+    ///
+    /// What such a clear does instead is wait. Once the player's own clears
+    /// reach it, the run opens past it in one step and they skip whatever the
+    /// room cleared for them.
+    ///
+    /// Only ever raises, like everything else that moves this count, and a run
+    /// opening the ladder by item ignores the whole of it: see
+    /// [`Session::unlocked`].
+    fn open_through_clears(&mut self) {
+        let mut depth = 0;
+        while depth < self.levels.len()
+            && self.checked.contains(&Location::LevelClear(depth).id())
+        {
+            depth += 1;
+        }
+        self.unlocked = self.unlocked.max((depth + 1).min(self.levels.len()));
     }
 
     /// Which locations this run has checked, for writing down.
@@ -854,17 +884,17 @@ impl Session {
             return;
         }
         self.checked.push(id);
-        // What that clear opened, where the ladder opens by clearing. A solo
+        // What those clears opened, where the ladder opens by clearing. A solo
         // save carries the count beside its checks; a room sends the checks
         // alone, because they already say it, so this is the only thing that
         // can reopen the ladder on the way back into a multiworld.
         //
-        // Unconditional, and `unlocked` is what decides whether it means
-        // anything: a run opening by item ignores this field entirely. Raising
-        // it only, like everywhere else, so a list arriving out of order
-        // cannot shut anything.
-        if let Location::LevelClear(at) = location {
-            self.unlocked = self.unlocked.max((at + 2).min(self.levels.len()));
+        // Read off the whole run of them rather than off this one, so a list
+        // arriving out of order lands the same whatever order it comes in, and
+        // so a clear with a gap under it opens nothing. See
+        // [`Session::open_through_clears`].
+        if matches!(location, Location::LevelClear(_)) {
+            self.open_through_clears();
         }
         if let Some(item) = self.holds(location) {
             self.inventory.receive(item);
@@ -1041,15 +1071,54 @@ mod tests {
         session.restore(Location::LevelClear(0).id());
         assert_eq!(session.unlocked(), 2, "clearing the first level opened nothing");
 
-        // Out of order, the way a room's list arrives: it is a set of what has
-        // been checked rather than a history of when.
+        // A clear with a gap under it, which is what a collected multiworld
+        // hands over: it checks the locations holding this player's own items
+        // and leaves the rest. Nothing opens from it, here or two levels
+        // further up, because nobody has played what is under them.
         session.restore(Location::LevelClear(4).id());
         session.restore(Location::LevelClear(2).id());
-        assert_eq!(session.unlocked(), 6, "the deepest clear did not open the level past it");
+        assert_eq!(session.unlocked(), 2, "a clear with a gap under it opened the ladder anyway");
 
-        // And never closes anything: this only ever raises.
+        // Filling the gap opens the lot in one step, collected levels and all:
+        // this is the moment the run's own clears reach what the room cleared
+        // for it, and from here the player may skip those.
         session.restore(Location::LevelClear(1).id());
-        assert_eq!(session.unlocked(), 6, "an earlier clear shut the ladder back down");
+        assert_eq!(session.unlocked(), 4, "the run of clears did not open the level past it");
+        session.restore(Location::LevelClear(3).id());
+        assert_eq!(session.unlocked(), 6, "the ladder stopped short of the collected clears");
+
+        // Out of order throughout, which is how a room's list arrives: a set
+        // of what has been checked rather than a history of when. And it never
+        // closes anything, because this only ever raises.
+        session.restore(Location::LevelClear(0).id());
+        assert_eq!(session.unlocked(), 6, "a clear arriving twice shut the ladder back down");
+    }
+
+    #[test]
+    fn beating_the_level_under_a_collected_run_skips_it() {
+        // The other half of the rule above, and the half a player actually
+        // meets: the levels a room cleared for them sit there shut until
+        // their own climbing reaches the bottom of that run, and then the
+        // ladder opens past the whole of it at once.
+        //
+        // Through a real win rather than a restored clear, because the two
+        // arrive by different doors: a clear checked by playing goes through
+        // `check`, and one handed back goes through `restore`.
+        let mut session = climbing(3);
+        session.restore(Location::LevelClear(1).id());
+        session.restore(Location::LevelClear(2).id());
+        assert_eq!(session.unlocked(), 1, "clears for levels nobody has played opened the ladder");
+
+        force_win_at(&mut session, 1_000);
+        assert!(
+            session.checked().contains(&Location::LevelClear(0).id()),
+            "the level was won and its clear was never checked",
+        );
+        assert_eq!(
+            session.unlocked(),
+            4,
+            "beating the level under a collected run opened only the next one",
+        );
     }
 
     #[test]
@@ -1745,7 +1814,9 @@ mod tests {
         session.restore(Location::LevelClear(3).id());
         assert_eq!(session.marks_taken(3), 0b101, "the clear did not land beside the gold");
         assert_eq!(session.marks_taken(4), 0, "a neighboring level picked up a mark");
-        assert_eq!(session.unlocked(), 5, "the clear did not open the level above it");
+        // And the ladder is still shut, because this clear has three unplayed
+        // levels under it: see `restored_clears_open_the_ladder_they_opened`.
+        assert_eq!(session.unlocked(), 1, "a collected clear opened a ladder with a gap in it");
     }
 
     #[test]
