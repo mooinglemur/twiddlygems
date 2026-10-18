@@ -163,6 +163,7 @@ export class Hud {
     this.levelViews = [];
     this.trackedViews = [];
     this.shownUnlocked = -1;
+    this.shownGoalDone = null;
   }
 
   /**
@@ -940,6 +941,9 @@ export class Hud {
     // the quit question write it too. So it is always rewritten on the way in,
     // and only when it moves after that.
     this.shownUnlocked = -1;
+    // The same for the goal flag, which is written by the panel rather than
+    // kept: a picker opened twice has to say it both times.
+    this.shownGoalDone = null;
     const rows = [];
     for (let i = 0; i < engine.levelCount; i += 1) {
       const row = document.createElement('button');
@@ -1112,6 +1116,45 @@ export class Hud {
       this.shownUnlocked = engine.unlocked;
       dom.overlayBody.textContent = `${engine.unlocked} of ${engine.levelCount} unlocked.`;
     }
+    this.showGoalDone();
+  }
+
+  /**
+   * The run's goal, once it is done, at the top of the picker.
+   *
+   * Said here because this is the one place a run can always be told. A goal
+   * met by playing gets the victory screen; a goal a multiworld finishes for
+   * you, by handing over the last of it, gets nothing at all, and may land
+   * while the player is mid-board on a level they then lose. The flag turns up
+   * either way and stays.
+   *
+   * The words are written rather than merely unhidden, so the live region
+   * announces them to a reader who is sitting in this panel when they arrive.
+   */
+  showGoalDone() {
+    const { engine, dom } = this;
+    const done = engine.goalMet;
+    if (done === this.shownGoalDone) {
+      return;
+    }
+    this.shownGoalDone = done;
+    dom.goalDone.classList.toggle('hidden', !done);
+    dom.goalDone.title = done
+      ? 'This run has finished what it was set to do. Every level is still here to play.'
+      : '';
+    if (!done) {
+      dom.goalDone.replaceChildren();
+      return;
+    }
+    // The flag is decoration beside the word, and hidden from a reader: read
+    // out it is "chequered flag", which is a description of a picture rather
+    // than news about this run.
+    const flag = document.createElement('span');
+    flag.setAttribute('aria-hidden', 'true');
+    flag.textContent = '🏁';
+    const said = document.createElement('span');
+    said.textContent = 'Goal achieved';
+    dom.goalDone.replaceChildren(flag, said);
   }
 
   /**

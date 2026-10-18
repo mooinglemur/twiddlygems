@@ -188,6 +188,7 @@ const dom = {
   overlaySwitches: document.getElementById('overlay-switches'),
   tracker: document.getElementById('tracker'),
   trackerItems: document.getElementById('tracker-items'),
+  goalDone: document.getElementById('goal-done'),
   levelList: document.getElementById('level-list'),
   levelsButton: document.getElementById('levels-button'),
   retryButton: document.getElementById('retry-button'),
@@ -1673,9 +1674,14 @@ async function boot() {
         goalOwed = false;
         showVictory();
       } else {
-        // A goal met on a level that was then lost is not a thing that can
-        // happen, but if it ever became one the clear panel is the honest
-        // answer and the victory screen is simply not owed any more.
+        // The goal met on a level that was then lost, which a multiworld can
+        // do: a room that collects hands back the locations holding this
+        // player's own items, so the last level can be checked off under
+        // somebody who is losing the board in front of them. The panel for
+        // the level they just lost is the honest answer to that level, and
+        // the victory screen is not owed any more. The run is still told it
+        // has finished: the level picker flies a flag for as long as the run
+        // lasts. See `showGoalDone`.
         goalOwed = false;
         hud.showResult(engine.status, {
           onRetry: () => {

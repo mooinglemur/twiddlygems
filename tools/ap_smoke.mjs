@@ -19,7 +19,14 @@ import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 import { loadEngine, Consumable } from '../web/js/engine.js';
-import { ArchipelagoClient, MemoryCache, State, addressesFor, GAME } from '../web/js/archipelago.js';
+import {
+  ArchipelagoClient,
+  ClientStatus,
+  MemoryCache,
+  State,
+  addressesFor,
+  GAME,
+} from '../web/js/archipelago.js';
 
 const path = process.argv[2] ?? 'web/twiddlygems.wasm';
 
@@ -400,6 +407,36 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
   assert.ok(ids.every((id) => id >= AP), 'a location went out without the multiworld offset');
 }
 
+// ---- a goal the room hands over, rather than one the board earns ----------
+//
+// `!collect` checks the locations holding this player's own items, our own
+// world among them, so a room can hand back the last level's clear to a run
+// that never played it. The goal is a rule over the locations a run has
+// reached, so that run has finished, and the room has to be told: a player
+// whose goal nobody sends is one the multiworld waits on forever.
+{
+  // Clearing the last level, which is the goal that one location settles.
+  const { engine, client, socket } = await joinARoom({ options: { goal: 0 } });
+  const told = () =>
+    socket.ofKind('StatusUpdate').filter((packet) => packet.status === ClientStatus.GOAL);
+  assert.ok(!engine.goalMet, 'the run was finished before it had done anything');
+  client.poll();
+  assert.equal(told().length, 0, 'a run that has not finished announced that it had');
+
+  const last = engine.levelCount - 1;
+  socket.deliver({ cmd: 'RoomUpdate', checked_locations: [AP + last] });
+  await settle();
+  assert.ok(engine.goalMet, 'the last level was handed over and the run is not finished');
+
+  client.poll();
+  assert.equal(told().length, 1, 'the room was never told the run had finished');
+  // And once, however long the tab is left open on a finished run.
+  for (let i = 0; i < 50; i += 1) {
+    client.poll();
+  }
+  assert.equal(told().length, 1, 'the goal went out again on every frame');
+}
+
 // ---- a trap goes off once, however many times it is sent ------------------
 
 {
@@ -652,5 +689,6 @@ assert.deepEqual(addressesFor('archipelago.gg/', ''), [
 console.log(
   'ap ok: handshake, datapackage cache, resync, spent items, checks sent once, ' +
     'traps spring once, spends queued while down, a hidden tab holds its retry, ' +
-    'a cleared ladder comes back open, unknown generator refused',
+    'a cleared ladder comes back open, a goal the room handed over is reported, ' +
+    'unknown generator refused',
 );

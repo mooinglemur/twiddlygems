@@ -97,6 +97,12 @@
     <h2 id="overlay-title">Level complete</h2>
     <p id="overlay-body"></p>
     <div id="tracker" class="hidden">
+      <!-- Says the run has finished its goal, however it came to be finished.
+           A multiworld can hand the last of it over rather than the player
+           beating it, and then no victory screen is owed: this is where that
+           run finds out. The word is written from the page so a reader hears
+           it arrive; the flag beside it is decoration. -->
+      <p id="goal-done" class="hidden" role="status"></p>
       <div id="tracker-items" role="list" aria-label="Items found"></div>
       <div id="level-list" role="list" aria-label="Levels"></div>
     </div>

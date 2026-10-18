@@ -633,6 +633,24 @@ button[disabled] { opacity: 0.4; cursor: default; }
   margin-bottom: 18px;
 }
 
+/* The run's goal, once it is done. Sits above the unlocks because it is about
+   the whole run rather than about any level in the list under it, and it is
+   the one thing in this panel that may never have been said anywhere else: a
+   goal a multiworld finishes for you gets no victory screen. */
+#goal-done {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--socket);
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
 /* The five unlocks. Fixed columns rather than auto-fill: this is one row of
    five whatever the width, and a 4 + 1 wrap would read as two groups. */
 #tracker-items {

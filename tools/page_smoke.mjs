@@ -3018,6 +3018,52 @@ let flourish = null;
   assert.ok(link.classList.contains('hidden'), 'coming back to the tab put up a connection message');
 }
 
+// ---- the run's goal, once it is done --------------------------------------
+//
+// Last, because it finishes the run this file has been playing: the picker is
+// the one place a run can always be told it is over. A goal met by playing
+// gets the victory screen, and a goal a multiworld finishes by handing over
+// the last of it gets nothing, so a flag that only appeared for the first
+// would leave exactly the player who needs telling in the dark.
+{
+  const { engine } = window.twiddlygems;
+  const flag = elements.get('goal-done');
+  dispatch('levels-button', 'click', {});
+  pump(1);
+  assert.ok(!engine.goalMet, 'this run had already finished, so the flag proves nothing');
+  assert.ok(flag.classList.contains('hidden'), 'an unfinished run is flying the finish flag');
+  assert.equal(flag.children.length, 0, 'the flag is readable while the run is unfinished');
+
+  // The rest of the ladder, the way a room hands it over: clear locations are
+  // numbered by their own index, which is the engine's stable id scheme.
+  for (let index = 0; index < engine.levelCount; index += 1) {
+    engine.restore(index);
+  }
+  assert.ok(engine.goalMet, 'every level is checked off and the run is not finished');
+  pump(1);
+
+  assert.ok(!flag.classList.contains('hidden'), 'the finished run is not told it has finished');
+  const said = flag.children.map((part) => part.textContent);
+  assert.ok(said.includes('Goal achieved'), `the flag says ${JSON.stringify(said)}`);
+  assert.match(flag.title, /\w/, 'the flag says nothing when rested on');
+  // The picture is decoration: a reader gets the words and not a description
+  // of a chequered flag.
+  const picture = flag.children.find((part) => part.textContent === '🏁');
+  assert.ok(picture, 'the flag has no flag on it');
+  assert.equal(picture.getAttribute('aria-hidden'), 'true', 'the picture is read out as well');
+  // The panel writes it on the way in rather than only when it turns over, so
+  // a run that finished long ago is told every time it comes back here.
+  // Emptied by hand first, because nothing else writes to this element and
+  // the check would otherwise be of a class that was never going to move.
+  flag.replaceChildren();
+  click(overlayButton('Close'), 'the level picker has no way out');
+  dispatch('levels-button', 'click', {});
+  pump(1);
+  assert.ok(flag.children.length > 0, 'the picker opened again and never rewrote the flag');
+  assert.ok(!flag.classList.contains('hidden'), 'the picker opened again forgot the goal was done');
+  click(overlayButton('Close'), 'the level picker has no way out');
+}
+
 console.log(
   `page ok: ${framesRun} frames, ${calls.drawImage} blits, ${calls.fill} fills, ` +
     `${calls.stroke} strokes, ${objectives.children.length} objective chips, ` +
